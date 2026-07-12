@@ -1,0 +1,241 @@
+# Financial Accounting Engine Refactor
+
+You are working on an existing Medical Center Management System.
+
+This is NOT a redesign.
+
+Do NOT remove existing features.
+
+Do NOT change the UI unless required.
+
+Your task is to unify the accounting engine so every financial screen uses the same accounting rules.
+
+---
+
+# General Accounting Rules
+
+The system must use the following accounting definitions everywhere.
+
+## 1. Revenue
+
+Revenue consists of ONLY:
+
+* Patient payments
+* Receipt Vouchers (Cash In)
+
+Formula:
+
+Revenue =
+Patient Payments
+
+* Receipt Vouchers
+
+---
+
+## 2. Expenses
+
+Expenses consist of ONLY:
+
+* Approved Purchase Requests
+* Medical examination supplies and consumables
+* Employee Personal Expense Payment Vouchers
+
+Formula:
+
+Expenses =
+Purchase Requests
+
+* Medical Supplies Cost
+* Personal Expense Payment Vouchers
+
+Do NOT include salaries here.
+
+---
+
+## 3. Salaries
+
+Salary cost must be calculated separately.
+
+Formula:
+
+Employee Salary Paid
+
+minus
+
+(Employee Personal Expense Payment Vouchers)
+
+minus
+
+Approved Employee Advances
+
+Net Salary Paid =
+Salary
+− Personal Expense Vouchers
+− Approved Advances
+
+This value is used as Salary Cost.
+
+---
+
+## 4. Patient Debts
+
+Patient Debts are:
+
+Money owed TO the medical center.
+
+Only include unpaid patient balances.
+
+Do not include insurance companies.
+
+---
+
+## 5. Insurance Company Debts
+
+Insurance Company Debts are:
+
+Money owed TO the medical center by insurance companies.
+
+Only include unpaid insurance invoices.
+
+---
+
+## 6. Company Creditors
+
+External Company Debts are:
+
+Money the medical center owes TO suppliers or companies.
+
+These are liabilities.
+
+They must never be mixed with Patient Debts or Insurance Debts.
+
+---
+
+## 7. Profit
+
+Profit must always be calculated as:
+
+Profit =
+Revenue
+−
+(
+Expenses
++
+Salary Cost
+)
+
+No other formula is allowed.
+
+---
+
+# Department Financial System
+
+Each department must calculate independently.
+
+Every department must have its own:
+
+Revenue
+
+Expenses
+
+Profit
+
+Patient Debts
+
+Insurance Debts
+
+Company Creditors
+
+The department dashboard must never include values from another department.
+
+---
+
+# General Financial System (Administrator)
+
+The administrator financial system must display totals for ALL departments combined.
+
+The administrator pages must calculate:
+
+Total Revenue
+
+Total Expenses
+
+Total Salaries
+
+Total Profit
+
+Total Patient Debts
+
+Total Insurance Debts
+
+Total Company Creditors
+
+These totals must always equal the sum of all departments.
+
+---
+
+# Data Sources
+
+Revenue:
+
+Patient Payments
+
+Receipt Vouchers
+
+Expenses:
+
+Purchase Requests
+
+Medical Supplies
+
+Employee Personal Expense Payment Vouchers
+
+Salary:
+
+Payroll
+
+Approved Employee Advances
+
+Personal Expense Payment Vouchers
+
+Patient Debts:
+
+Patient Debt Table
+
+Insurance Debts:
+
+Insurance Invoice Table
+
+Company Creditors:
+
+External Debt Table (Direction = Received / Payable)
+
+---
+
+# Validation
+
+Verify the following:
+
+Every department calculates independently.
+
+Administrator totals equal the sum of all departments.
+
+Profit uses the same formula everywhere.
+
+Salary is never counted twice.
+
+Personal Expense Payment Vouchers reduce employee salary and are also recorded as department expenses.
+
+Patient debts are separate from insurance debts.
+
+Insurance debts are separate from company creditors.
+
+No duplicated financial calculations remain.
+
+Every report, chart and dashboard uses the same accounting engine.
+
+Do not break existing APIs.
+
+Do not remove existing functionality.
+
+Preserve backward compatibility.

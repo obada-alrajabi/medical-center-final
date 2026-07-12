@@ -1,0 +1,417 @@
+
+
+Analyzing financial audit requirements
+أبدأ بفحص شامل للكود المالي — بالتوازي لكسب الوقت:
+
+
+4 actions
+أواصل جمع البيانات بالتوازي:
+
+
+5 actions
+أُكمل جمع البيانات المالية بالتوازي:
+
+
+5 actions
+أُكمل جمع البيانات — باقي الحسابات بالتوازي:
+
+
+6 actions
+الآن أُجمع كل البيانات في تقرير شامل:
+
+📊 التقرير المالي الشامل — نظام الدكتور مهند سليمان جابر
+القسم الأول: تعريف الجداول والـ Types المالية
+1. DrawerTx — حركة الصندوق
+type DrawerTx = {
+  id: number;
+  type: "in" | "out";      // داخل / خارج
+  title: string;            // البيان
+  category: string;         // التصنيف
+  beneficiary?: string;     // المستفيد
+  amount: number;           // المبلغ
+  balance: number;          // الرصيد بعد العملية
+  time: string;             // الوقت
+  date: string;             // التاريخ "dd/mm/yyyy"
+  auto?: boolean;
+}
+
+مصدر البيانات: drawers[deptId].txs[] في App state + جدول drawer_transactions في DB
+
+2. DrawerState — صندوق القسم
+type DrawerState = {
+  balance: number;               // الرصيد الحالي
+  txs: DrawerTx[];               // سجل الحركات
+  openingBalance?: number;       // الرصيد الافتتاحي
+  openingBalanceDate?: string;
+}
+
+مصدر البيانات: drawers: Record<string, DrawerState> — مفتاحه deptId
+جداول DB: drawers (balance) + drawer_transactions (txs)
+
+3. PatientSession — جلسة المريض
+type PatientSession = {
+  id: number;
+  patientId: string;
+  dept: string;
+  doctor: string;
+  date: string;
+  diagnoses: string[];
+  medications: { name, dose, freq, duration }[];
+  notes: string; labRefs: string[]; radRefs: string[];
+  amount: number;   // إجمالي الفاتورة
+  paid: number;     // المبلغ المدفوع
+  debt: number;     // الدين المتبقي (= amount - paid)
+}
+
+جدول DB: sessions
+
+4. DebtRow — دين المريض
+type DebtRow = {
+  id: number;
+  patient: string;   // اسم المريض
+  pid: string;       // معرّف المريض
+  dept: string;      // القسم
+  amount: number;    // مبلغ الدين المتبقي
+  date: string;
+  days: number;      // عدد أيام الدين
+  phone: string;
+  smsSent?: boolean;
+}
+
+جدول DB: patient_debts
+
+5. Invoice — فاتورة شركة
+type Invoice = {
+  id: string;
+  company: string;
+  date: string;
+  total: number;
+  paid: number;
+  remaining: number;    // ⚠️ GENERATED ALWAYS في DB = total - paid
+  status: "paid" | "partial" | "unpaid";
+  dept: string;
+}
+
+جدول DB: invoices — عمود remaining محسوب تلقائياً في DB
+
+6. Employee — الموظف
+type Employee = {
+  id: number;
+  name: string;
+  dept: string;
+  role: string;
+  salary: number;          // الراتب الأساسي
+  expenses: number;        // المصروفات المخصومة
+  status: "pending" | "calculated" | "paid";
+  paidDate?: string;
+  commission?: number;     // العمولة (محسوبة)
+  netSalary?: number;      // صافي الراتب (محسوب)
+}
+
+جدول DB: employees
+
+7. EmployeeAdvance — سلفة الموظف
+type EmployeeAdvance = {
+  id: number;
+  empName: string;
+  dept: string;
+  amount: number;
+  date: string;
+  note: string;
+  repaid: boolean;
+  repaidDate?: string;
+}
+
+جدول DB: employee_advances
+
+8. PurchaseRequest — طلب شراء
+type PurchaseRequest = {
+  id: number; dept: string; requestedBy: string; date: string;
+  items: PurchaseItem[];
+  totalAmount: number;
+  status: "pending" | "approved" | "rejected";
+  approvedBy?: string; approvedDate?: string; rejectionReason?: string;
+  note: string;
+}
+
+جدول DB: purchase_requests
+
+9. ExternalDebt — دين خارجي
+type ExternalDebt = {
+  id: number;
+  dir: "given" | "received";   // أعطيناه / استلمناه
+  party: string;
+  amount: number;
+  date: string; note: string;
+  status: "pending" | "settled";
+  settledDate?: string;
+}
+
+10. StaffAdvanceRequest — طلب سلفة موظف
+type StaffAdvanceRequest = {
+  id: number; staffId: number; staffName: string; dept: string;
+  amount: number; date: string; reason: string;
+  status: "pending" | "approved" | "rejected";
+  reviewedBy?: string; reviewDate?: string; rejectionReason?: string;
+}
+
+القسم الثاني: المعادلات المالية — واحدة بواحدة
+① doDeposit — إيداع في الصندوق
+الكود	newBal = currentBal + amount
+المصدر	drawersRef.current[dept].balance
+التأثير	يُضيف DrawerTx(type="in") + يُحدّث balance + يُرسل للـ API
+مثال	رصيد=500، إيداع=100 → رصيد جديد=600 ✅
+② doWithdraw — سحب من الصندوق
+الكود	newBal = currentBal - amount (مع شرط: currentBal >= amount)
+المصدر	drawersRef.current[dept].balance
+التأثير	يُضيف DrawerTx(type="out") + يُحدّث balance
+مثال	رصيد=500، سحب=100 → رصيد جديد=400 ✅
+حماية	إذا amount > balance → لا شيء يحدث (صامت)
+③ doAdjustBalance — تعديل رصيد يدوي
+الكود	diff = newBalance - currentBalance → type = diff≥0 ? "in" : "out"
+مثال	رصيد=500، تعديل إلى 300 → diff=-200، يُسجّل سحب 200 ✅
+④ سعر الجلسة عند تسجيل مريض جديد (NewPatientScreen)
+basePrice = parseFloat(form.price) || 0
+discAmt   = (discountType === "percent")
+              ? basePrice × discount% / 100
+              : parseFloat(form.discount) || 0
+sessionNet  = Math.max(0, basePrice - discAmt)
+sessionPaid = parseFloat(form.paid) || 0
+sessionDebt = Math.max(0, sessionNet - sessionPaid)
+
+سيناريو	basePrice	خصم	paid	sessionDebt	صحيح؟
+كامل	100	0	100	0	✅
+جزئي	100	0	60	40	✅
+خصم %	100	20%	0	80	✅
+خصم ₪	100	20₪	50	30	✅
+دفع زيادة	100	0	150	0 (بسبب Math.max)	✅
+⑤ خصم التأمين
+insDiscPct = isLab ? insComp.discountLab
+           : isRad ? insComp.discountRad
+           : insComp.discountClinic
+insDiscAmt = basePrice × insDiscPct / 100
+
+مثال	price=100	خصم تأمين=30%	insDiscAmt=30₪	✅
+⑥ إيرادات الفترة — DashboardScreen
+rangeRevenue = sessions.filter(s => inRange(s.date))
+               .reduce((sum, s) => sum + s.paid, 0)
+
+المصدر: sessions[].paid
+مثال: 3 جلسات paid=[60, 80, 100] → rangeRevenue=240 ✅
+
+⑦ ديون المرضى الكلية — DashboardScreen
+totalPatientDebt = debts.reduce((s, d) => s + d.amount, 0)
+
+المصدر: debts[].amount
+مثال: [40, 100, 200] → 340 ✅
+
+⑧ ديون الشركات — DashboardScreen
+totalCompanyDebt = invoices.reduce((s, i) => s + i.remaining, 0)
+
+المصدر: invoices[].remaining (GENERATED ALWAYS في DB)
+مثال: invoice(total=500, paid=200) → remaining=300 → 300 ✅
+
+⑨ صافي الربح — DashboardScreen
+totalAllRevenue  = Σ drawers[*].txs.filter(type="in").amount
+totalWithdrawals = Σ drawers[*].txs.filter(type="out" AND category≠"إيداع في البنك").amount
+netProfit = totalAllRevenue - totalWithdrawals
+
+مثال: إيرادات=10,000، سحوبات=3,000 → netProfit=7,000
+⚠️ لا يشمل الرواتب (تُطرح عند الصرف الفعلي كـ doWithdraw)
+
+⑩ صافي الربح — FinProfitScreen
+rangeRevenue    = inTxs.filter(category ≠ "رصيد افتتاحي").reduce(amount)
+approvedPurch   = purchaseRequests.filter(status="approved").reduce(totalAmount)
+acceptedAdv     = employeeAdvances.filter(dept match && inRange).reduce(amount)
+personalExp     = outTxs.filter(cat ∈ {"مصروف شخصي", "مصروف شخصي — موظف"}).reduce(amount)
+rangeExpenses   = acceptedAdv + personalExp
+rangeProfit     = (vouchersTotal + rangeRevenue) − (approvedPurch + rangeExpenses)
+
+مثال: إيرادات=10,000 + سندات=2,000 − مشتريات=1,500 − مصروفات=500 = 10,000 ✅
+
+⑪ صافي الربح — FinChartsScreen ⚠️ مختلف!
+rev   = allTxs.filter(type="in").reduce(amount)
+exp   = allTxs.filter(type="out").reduce(amount)
+totalSalaries = employees.reduce((s, e) => s + e.salary, 0)
+netProfit = rev - exp - totalSalaries
+
+⚠️ هذا النموذج يطرح الرواتب الأساسية مرتين إذا صُرفت الرواتب بـ doWithdraw (لأن doWithdraw يُسجّل في txs كـ "out" وتُضاف إلى exp، ثم تُطرح مرة ثانية في totalSalaries)
+
+⑫ صافي الربح — FinancialSummaryScreen ⚠️ مختلف!
+totalRevenue    = filteredTxs.filter(type="in").reduce(amount)
+totalWithdrawals= filteredTxs.filter(type="out").reduce(amount)
+netProfit = totalRevenue - totalWithdrawals
+
+لا يطرح الرواتب بشكل مستقل — تُحسب عند صرفها كـ doWithdraw.
+
+⑬ إجمالي الإيرادات — FinRevenueScreen
+totalRevenue = allTxs.filter(type="in").reduce(amount)
+totalDebt    = debts.reduce(amount)
+totalPaid    = Math.max(0, totalRevenue - totalDebt)
+collectionRate = totalRevenue > 0 ? round(totalPaid / totalRevenue × 100) : 0
+
+⚠️ معادلة totalPaid = totalRevenue - totalDebt مفاهيمياً غير دقيقة — الإيرادات تشمل المبالغ الفعلية المدفوعة بالصندوق، والديون مُسجّلة بشكل مستقل في debts[]. الطرح ليس علاقة مباشرة رياضياً.
+
+مثال: totalRevenue=10,000، totalDebt=3,000 → totalPaid=7,000، collectionRate=70%
+
+⑭ إجمالي المصروفات — FinExpensesScreen
+acceptedAdv   = employeeAdvances.filter(inRange).reduce(amount)
+personalTotal = outTxs.filter(cat ∈ {"مصروف شخصي", "مصروف شخصي — موظف"}).reduce(amount)
+rangeOut      = acceptedAdv + personalTotal  ← الإجمالي المعروض
+purchasesTotal = purchaseRequests.filter(status="approved").reduce(totalAmount)  ← مستقل!
+
+⚠️ المشتريات purchasesTotal تُعرض منفصلة عن rangeOut ولا تدخل في الإجمالي.
+
+⑮ تسوية دين مريض — DebtManagementScreen
+paid = parseFloat(settleAmount)
+doDeposit(dept, paid, `تسديد دين — ${patient}`, "سند قبض — دفعة نقدية")
+newDebtAmount = d.amount - paid
+if (newDebtAmount <= 0) → delete debt row
+else → update debt.amount = newDebtAmount
+
+مثال: دين=200، دفع=150 → دين جديد=50 ✅ | دفع=200 → الصف يُحذف ✅
+
+⑯ تصفية دين في ملف المريض — PatientFileScreen
+liveDebt  = debts.filter(d => d.pid === p.id && canSeeFinance(d.dept)).reduce(amount)
+totalAmt  = finSess.reduce((s, x) => s + x.amount, 0)   // مجموع الفواتير
+totalPaid = finSess.reduce((s, x) => s + x.paid, 0)     // مجموع المدفوع
+
+⑰ تصنيف عمر الديون — DebtManagementScreen
+total   = debts.reduce(amount)
+under30 = debts.filter(d.days < 30).reduce(amount)
+mid     = debts.filter(30 ≤ d.days ≤ 90).reduce(amount)
+over90  = debts.filter(d.days > 90).reduce(amount)
+
+✅ صحيح — under30 + mid + over90 = total
+
+⑱ رصيد الصناديق الكلي — FinancialSummaryScreen
+totalBalance = Object.values(drawers).reduce((s, d) => s + (d.balance || 0), 0)
+
+مثال: lab=500، surgery=300، radiology=200 → 1,000 ✅
+
+القسم الثالث: حسابات الموظفين المالية
+أ. العمولة getCommission
+const empRevenue = sessions
+  .filter(s => s.doctor === e.name && 
+    (pDepts.length === 0 || pDepts.includes(s.dept)))
+  .reduce((sum, s) => sum + s.paid, 0)
+commission = Math.round(empRevenue × (sm.percentageValue / 100))
+
+الشرط: salaryType ≠ "fixed" (يُرجع 0 للموظفين براتب ثابت)
+المصدر: sessions[].paid × staff.percentageValue%
+مثال: إيرادات الطبيب=10,000، نسبة=20% → عمولة=2,000 ✅
+
+ب. السلف المستحقة getTotalAdvances
+getTotalAdvances = (e) =>
+  employeeAdvances
+    .filter(a => a.empName === e.name && !a.repaid)
+    .reduce((s, a) => s + a.amount, 0)
+
+مثال: سلفتين غير مسددتين: [500, 300] → 800 ✅
+ملاحظة: السلف المسددة (repaid=true) لا تُخصم
+
+ج. صافي الراتب calcNet
+calcNet = (e) => Math.max(0,
+  e.salary + getCommission(e) - e.expenses - getTotalAdvances(e)
+)
+
+القيمة
+راتب أساسي	1,000
++ عمولة	+ 200
+− مصروفات	− 50
+− سلف	− 150
+صافي	= 1,000 ✅
+حماية: Math.max(0, ...) → لا يصير الراتب سالباً
+
+د. توزيع الراتب على أقسام متعددة getPaySplit
+// توزيع بنسبة إيرادات كل قسم:
+revenueByDept = payDepts.map(d => sessions.filter(s => s.doctor === e.name && s.dept === d).reduce(paid))
+totalRevenue  = sum(revenueByDept)
+shares = totalRevenue > 0 
+  ? revenueByDept.map(r => r / totalRevenue)  // بناءً على الإيرادات
+  : payDepts.map(() => 1 / payDepts.length)   // بالتساوي إذا لا إيرادات
+amounts = shares.map(s => Math.round(net × s))
+// تصحيح التقريب: الفرق يُضاف لآخر قسم
+diff = net - sum(amounts)
+amounts[last] += diff
+
+مثال: صافي=1,000، قسمان (مختبر إيرادات=3,000، جراحة=7,000):
+
+نسبة مختبر = 30% → 300
+نسبة جراحة = 70% → 700
+إجمالي = 1,000 ✅
+هـ. السلفة من الصندوق EmployeeAdvancesScreen
+// شرط:
+if (!drawer || drawer.balance < amt) → toast خطأ
+// تنفيذ:
+doWithdraw(form.dept, amt, `سلفة — ${form.empName}`, "سلف موظفين", form.empName)
+// تسجيل:
+employeeAdvances.push({ empName, dept, amount, repaid: false })
+
+تأثير: يُخصم من صندوق القسم فوراً ✅
+
+و. إجمالي الرواتب الأساسية (KPI)
+totalSalaries = employees.reduce((s, e) => s + (e.salary || 0), 0)
+
+⚠️ تجمع الراتب الأساسي فقط — العمولة والصافي لا تُجمع هنا
+
+القسم الرابع: خريطة تدفق البيانات المالية
+┌─────────────────────────────────────────────────────────┐
+│                  نقطة البداية                           │
+│           تسجيل جلسة مريض (NewPatientScreen)            │
+└────────────────┬────────────────────────────────────────┘
+                 │
+    ┌────────────┼──────────────────────┐
+    ▼            ▼                      ▼
+sessions[]     debts[]              drawers[dept]
+(amount,       (إذا sessionDebt>0)  (doDeposit إذا paid>0)
+paid, debt)
+    │            │                      │
+    ▼            ▼                      ▼
+┌─────────┐  ┌──────────────┐      ┌──────────────────┐
+│PatientFile│  │DebtManagement│      │FinancialSummary  │
+│ totalAmt │  │ تسوية الديون │      │ totalBalance     │
+│ totalPaid│  │ under30/mid/ │      │ totalRevenue     │
+│ liveDebt │  │ over90      │      │ totalWithdrawals  │
+└─────────┘  └──────┬───────┘      └────────┬─────────┘
+                     │                        │
+                     │doDeposit               │
+                     ▼                        ▼
+              drawers[dept].balance    FinProfitScreen
+              += paid amount           rangeProfit =
+                                       (vouchers + rev)
+                                       - (purch + exp)
+                         │
+              ┌──────────┼──────────────┐
+              ▼          ▼              ▼
+        Dashboard    FinCharts      FinRevenue
+        netProfit    netProfit=     collectionRate
+        =rev-withd   rev-exp-sal    =paid/rev%
+┌─────────────────────────────────────────────────────────┐
+│                  دورة الموظف                             │
+│                                                          │
+│  sessions.paid (بنسبة%) ─→ getCommission               │
+│  e.salary + commission - expenses - advances ─→ calcNet │
+│  calcNet × دفع ─→ doWithdraw(dept) ─→ drawers.balance  │
+│  ─→ employees[].status = "paid"                         │
+└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│               دورة الفواتير (شركات)                     │
+│                                                          │
+│  invoices[].total ─→ remaining (GENERATED ALWAYS in DB) │
+│  = total - paid                                          │
+│  ─→ DashboardScreen totalCompanyDebt                    │
+└─────────────────────────────────────────────────────────┘
+
+القسم الخامس: ملخص الحالة والملاحظات
+#	الملاحظة	الحالة
+1	معادلة doDeposit / doWithdraw	✅ صحيحة
+2	سعر الجلسة مع الخصم والدين	✅ صحيحة
+3	تصفية الديون وتحديث DrawerState	✅ صحيحة
+4	صافي الراتب مع العمولة والسلف	✅ صحيحة
+5	توزيع الراتب نسبياً على أقسام	✅ صحيحة
+6	netProfit مختلف في 4 شاشات!	⚠️ تحذير
+7	FinChartsScreen يطرح الرواتب مرتين إذا صُرفت	⚠️ خطر
+8	totalPaid = revenue - debt في FinRevenue غير دقيق	⚠️ تحذير
+9	المشتريات مستبعدة من rangeOut في FinExpenses	⚠️ انتبه
+10	invoices.remaining = GENERATED ALWAYS في DB	✅ لا تكتب يدوياً

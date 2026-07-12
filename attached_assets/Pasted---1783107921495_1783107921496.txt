@@ -1,0 +1,65 @@
+
+
+في النظام مشكلة شاملة: كل الحركات المالية بالنظام لا تظهر في شاشات النظام المالي رغم تسجيلها.
+المطلوب — فحص شامل وإصلاح فوري:
+1. افحص قاعدة البيانات أولاً:
+شغّل هاي الاستعلامات وأخبرني بالنتائج:
+sqlSELECT 'sessions' as table_name, COUNT(*) FROM sessions
+UNION ALL
+SELECT 'drawer_transactions', COUNT(*) FROM drawer_transactions
+UNION ALL
+SELECT 'invoices', COUNT(*) FROM invoices
+UNION ALL
+SELECT 'debts', COUNT(*) FROM debts
+UNION ALL
+SELECT 'drawers', COUNT(*) FROM drawers
+UNION ALL
+SELECT 'purchase_requests', COUNT(*) FROM purchase_requests
+UNION ALL
+SELECT 'employee_advances', COUNT(*) FROM employee_advances
+UNION ALL
+SELECT 'receipt_vouchers', COUNT(*) FROM receipt_vouchers
+UNION ALL
+SELECT 'payment_vouchers', COUNT(*) FROM payment_vouchers;
+2. افحص كل الـ Endpoints المالية:
+لكل Endpoint تالية، اختبرها وتأكد إنها ترجع البيانات:
+
+GET /api/sessions
+GET /api/drawers
+GET /api/finance/invoices
+GET /api/finance/debts
+GET /api/finance/purchase-requests
+GET /api/staff/advances
+GET /api/finance/receipt-vouchers
+GET /api/finance/payment-vouchers
+
+3. افحص الـ Frontend — شاشات النظام المالي:
+لكل شاشة مالية:
+
+من وين تجلب البيانات؟ (API أم State)
+هل useEffect يُشغَّل عند فتح الشاشة؟
+هل البيانات تصل من الـ API وتُخزَّن بالـ State؟
+هل الـ State يُمرَّر للمكوّن الصح؟
+
+4. افحص الربط بين العمليات والنظام المالي:
+العمليةالجدول المتأثرهل يتحدث فوراً؟دفعة مريضinvoices + drawer_transactions✅/❌مصروف شخصيexpenses + drawer_transactions✅/❌مشترياتpurchases + drawer_transactions✅/❌إيداع بالصندوقdrawers + drawer_transactions✅/❌سحب من الصندوقdrawers + drawer_transactions✅/❌سند قبضreceipt_vouchers + drawer_transactions✅/❌سند صرفpayment_vouchers + drawer_transactions✅/❌صرف راتبemployees + drawer_transactions✅/❌
+5. أصلح كل خلل فوراً:
+
+إذا البيانات موجودة بـ DB بس مش بتظهر → أصلح الـ Frontend
+إذا البيانات مش موجودة بـ DB → أصلح الـ Backend
+إذا الـ Endpoint مش بيرجع البيانات → أصلح الـ Query
+إذا الـ State مش بيتحدث → أصلح الربط
+
+6. بعد الإصلاح اختبر:
+
+سجّل دفعة من مريض → تظهر فوراً بالنظام المالي ✅
+سجّل مصروف → يظهر فوراً ✅
+عمل إيداع بالصندوق → يظهر فوراً ✅
+
+⚠️ تعليمات صارمة:
+
+افحص كل شي بالتوازي
+أصلح كل خلل فوراً بدون انتظار
+لا تغيّر أي تصميم أو واجهة
+لا تحذف أي كود موجود
+أعطني تقرير نهائي بـ ✅/❌ لكل عملية وما تم إصلاحه

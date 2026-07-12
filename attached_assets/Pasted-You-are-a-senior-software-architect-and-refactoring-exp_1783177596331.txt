@@ -1,0 +1,40 @@
+You are a senior software architect and refactoring expert.
+
+I want you to refactor the entire project structure to improve maintainability, scalability, and code quality WITHOUT changing the application's behavior or breaking any existing functionality.
+
+Requirements:
+
+- Analyze the entire project before making any changes.
+- Identify duplicated code and extract it into shared modules, utilities, services, hooks, helpers, middleware, or reusable components where appropriate.
+- Do not leave the same logic implemented in multiple places. Every repeated implementation should exist only once and be reused throughout the project.
+- Split oversized files into smaller, well-organized files with clear responsibilities.
+- Follow clean architecture and separation of concerns.
+- Organize folders logically (controllers, services, repositories, routes, middleware, utilities, hooks, components, etc.) depending on the technology stack.
+- Improve naming consistency where necessary without changing functionality.
+- Remove dead code, unused imports, and unnecessary duplication.
+- Preserve all APIs, routes, database behavior, authentication, authorization, business logic, validations, and UI behavior.
+- Do NOT rewrite working features unless required for the refactoring.
+- Avoid introducing new dependencies unless absolutely necessary.
+- Maintain compatibility with the current project configuration and environment.
+
+VERY IMPORTANT:
+
+- This is a refactoring task, NOT a feature development task.
+- Do NOT remove, modify, or break any existing functionality.
+- Do NOT change business logic.
+- Do NOT change database schema or API contracts.
+- Do NOT change UI behavior except where required to support the refactoring.
+- Every refactoring step must preserve existing functionality.
+
+Before modifying any file:
+1. Understand how it is used throughout the project.
+2. Verify dependencies and imports.
+3. Ensure moving code will not introduce regressions.
+
+After completing the refactoring:
+- Verify that the project still builds successfully.
+- Verify that all imports are valid.
+- Verify that all routes, APIs, authentication, database operations, and frontend functionality still work.
+- Update imports automatically wherever files are moved.
+- Ensure there are no broken references.
+- Provide a summary of every structural change that was made.

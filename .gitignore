@@ -1,0 +1,26 @@
+node_modules/
+.env
+
+dist/
+
+.local/
+.cache/
+.config/
+
+*.db
+
+# Database local files
+pgdata/
+
+# User uploaded files
+uploads/
+
+# Backup files
+.local_backups/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

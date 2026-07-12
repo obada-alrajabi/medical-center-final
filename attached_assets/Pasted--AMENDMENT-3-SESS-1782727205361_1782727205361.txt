@@ -1,0 +1,439 @@
+
+================================================================================
+AMENDMENT 3 — SESSION REGISTRATION PER DEPARTMENT + FINANCIAL FIX + STATEMENTS
+================================================================================
+OVERRIDES previous prompts where they conflict.
+
+================================================================================
+PART 1 — SESSION REGISTRATION IS DIFFERENT PER DEPARTMENT (critical fix)
+================================================================================
+
+There are 3 DIFFERENT registration flows — not one shared flow:
+
+  Flow A → عيادة الجراحة العامة والطوارئ  (current flow — keep as is)
+  Flow B → مختبر التحاليل الطبية           (SELECT TESTS → auto-total)
+  Flow C → الأشعة التشخيصية               (SELECT IMAGES → auto-total)
+  Flow D → عيادة العلاج التأهيلي           (SAME AS Flow A — keep as is)
+
+--------------------------------------------------------------------------------
+FLOW A & D — عيادة الجراحة / العلاج التأهيلي (no change, keep existing)
+--------------------------------------------------------------------------------
+  Step 1: Patient data (new) OR patient search (existing)
+  Step 2: Financial details — سعر الكشف + خصم + مدفوع → باقي
+  Step 3: Session file — diagnosis + description + medications + attachments
+  (This is already designed — DO NOT change it)
+
+--------------------------------------------------------------------------------
+FLOW B — مختبر التحاليل الطبية (completely different)
+--------------------------------------------------------------------------------
+
+ENTRY: مختبر التحاليل → فتح ملف مريض → واجهة الاختيار الأولى:
+  Card A: [+ تسجيل مريض جديد]       → STEP 1-NEW
+  Card B: [🔍 بدء جلسة لمريض مسجل]  → STEP 1-EXISTING
+
+━━━ STEP 1-NEW: بيانات المريض الجديد ━━━
+  Stepper: [① بيانات المريض] → [② اختيار الفحوصات] → [③ التفاصيل المالية]
+  Current: ①
+  Form: same patient data fields as other departments
+  [التالي →] → STEP 2
+
+━━━ STEP 1-EXISTING: بحث عن مريض مسجل ━━━
+  Search by name or ID
+  Select patient → patient summary card shown
+  [تأكيد والمتابعة] → jumps directly to STEP 2 (skip patient data form)
+
+━━━ STEP 2: اختيار الفحوصات المطلوبة ━━━
+  Stepper: ② highlighted
+
+  Layout: 2 columns
+  Right column (60%): Test Selection
+    Search bar above: "ابحث عن فحص..."
+    Filter tabs: [الكل] [تحاليل الدم] [الكيمياء الحيوية] [الهرمونات] [الأمراض المعدية] [أخرى]
+    Tests list (scrollable, max-height 380px):
+      Each test row:
+        [☑ Checkbox] | اسم الفحص | الرمز | السعر ₪ XX | وقت الإنجاز
+      Selected rows: highlighted --teal-light bg + teal checkbox
+      Multi-select allowed (any number of tests)
+
+  Left column (40%): Selected Tests Summary (sticky)
+    Title: "الفحوصات المختارة"
+    List of selected tests as chips:
+      [× CBC — ₪ 45]  [× TSH — ₪ 75]  [× LFT — ₪ 85]
+    Divider
+    Financial calculation (updates live as tests are checked/unchecked):
+      ┌────────────────────────────────┐
+      │ إجمالي الفحوصات:   ₪ 205     │
+      │ عدد الفحوصات:      3          │
+      └────────────────────────────────┘
+    This total carries to Step 3
+
+  Bottom bar: [← رجوع] spacer [التالي: التفاصيل المالية →]
+  Validation: at least 1 test must be selected to proceed
+
+━━━ STEP 3: التفاصيل المالية للجلسة ━━━
+  Stepper: ③ highlighted
+
+  Card with teal left border:
+    المجموع (محسوب من الفحوصات):   ₪ 205   ← read-only, grey bg, auto from Step 2
+    الخصم (₪ أو %):                [___]   ← input, optional
+    المبلغ المدفوع (₪):            [___]   ← input, required
+    ─────────────────────────────────────
+    الباقي / الدين:                ₪ XX    ← auto = (total - discount - paid)
+      If > 0: red text "سيُضاف كدين على المريض"
+      If = 0: green text "✓ مسدد بالكامل"
+
+  Summary of selected tests (collapsible, shown below):
+    "الفحوصات: CBC, TSH, LFT"
+
+  [← رجوع للفحوصات] | [حفظ الجلسة وإرسالها للتجهيز →]
+
+━━━ ON SAVE — الجلسة تنتقل لحالة "قيد التجهيز" ━━━
+  Success toast: "تم حفظ الجلسة — ٣ فحوصات قيد التجهيز"
+  Session appears in Status Board (S05) under "قيد الإنجاز" column
+  Each selected test = its own Kanban card in the status board
+  Financial: debt recorded if remaining > 0
+  Kit quantities: NOT deducted yet (deducted when results are entered)
+
+━━━ STATUS BOARD (within Lab department screen) ━━━
+  Columns: [قيد الإنجاز] and [مكتمل]
+  The status board is accessible from:
+    - مختبر التحاليل → يمكن الوصول للوحة قيد الإنجاز مباشرة
+    - OR from patient session file
+
+  Kanban Card in "قيد الإنجاز":
+    ┌────────────────────────────────┐
+    │ 🔬 CBC — تعداد الدم الكامل   │
+    │ المريض: أحمد محمد يوسف       │
+    │ رقم الجلسة: #2847             │
+    │ منذ: 25 دقيقة                 │
+    │ ─────────────────────────────  │
+    │ [إدخال النتائج] ← teal btn   │
+    └────────────────────────────────┘
+
+  [إدخال النتائج] → opens results modal:
+    Title: "إدخال نتائج: CBC — [اسم المريض]"
+    Results table (per parameter based on test's normal ranges):
+      اسم المعامل | النتيجة [input] | الوحدة | المعدل الطبيعي | الحالة
+      هيموغلوبين  |  [13.5]        | g/dL   | 12 – 18        | طبيعي ✓ (green)
+      كريات بيضاء |  [12.0]        | 10³/μL | 4.5 – 11       | ↑ مرتفع (red)
+    Auto-status: compare input to range → طبيعي (green) or غير طبيعي (red)
+
+    Section: "الكيتات المستخدمة"
+      Kit: CBC Kit | الكمية المُستخدمة: 1 | الرصيد بعد الخصم: 14 وحدة
+      (auto-deducted from inventory on save)
+
+    Footer:
+      [طباعة التقرير] outline button
+      [حفظ وتم التسليم] success button
+
+  On [حفظ وتم التسليم]:
+    Kanban card moves from "قيد الإنجاز" → "مكتمل"
+    Kit stock decremented
+    If kit reaches alert threshold → notification
+    Toast: "تم تسليم نتائج فحص CBC ✓"
+
+  IF patient had MULTIPLE tests (e.g. CBC + TSH + LFT):
+    Each test = separate Kanban card
+    Each entered independently at its own time
+    Patient session only fully complete when ALL tests are delivered
+
+--------------------------------------------------------------------------------
+FLOW C — الأشعة التشخيصية (same principle as Lab, images instead of tests)
+--------------------------------------------------------------------------------
+
+ENTRY → واجهة الاختيار الأولى → Card A (new) or Card B (existing)
+
+━━━ STEP 1-NEW: بيانات المريض (same form as other depts) ━━━
+━━━ STEP 1-EXISTING: بحث عن مريض → تأكيد ━━━
+
+━━━ STEP 2: اختيار الصور الشعاعية المطلوبة ━━━
+  Stepper: [① بيانات المريض] → [② اختيار الصور] → [③ التفاصيل المالية]
+
+  Right column (60%): Image Selection
+    Filter tabs: [الكل] [X-Ray] [CT Scanner] [MRI] [Ultrasound] [أخرى]
+    Images list (each row):
+      [☑ Checkbox] | نوع الصورة | الجهاز | السعر ₪ | وقت الإنجاز
+    Multi-select allowed
+
+  Left column (40%): Selected Images Summary (sticky)
+    Selected as chips: [× صورة صدر — ₪ 120] [× CT رأس — ₪ 350]
+    Live totals:
+      إجمالي الصور: ₪ 470
+      عدد الصور: 2
+
+━━━ STEP 3: التفاصيل المالية ━━━
+  SAME STRUCTURE as Lab STEP 3:
+    المجموع (auto from image selection): ₪ 470  ← read-only
+    الخصم: [___]
+    المدفوع: [___]
+    الباقي / الدين: auto-calculated
+
+  [حفظ الجلسة وإرسالها للتجهيز →]
+
+━━━ ON SAVE → Status Board ━━━
+  Each selected image = Kanban card in "قيد الإنجاز"
+  Kanban Card:
+    ┌────────────────────────────────┐
+    │ 📡 CT رأس                     │
+    │ المريض: خالد إبراهيم سالم     │
+    │ رقم الجلسة: #2848             │
+    │ منذ: 10 دقائق                 │
+    │ ─────────────────────────────  │
+    │ [رفع نتائج الأشعة] teal btn  │
+    └────────────────────────────────┘
+
+  [رفع نتائج الأشعة] → file upload modal:
+    Title: "رفع نتائج: CT رأس — [اسم المريض]"
+    Large upload zone: "اسحب ملفات الأشعة هنا أو انقر للاختيار"
+    Accepts: JPEG, PNG, DICOM, PDF
+    Uploaded files shown as thumbnails grid
+    Text field: "ملاحظات الطبيب / وصف الصورة" (optional textarea)
+    [حفظ وتم التسليم] → card → "مكتمل"
+
+================================================================================
+PART 2 — FINANCIAL DETAILS FIX (existing patient session)
+================================================================================
+
+PROBLEM: When starting a session for an existing patient, only price + paid
+are shown. Discount and remaining debt are missing.
+
+FIX: For BOTH new and existing patients, the financial step MUST ALWAYS show:
+
+FOR CLINIC (Flow A/D) — existing patient:
+  ┌─────────────────────────────────────────────┐
+  │ سعر الكشف / الخدمة (₪) *        [____]    │
+  │ الخصم (₪ أو %)                   [____]    │ ← was missing
+  │ المبلغ المدفوع (₪) *             [____]    │
+  │ ──────────────────────────────────────────  │
+  │ الباقي من هذه الجلسة:           ₪ XX      │ ← was missing
+  │   إن > 0: "سيُضاف لديون المريض"            │
+  │                                             │
+  │ إجمالي الديون السابقة:          ₪ YY      │ ← NEW: show existing debt
+  │ إجمالي الدين بعد هذه الجلسة:   ₪ XX+YY   │ ← NEW: cumulative total
+  └─────────────────────────────────────────────┘
+
+FOR LAB (Flow B) — existing patient STEP 3:
+  ┌─────────────────────────────────────────────┐
+  │ المجموع (من الفحوصات) (₪)        ₪ 205   │ ← read-only, auto
+  │ الخصم (₪ أو %)                   [____]   │
+  │ المبلغ المدفوع (₪) *             [____]   │
+  │ ──────────────────────────────────────────  │
+  │ الباقي من هذه الجلسة:           ₪ XX      │ ← auto-calculated
+  │                                             │
+  │ ديون سابقة على المريض:          ₪ YY      │ ← from previous sessions
+  │ إجمالي الدين الكلي بعد الجلسة:  ₪ XX+YY   │ ← cumulative
+  └─────────────────────────────────────────────┘
+
+FOR RADIOLOGY (Flow C) — existing patient STEP 3:
+  Same structure as Lab above.
+
+VISUAL TREATMENT for existing debt warning:
+  If patient has existing debt > 0:
+    Show amber banner above financial form:
+    ┌──────────────────────────────────────────────────────┐
+    │ ⚠️ هذا المريض لديه دين سابق بقيمة ₪ [YY]           │
+    │    تاريخ أول دين: 15/03/2026                         │
+    │    [عرض تفاصيل الديون] link → opens drawer          │
+    └──────────────────────────────────────────────────────┘
+
+DEBT SUMMARY LOGIC:
+  الباقي من هذه الجلسة = المجموع - الخصم - المدفوع
+  إجمالي الدين الكلي = الباقي من هذه الجلسة + مجموع ديون الجلسات السابقة
+
+================================================================================
+PART 3 — STATEMENTS: EACH TYPE IS UNIQUE (fix all looking the same)
+================================================================================
+
+Each statement tab in قسم الكشوفات has its own UNIQUE layout:
+
+━━━ TAB 1: كشوفات المرضى ━━━
+  FILTER PANEL:
+    Row 1: 🔍 ابحث عن مريض (by name or ID) — autocomplete
+    Row 2: [من تاريخ] [إلى تاريخ] | القسم (dropdown) | [كل المرضى / مريض محدد] toggle
+  PATIENT SUMMARY CARD (shows when patient is selected):
+    Name + ID + blood type + insurance | Total sessions | Total paid | Total debt (red)
+  SESSIONS TABLE (unique to this tab):
+    Columns: التاريخ | القسم | الخدمة / الفحوصات | السعر | الخصم | المدفوع | الدين | الحالة
+    Footer row: TOTALS per column
+    Expandable rows: click row → shows details of that session inline
+  DEBT AGING MINI-CHART: small horizontal bar below table showing old vs new debt
+  EXPORT: [كشف مريض PDF] + [كشف مريض Excel]
+  PDF output: professional patient statement with center header, patient data box,
+               sessions table, debt summary box, date issued
+
+━━━ TAB 2: كشوفات الشركات ━━━
+  FILTER PANEL:
+    اسم الشركة (dropdown — all suppliers) | فترة زمنية | [مسددة / غير مسددة / الكل]
+  COMPANY INFO CARD (when company selected):
+    Company name + contact | Total invoices | Total paid | Total remaining (red)
+  INVOICES TABLE (unique columns for companies):
+    Columns: رقم الفاتورة | التاريخ | القسم | بنود الفاتورة | الإجمالي | خصم الشركة | المدفوع | الباقي | الحالة
+    Each row expandable: shows the line items of that invoice
+    Payment history sub-table: date + amount paid per installment
+  PAYMENTS TIMELINE: visual timeline (horizontal) showing payments made over time
+  [تسديد دفعة] button on unpaid rows → opens payment modal
+  EXPORT: [كشف شركة PDF] + [كشف شركة Excel]
+
+━━━ TAB 3: كشوفات شركات التأمين ━━━
+  FILTER PANEL:
+    شركة التأمين (dropdown) | فترة زمنية | القسم
+  INSURANCE COMPANY SUMMARY CARD:
+    Company name | Insured patients count | Total claimed | Total covered
+  TWO-SECTION LAYOUT:
+    Section A: المرضى المؤمَّنون (unique to insurance tab):
+      Table: اسم المريض | رقم الهوية | الجلسات | إجمالي الخدمات | نسبة التغطية | المبلغ المغطى | يدفعه المريض
+    Section B: إجمالي المطالبات:
+      Summary per month + chart: bar chart of claims by month
+  EXPORT: [تقرير تأمين PDF] — formatted as official insurance claim report
+
+━━━ TAB 4: كشوفات الأقسام ━━━
+  FILTER PANEL:
+    القسم (radio buttons: الكل / عيادة الجراحة / المختبر / الأشعة / العلاج التأهيلي)
+    فترة زمنية
+  DEPARTMENT PERFORMANCE CARD:
+    Dept name + icon | مرضى | إيرادات | سحوبات | صافي
+  CHARTS (unique to this tab — not in other tabs):
+    Left: Donut — توزيع الإيرادات بين الأقسام
+    Right: Grouped bar — مقارنة الإيرادات vs السحوبات per dept
+  DETAILED TABLE:
+    Columns: التاريخ | المريض | الخدمة | المبلغ | نوع الحركة (إيراد/سحب)
+  DEPARTMENT COMPARISON TABLE (if "الكل" selected):
+    One row per dept | الإيرادات | السحوبات | الصافي | عدد المرضى | متوسط الكشف
+  EXPORT: [تقرير القسم PDF] + [مقارنة الأقسام Excel]
+
+━━━ TAB 5: التقارير المخصصة ━━━
+  UNIQUE: Report builder interface — completely different from other tabs
+  STEP 1 — اختر نوع التقرير:
+    Large icon cards to choose: مرضى | شركات | تأمين | أقسام | مالي شامل
+  STEP 2 — حدد الفترة: date range picker + quick filters
+  STEP 3 — اختر الحقول: checkbox grid of available data fields
+  STEP 4 — فلاتر إضافية: department | payment status | specific entity
+  STEP 5 — معاينة: live table preview (first 10 rows)
+  STEP 6 — تصدير: Excel + PDF
+  (This is the custom builder — unlike all other tabs which are pre-structured)
+
+================================================================================
+PART 4 — LAB TEST CATALOG: NEW REQUIRED FIELDS WHEN ADDING/EDITING
+================================================================================
+
+WHEN ADDING A NEW TEST, required fields are:
+
+━━━ MODAL: إضافة فحص / تعديل فحص ━━━
+  BASIC INFO section:
+    اسم الفحص بالعربي *           text input
+    اسم الفحص بالإنجليزي         text input
+    رمز الفحص (Code) *            text input — e.g. CBC
+    الفئة *                       dropdown (blood / urine / hormones / etc.)
+
+  PRICING section (NEW — different from before):
+    السعر للمريض (₪) *            number input — what patient pays
+    سعر Lab to Lab (₪) *          number input — inter-lab / wholesale price
+      Note under field: "السعر عند إرسال الفحص لمختبر خارجي"
+    هامش الربح:                   auto-calculated, read-only
+      Shows: "₪ X (X%)" — updates live as prices are typed
+
+  INVENTORY / KIT section (NEW):
+    اسم الكيت (Kit) *             text input OR select from inventory list
+      If typed and not found: "إضافة كيت جديد للمخزون؟" prompt appears
+    الكمية المتوفرة الحالية *     number input — initial stock
+    وحدة الكمية                   dropdown: [وحدة] [علبة] [كيس] [لتر] [مل]
+    حد التنبيه (أقل كمية) *       number input — alert threshold
+
+  TIMING section:
+    وقت الإنجاز *                 number input + [دقيقة / ساعة / يوم] toggle
+
+  NORMAL RANGES section (المعدلات الطبيعية):
+    Repeatable rows (same as before)
+
+  MODAL FOOTER: [حفظ الفحص] + [إلغاء]
+
+━━━ WHEN EDITING AN EXISTING TEST ━━━
+  Modal opens pre-filled with all existing data.
+  User can change ANY field including:
+    - السعر للمريض (price update)
+    - سعر Lab to Lab (inter-lab price update)
+  SPECIAL SECTION shown only in EDIT mode:
+
+  "إضافة كمية للمخزون" card (below existing fields, in edit modal):
+    ┌──────────────────────────────────────────────┐
+    │ 📦 إضافة كمية جديدة للكيت                   │
+    │ الكمية الحالية: 12 وحدة                      │
+    │ الكمية المُضافة: [____] وحدة *               │
+    │ ملاحظة: سيُسجَّل كسحب من الجرار تلقائياً   │
+    │   اسم الشركة (اختياري): [dropdown]           │
+    │   [+ تسجيل الإضافة]  secondary button        │
+    └──────────────────────────────────────────────┘
+  On save quantity addition:
+    Kit stock increases
+    Drawer withdrawal auto-created (category: مشتريات) IF company entered
+    Toast: "تمت إضافة [X] وحدة لكيت [الاسم]"
+    Modal stays open so user can also edit other fields
+
+━━━ TESTS TABLE — NEW COLUMNS ━━━
+  # | اسم الفحص | الرمز | الفئة | السعر للمريض (₪) | سعر L2L (₪) | الكيت | الكمية | إجراءات
+
+  The "الكمية" column:
+    Shows current kit stock
+    Color: green if above threshold | orange if at/near threshold | red if 0
+
+  "سعر L2L" column header tooltip: "سعر Lab to Lab — للإرسال لمختبر خارجي"
+
+================================================================================
+PART 5 — SAMPLE EXCEL DATA (use as real content in mockup)
+================================================================================
+
+Use this data to populate the lab test catalog table in the mockup:
+
+اسم الفحص              | الرمز  | الفئة            | السعر للمريض | سعر L2L | الكيت          | الكمية
+------------------------|--------|------------------|--------------|---------|----------------|--------
+تعداد الدم الكامل      | CBC    | تحاليل الدم      | ₪ 45         | ₪ 22    | CBC Kit        | 24
+تحليل البول العام       | UA     | تحاليل البول     | ₪ 30         | ₪ 12    | Urine Strip    | 50
+سكر الدم الصيامي       | FBS    | كيمياء حيوية     | ₪ 25         | ₪ 10    | Glucose Kit    | 38
+سكر الدم التراكمي HbA1c| HBA1C  | كيمياء حيوية     | ₪ 65         | ₪ 35    | HbA1c Kit      | 15
+وظائف الكبد LFTs        | LFT    | كيمياء حيوية     | ₪ 85         | ₪ 42    | LFT Kit        | 18
+وظائف الكلى            | KFT    | كيمياء حيوية     | ₪ 75         | ₪ 38    | KFT Kit        | 20
+الدهون والكوليسترول    | LIPID  | كيمياء حيوية     | ₪ 90         | ₪ 45    | Lipid Kit      | 12
+هرمون الغدة الدرقية TSH| TSH    | هرمونات          | ₪ 75         | ₪ 40    | TSH Kit        | 8  ← منخفض
+هرمون T3 و T4           | T3T4   | هرمونات          | ₪ 110        | ₪ 55    | Thyroid Kit    | 6  ← منخفض
+فيروس الكبد B HBsAg    | HBSAG  | أمراض معدية      | ₪ 55         | ₪ 28    | HBsAg Kit      | 22
+فيروس الكبد C HCV       | HCV    | أمراض معدية      | ₪ 65         | ₪ 32    | HCV Kit        | 19
+فيروس نقص المناعة HIV  | HIV    | أمراض معدية      | ₪ 70         | ₪ 35    | HIV Kit        | 14
+حمض البوليك Uric Acid  | UA-ACD | كيمياء حيوية     | ₪ 35         | ₪ 15    | UA Kit         | 30
+فيتامين د Vit D3        | VITD   | هرمونات          | ₪ 95         | ₪ 48    | Vit D Kit      | 5  ← منخفض
+فيتامين ب١٢ Vit B12    | VITB12 | هرمونات          | ₪ 85         | ₪ 42    | B12 Kit        | 9
+بروتين CRP              | CRP    | أمراض معدية      | ₪ 45         | ₪ 20    | CRP Kit        | 26
+معدل ترسيب الدم ESR     | ESR    | تحاليل الدم      | ₪ 25         | ₪ 8     | —              | —
+مجموعة الدم             | B-GRP  | تحاليل الدم      | ₪ 40         | ₪ 18    | Blood Group K  | 16
+تحليل البراز            | STOOL  | تحاليل البول     | ₪ 30         | ₪ 12    | —              | —
+هرمون الحمل β-HCG      | BHCG   | هرمونات          | ₪ 55         | ₪ 25    | HCG Kit        | 20
+البروستاتا PSA          | PSA    | هرمونات          | ₪ 80         | ₪ 40    | PSA Kit        | 11
+الصوديوم والبوتاسيوم   | ELEC   | كيمياء حيوية     | ₪ 70         | ₪ 35    | Electro Kit    | 17
+ثقافة البول             | UC     | أمراض معدية      | ₪ 90         | ₪ 45    | Culture Kit    | 7  ← منخفض
+الحديد TIBC             | IRON   | كيمياء حيوية     | ₪ 80         | ₪ 38    | Iron Kit       | 13
+
+NOTE in table: rows with "← منخفض" should show orange/red stock badge in the Quantity column.
+These kits (TSH, T3T4, Vit D, UC) are below threshold — show alert state.
+
+================================================================================
+PART 6 — SUMMARY OF ALL CHANGES TO APPLY
+================================================================================
+
+[ ] FLOW B (Lab registration): 3 steps: patient data → SELECT TESTS → financial
+[ ] FLOW C (Radiology registration): 3 steps: patient data → SELECT IMAGES → financial
+[ ] FLOW A/D (Clinic/Rehab): keep existing, no change needed
+[ ] Financial step (all depts): ALWAYS show discount + debt breakdown + previous debt total
+[ ] Existing patient session: add "ديون سابقة" section + cumulative total
+[ ] كشوفات المرضى: unique layout with patient summary card + expandable sessions
+[ ] كشوفات الشركات: unique layout with payment timeline + invoice line items
+[ ] كشوفات التأمين: unique layout with insured patients list + claims chart
+[ ] كشوفات الأقسام: unique layout with dept comparison + charts
+[ ] كشوفات مخصصة: unique builder interface (already designed — keep)
+[ ] Lab test add modal: NEW fields — سعر L2L + Kit name + initial quantity + unit + threshold
+[ ] Lab test edit modal: same fields + special "إضافة كمية" section
+[ ] Lab tests table: new columns (L2L price + Kit + Quantity with color coding)
+[ ] Low-stock kits in table: orange/red badge on quantity column
+[ ] Populate lab catalog with 24 real tests from Part 5
+
+================================================================================
+END OF AMENDMENT 3
+================================================================================

@@ -1,0 +1,86 @@
+import React, { useState, useEffect } from 'react';
+
+const UnifiedPrintComponent = ({ departmentId, departmentName }) => {
+  const storageKey = `print_settings_${departmentId}`;
+  
+  const [settings, setSettings] = useState(() => {
+    const saved = localStorage.getItem(storageKey);
+    return saved ? JSON.parse(saved) : {
+      headerEnabled: true,
+      headerImageUrl: '',
+      marginTop: 25,
+      marginBottom: 20,
+      marginRight: 15,
+      marginLeft: 15
+    };
+  });
+
+  useEffect(() => {
+    localStorage.setItem(storageKey, JSON.stringify(settings));
+  }, [settings, storageKey]);
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <html dir="rtl">
+        <head>
+          <style>
+            @page { size: A4; margin: 0; }
+            body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+            .full-page-header {
+              position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+              z-index: -1;
+              background-image: url('${settings.headerImageUrl}');
+              background-size: 100% 100%;
+              background-repeat: no-repeat;
+            }
+            .content-area {
+              padding: ${settings.marginTop}mm ${settings.marginRight}mm ${settings.marginBottom}mm ${settings.marginLeft}mm;
+            }
+          </style>
+        </head>
+        <body>
+          ${settings.headerEnabled && settings.headerImageUrl ? `<div class="full-page-header"></div>` : ''}
+          <div class="content-area">
+            ${document.getElementById('printable-content').innerHTML}
+          </div>
+        </body>
+      </html>
+    `);
+    setTimeout(() => { printWindow.print(); }, 500);
+  };
+
+  return (
+    <div className="p-6 bg-white rounded-xl shadow-lg border border-blue-100">
+      <h2 className="text-xl font-bold mb-6 text-blue-900">إعدادات طباعة: {departmentName}</h2>
+
+      <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+        <label className="flex items-center mb-4">
+          <input type="checkbox" checked={settings.headerEnabled} onChange={(e) => setSettings({...settings, headerEnabled: e.target.checked})} className="ml-2"/>
+          تفعيل الترويسة كخلفية كاملة
+        </label>
+        {settings.headerEnabled && (
+          <input type="file" accept="image/*" onChange={(e) => {
+            const file = e.target.files[0];
+            if (file) setSettings({...settings, headerImageUrl: URL.createObjectURL(file)});
+          }} className="w-full p-2 border rounded" />
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <input type="number" placeholder="الهامش العلوي (mm)" value={settings.marginTop} onChange={(e) => setSettings({...settings, marginTop: e.target.value})} className="border p-2 rounded"/>
+        <input type="number" placeholder="الهامش السفلي (mm)" value={settings.marginBottom} onChange={(e) => setSettings({...settings, marginBottom: e.target.value})} className="border p-2 rounded"/>
+      </div>
+
+      <button onClick={handlePrint} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition">
+        طباعة التقرير
+      </button>
+
+      <div id="printable-content" className="hidden">
+        {/* سيتم جلب محتوى التقرير المطلوب طباعته هنا */}
+      </div>
+    </div>
+  );
+};
+
+export default UnifiedPrintComponent;

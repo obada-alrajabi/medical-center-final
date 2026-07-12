@@ -1,0 +1,121 @@
+You are working on an existing production medical center management system.
+
+This is **NOT** a redesign request.
+
+You must preserve all existing functionality and only implement the following changes carefully.
+
+# Task 1 – Synchronize Department Permission Trees
+
+The system currently has:
+
+* Administrator interface
+* Employee permission management interface
+
+Every main department in the administrator interface already contains its own complete submenu structure.
+
+I want the employee permission management screen to automatically use **the exact same submenu tree** that exists in the administrator interface.
+
+Requirements:
+
+* Do NOT manually recreate submenu definitions.
+* Use the administrator menu structure as the single source of truth.
+* Every submenu that exists under a main department in the admin interface must appear under the same department inside employee permissions.
+* Future submenu additions should automatically appear in employee permissions without requiring duplicate code.
+* Keep all existing permission logic.
+
+---
+
+# Task 2 – Remove Financial Drawer Settings From Department Permissions
+
+Inside employee permissions there is currently a financial subsection that contains drawer-specific permissions such as:
+
+* Opening Balance
+* Deposit
+* Withdraw
+* Balance Adjustment
+* Cash Drawer Management
+
+Remove this financial drawer subsection completely from **all department permission trees**.
+
+These permissions should no longer appear under any department.
+
+Do not remove backend support unless it is unused.
+
+Only remove them from the permission hierarchy so they cannot create duplicate or conflicting permission structures.
+
+After removing them:
+
+* Verify that permission inheritance still works.
+* Verify that permission serialization still works.
+* Verify that no orphan permission keys remain.
+* Verify that saving permissions still works correctly.
+
+---
+
+# Task 3 – Preserve Financial Module
+
+Do NOT remove:
+
+* Financial System
+* Vouchers
+* Reports
+* Payroll
+* Debts
+* Revenues
+* Expenses
+
+Only remove the duplicated drawer-management permission group from department permissions.
+
+---
+
+# Task 4 – Employee Personal Expense Voucher
+
+Inside every department there is:
+
+Department
+→ Vouchers & Accounts
+
+Currently Payment Voucher does not properly support employee personal expenses.
+
+Modify ONLY the Payment Voucher workflow.
+
+Requirements:
+
+Add a voucher reason/type called:
+
+"Employee Personal Expense"
+
+When selected:
+
+* The employee account becomes the beneficiary.
+* The employee name is automatically filled.
+* The voucher is linked to that employee.
+* It still belongs to the current department.
+* It is recorded as a department expense.
+* It appears correctly in reports.
+* It remains searchable.
+* It is printable.
+* It keeps the existing voucher numbering system.
+
+Do not modify Receipt Vouchers.
+
+Do not change existing voucher numbers.
+
+---
+
+# Validation Checklist
+
+Before finishing:
+
+* Verify every administrator submenu appears in employee permissions.
+* Verify there are no duplicated permission trees.
+* Verify drawer permission groups were removed from every department.
+* Verify all existing permissions still save correctly.
+* Verify payment vouchers still work.
+* Verify Employee Personal Expense works correctly.
+* Verify reports are unaffected.
+* Verify backward compatibility with existing data.
+* Do not modify unrelated modules.
+* Do not break existing routes or APIs.
+
+Implement carefully with minimal changes and preserve the current architecture.

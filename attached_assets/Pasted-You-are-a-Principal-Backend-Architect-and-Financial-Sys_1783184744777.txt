@@ -1,0 +1,190 @@
+You are a Principal Backend Architect and Financial Systems Engineer.
+
+Your task is to REFACTOR and UPGRADE an existing financial system into a SECURE LEDGER-BASED ARCHITECTURE.
+
+You must NOT redesign the product or change business features.
+You must ONLY fix architecture, security, and financial integrity.
+
+━━━━━━━━━━━━━━━━━━━━━━
+GOAL
+━━━━━━━━━━━━━━━━━━━━━━
+Transform the system into a backend-authoritative, append-only ledger system where:
+
+- Frontend NEVER controls financial truth
+- All balances are derived from backend ledger
+- No financial mutation bypass is possible
+- All transactions are immutable and auditable
+
+━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULES
+━━━━━━━━━━━━━━━━━━━━━━
+- Do NOT remove business features
+- Do NOT simplify system functionality
+- Do NOT break frontend UI
+- Do NOT change database unrelated to finance
+- You MUST keep backward compatibility during migration
+- You MUST implement changes in phases
+- You MUST output code + migration steps
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 1 — ANALYSIS & MAPPING
+━━━━━━━━━━━━━━━━━━━━━━
+First, analyze and list:
+
+1. All financial write operations in backend routes
+2. All frontend functions that modify money (deposit, withdraw, salary, voucher)
+3. All places where balance is calculated or stored
+4. All endpoints that mutate financial state without auth
+5. All client-side computed financial values
+
+Output:
+- A structured map of “Money Flow Paths”
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 2 — DATABASE DESIGN (LEDGER LAYER)
+━━━━━━━━━━━━━━━━━━━━━━
+Create a new immutable ledger system:
+
+CREATE TABLE ledger_entries with:
+
+- id (BIGSERIAL PK)
+- dept (VARCHAR)
+- type (CREDIT | DEBIT)
+- amount (NUMERIC(12,2))
+- category (TEXT)
+- description (TEXT)
+- reference_type (TEXT)
+- reference_id (TEXT)
+- created_at (TIMESTAMPTZ DEFAULT now())
+- created_by (TEXT)
+- is_reversed (BOOLEAN DEFAULT false)
+
+IMPORTANT:
+- NO UPDATE allowed on ledger_entries
+- NO DELETE allowed on ledger_entries
+- Only INSERT is allowed
+
+Also:
+- drawers.balance becomes DERIVED (not source of truth)
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 3 — LEDGER SERVICE LAYER
+━━━━━━━━━━━━━━━━━━━━━━
+Create a backend service:
+
+services/ledgerService.js
+
+Implement:
+
+1. postLedgerEntry()
+   - inserts immutable entry
+
+2. getBalance(dept)
+   - calculates balance from SUM(CREDIT - DEBIT)
+
+3. getLedgerByDept()
+   - returns filtered ledger
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 4 — REPLACE ALL FINANCIAL MUTATIONS
+━━━━━━━━━━━━━━━━━━━━━━
+Replace ALL direct balance modifications with ledger calls:
+
+A. Receipt Voucher
+- REMOVE direct drawer balance update
+- REPLACE with CREDIT ledger entry
+
+B. Payment Voucher
+- REMOVE direct withdrawal logic
+- REPLACE with DEBIT ledger entry
+
+C. Invoices / Debts
+- Replace direct modifications with ledger events
+
+D. Salaries
+- REMOVE frontend net salary trust
+- MOVE calculation to backend
+- STORE salary payment as DEBIT ledger entry
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 5 — FIX FRONTEND TRUST MODEL
+━━━━━━━━━━━━━━━━━━━━━━
+Frontend MUST:
+
+- NEVER send balance_after
+- NEVER compute final salary
+- NEVER modify financial totals
+
+Frontend only sends:
+- amount
+- metadata (category, description, dept)
+
+Backend decides:
+- balance
+- salary
+- commission
+- final state
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 6 — AUTHORIZATION HARDENING
+━━━━━━━━━━━━━━━━━━━━━━
+Add requireFinancialAuth middleware to ALL financial routes:
+
+RULES:
+- No unauthenticated financial POST/PUT/DELETE allowed
+- No exceptions for vouchers, invoices, debts
+
+Fix:
+- Any route that mutates money MUST require auth
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 7 — MIGRATION STRATEGY
+━━━━━━━━━━━━━━━━━━━━━━
+You MUST implement safe migration:
+
+Step 1:
+- Add ledger_entries table without removing old tables
+
+Step 2:
+- Mirror every new transaction into ledger_entries
+
+Step 3:
+- Backend starts reading balances from ledger only
+
+Step 4:
+- Freeze old mutation routes
+
+Step 5:
+- Deprecate drawer_transactions writes
+
+━━━━━━━━━━━━━━━━━━━━━━
+PHASE 8 — VALIDATION TESTS
+━━━━━━━━━━━━━━━━━━━━━━
+Add verification scripts:
+
+1. Unauthorized request test → must fail
+2. Ledger tampering test → must fail
+3. Balance consistency test → must match ledger SUM
+4. Salary integrity test → backend-only computation
+
+━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT
+━━━━━━━━━━━━━━━━━━━━━━
+Return:
+
+1. DATABASE MIGRATION SQL
+2. ledgerService.js full implementation
+3. Modified backend routes (only changed parts)
+4. Frontend API changes (only required edits)
+5. Migration steps checklist
+6. Security improvements summary
+
+━━━━━━━━━━━━━━━━━━━━━━
+NON-NEGOTIABLE PRINCIPLE
+━━━━━━━━━━━━━━━━━━━━━━
+The system must behave like a REAL FINANCIAL LEDGER:
+
+- Append-only
+- Server-authoritative
+- Immutable history
+- No client trust in financial values

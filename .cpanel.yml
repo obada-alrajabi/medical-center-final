@@ -1,0 +1,27 @@
+---
+deployment:
+  tasks:
+    # ── Source NVM so the correct Node version is on $PATH ───────────────────
+    - export NVM_DIR="$HOME/.nvm"
+    - '[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"'
+
+    # ── Verify Node ≥ 18 is available; fail early if not ─────────────────────
+    - |
+      if ! command -v node &>/dev/null; then
+        echo "ERROR: Node.js is not installed. Enable Node.js via cPanel > Setup Node.js App (requires Node 18+)."
+        exit 1
+      fi
+      NODE_MAJOR=$(node -e "process.stdout.write(String(process.versions.node.split('.')[0]))")
+      if [ "$NODE_MAJOR" -lt 18 ]; then
+        echo "ERROR: Node.js $NODE_MAJOR found but >= 18 is required."
+        exit 1
+      fi
+      echo "Node.js $(node --version) detected — OK"
+
+    # ── Install dependencies and build ───────────────────────────────────────
+    - npm install --legacy-peer-deps
+    - npm run build
+
+    # ── Deploy to public_html ─────────────────────────────────────────────────
+    - export DEPLOYPATH=/home/mjcczxsn/public_html
+    - /bin/cp -R dist/* $DEPLOYPATH

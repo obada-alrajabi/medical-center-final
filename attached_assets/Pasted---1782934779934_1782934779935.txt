@@ -1,0 +1,99 @@
+أضف زرين في شاشة "الملخص المالي" بالنظام المالي الرئيسي: سند قبض وسند صرف.
+⚠️ تعليمات صارمة:
+
+لا تغيّر أي شيء موجود بالشاشة.
+لا تحذف أي كود.
+أخبرني بعد كل خطوة قبل ما تكمل.
+
+1. قاعدة البيانات:
+أضف جدولين جدد:
+sql-- سندات القبض
+CREATE TABLE receipt_vouchers (
+  id           SERIAL        PRIMARY KEY,
+  voucher_no   VARCHAR(50)   UNIQUE NOT NULL,  -- RV-2026-0001
+  date         DATE          NOT NULL,
+  amount       NUMERIC(12,2) NOT NULL,
+  received_from_type VARCHAR(20) NOT NULL,     -- 'patient'|'insurance'|'other'
+  received_from_id   VARCHAR(50),              -- ID المريض أو الشركة
+  received_from_name VARCHAR(200) NOT NULL,    -- الاسم
+  reason       TEXT          NOT NULL,
+  dept         VARCHAR(50)   REFERENCES departments(id),
+  notes        TEXT,
+  approved_by  VARCHAR(200),
+  created_at   TIMESTAMPTZ   DEFAULT NOW()
+);
+
+-- سندات الصرف
+CREATE TABLE payment_vouchers (
+  id           SERIAL        PRIMARY KEY,
+  voucher_no   VARCHAR(50)   UNIQUE NOT NULL,  -- PV-2026-0001
+  date         DATE          NOT NULL,
+  amount       NUMERIC(12,2) NOT NULL,
+  paid_to_type VARCHAR(20)   NOT NULL,         -- 'supplier'|'staff'|'other'
+  paid_to_id   VARCHAR(50),                    -- ID الشركة أو الموظف
+  paid_to_name VARCHAR(200)  NOT NULL,         -- الاسم
+  reason       TEXT          NOT NULL,
+  dept         VARCHAR(50)   REFERENCES departments(id),
+  category     VARCHAR(100),
+  notes        TEXT,
+  approved_by  VARCHAR(200),
+  created_at   TIMESTAMPTZ   DEFAULT NOW()
+);
+2. Backend:
+أضف Endpoints للجدولين:
+
+GET/POST /api/finance/receipt-vouchers
+GET/PUT/DELETE /api/finance/receipt-vouchers/:id
+GET/POST /api/finance/payment-vouchers
+GET/PUT/DELETE /api/finance/payment-vouchers/:id
+رقم السند يُولَّد تلقائياً: RV-2026-0001 للقبض، PV-2026-0001 للصرف.
+
+3. Frontend — سند الصرف:
+نموذج (Modal) يحتوي:
+
+رقم السند: تلقائي (غير قابل للتعديل)
+التاريخ: تلقائي (قابل للتعديل)
+المبلغ: حقل رقمي (إلزامي)
+المصروف له — قائمة خيارات:
+
+شركة مورد: بحث ديناميكي في الشركات الموردة الموجودة بالنظام
+موظف: بحث ديناميكي في الموظفين الموجودين بالنظام
+أخرى: حقل نصي حر لإدخال الاسم والتفاصيل يدوياً
+
+
+سبب الصرف: حقل نصي (إلزامي)
+القسم: قائمة منسدلة من الأقسام الموجودة
+اعتمد من قِبل: حقل نصي
+ملاحظات: اختياري
+
+4. Frontend — سند القبض:
+نموذج (Modal) يحتوي:
+
+رقم السند: تلقائي (غير قابل للتعديل)
+التاريخ: تلقائي (قابل للتعديل)
+المبلغ: حقل رقمي (إلزامي)
+المقبوض منه — قائمة خيارات:
+
+مريض: بحث ديناميكي بالاسم أو رقم الملف في المرضى الموجودين بالنظام
+شركة تأمين: بحث ديناميكي في شركات التأمين الموجودة بالنظام
+أخرى: حقل نصي حر لإدخال الاسم والتفاصيل يدوياً
+
+
+سبب القبض: حقل نصي (إلزامي)
+القسم: قائمة منسدلة من الأقسام الموجودة
+اعتمد من قِبل: حقل نصي
+ملاحظات: اختياري
+
+5. عرض السندات:
+
+جدول منفصل لكل نوع (قبض / صرف) يعرض كل السندات.
+بجانب كل سند: زر تعديل، زر حذف، زر طباعة.
+زر الطباعة يولّد سند رسمي يحتوي: اسم المركز، رقم السند، التاريخ، المبلغ بالأرقام والحروف، الاسم، السبب، توقيع المعتمد.
+
+⚠️ الصلاحيات:
+
+إنشاء وتعديل وحذف: للمدير فقط.
+عرض: حسب صلاحيات كل موظف.
+
+📊 في النهاية:
+أعطني تقرير بكل الملفات التي تم تعديلها أو إنشاؤها.

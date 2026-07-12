@@ -1,0 +1,212 @@
+Perform a complete architectural audit of the entire financial/accounting system of this project.
+
+IMPORTANT:
+DO NOT modify any code.
+DO NOT refactor anything.
+DO NOT create new files.
+DO NOT fix bugs.
+DO NOT optimize.
+DO NOT implement new features.
+
+Your only task is to understand and document the existing financial system.
+
+I want a complete technical report covering every financial component in the application.
+
+Analyze and explain in detail:
+
+1. Overall Financial Architecture
+- How the accounting system is designed.
+- Main financial modules.
+- How they communicate.
+- Overall data flow.
+
+2. Database
+Identify every table related to finance, including:
+- invoices
+- payments
+- receipts
+- vouchers
+- salaries
+- expenses
+- employee accounts
+- debts
+- insurance
+- laboratory billing
+- clinic billing
+- pharmacy billing
+- radiology billing
+- cashier
+- cashbox
+- financial reports
+- journals
+- ledgers
+- balances
+
+For each table explain:
+- Purpose
+- Relationships
+- Foreign keys
+- Important columns
+- How it is used.
+
+3. Backend
+List every backend file related to finance.
+
+For every file explain:
+- Responsibility
+- Exported functions
+- API endpoints
+- Database queries
+- Services used
+- Dependencies.
+
+4. API
+List every financial endpoint.
+
+For each endpoint include:
+- URL
+- HTTP method
+- Request body
+- Response
+- Authentication
+- Authorization
+- Internal workflow.
+
+5. Salary System
+Explain completely:
+- Salary calculation
+- Bonuses
+- Deductions
+- Advances
+- Employee balances
+- Payroll workflow
+- Database tables involved
+- APIs involved
+- UI involved
+
+6. Cash Flow
+Explain:
+- Cash in
+- Cash out
+- Receipts
+- Payment vouchers
+- Daily closing
+- Cashbox logic
+- Balance calculation
+
+7. Financial Reports
+Explain:
+- Available reports
+- Data sources
+- Calculation methods
+- SQL queries involved
+- Export functionality
+
+8. Employee Financial Accounts
+
+Explain:
+
+- How each employee's financial account works.
+- How balances are calculated.
+- How debts are stored.
+- How transactions are recorded.
+- How salary affects balances.
+- How deductions are stored.
+- How payment vouchers affect employees.
+- How receipts affect employees.
+
+9. Accounting Logic
+
+Explain every calculation used inside the project.
+
+Include formulas whenever possible.
+
+Show where every calculation is implemented.
+
+10. Permissions
+
+Explain:
+
+- Who can create financial records.
+- Who can edit them.
+- Who can delete them.
+- Who can approve them.
+- Which permission system is used.
+
+11. Frontend
+
+List every financial screen.
+
+Explain:
+- Purpose
+- Components
+- APIs called
+- State management
+- Business logic
+
+12. Dependencies
+
+Generate a dependency map showing:
+
+UI
+↓
+
+API
+↓
+
+Service
+↓
+
+Database
+
+for every financial feature.
+
+13. Potential Risks
+
+Identify:
+- Duplicate financial logic
+- Duplicate calculations
+- Tight coupling
+- Missing abstractions
+- Dead financial code
+- Unused APIs
+- Technical debt
+
+Do NOT suggest solutions yet.
+
+14. Modification Safety Guide
+
+Finally create a section called:
+
+"Safe Extension Points"
+
+Identify exactly where new financial features can be added safely without affecting:
+
+- Salary calculations
+- Reports
+- Existing APIs
+- Accounting logic
+- Authentication
+- Authorization
+- Existing financial records
+
+VERY IMPORTANT
+
+Do not modify the project.
+
+Do not write code.
+
+Do not refactor anything.
+
+Only inspect, analyze, document, and explain.
+
+At the end, provide:
+
+- A complete financial architecture diagram.
+- A list of all finance-related files.
+- A list of all finance-related database tables.
+- A list of all finance-related APIs.
+- A list of all calculations and where they occur.
+- A list of recommended extension points for future development.
+
+Your report should be detailed enough that another senior developer can fully understand and safely extend the financial system without reading the source code first.

@@ -1,0 +1,47 @@
+Critical Issue – Do Not Stop Until It Is Fully Fixed
+
+The Data Deletion module is still broken despite previous attempts to fix it. This is not acceptable. Your task is to perform a complete root-cause investigation and fully resolve the issue instead of making assumptions or partial fixes.
+
+Do not assume the problem is limited to a single file or endpoint. Audit the entire deletion workflow end-to-end, including:
+
+Frontend UI and deletion dialogs
+Event handlers and state updates
+API requests and responses
+Backend routes and controllers
+Service layer and business logic
+Database queries and transactions
+Foreign key constraints and table relationships
+Authentication and authorization
+Error handling and logging
+Any middleware involved in deletion
+
+Trace every deletion request from the moment the user clicks Confirm Delete until the database operation completes. Verify that:
+
+Every frontend delete action calls the correct API endpoint.
+Every API endpoint exists and is actually executed.
+Every backend handler performs the intended deletion.
+Database operations complete successfully and are committed.
+Related tables and constraints do not silently prevent deletion.
+The frontend correctly reflects the deletion result.
+No errors are swallowed or ignored.
+
+Do not claim the issue is fixed until you have verified that every deletion operation in the Data Deletion section actually works.
+
+If one deletion category works while another does not, continue investigating until all categories function correctly.
+
+Before finishing, perform an end-to-end verification of every deletion option available in the Data Deletion screen and ensure that:
+
+The request reaches the backend.
+The backend executes successfully.
+The database is actually modified.
+The frontend updates correctly.
+No console, server, or database errors remain.
+
+Do not stop after making code changes. Continue debugging until the feature is fully functional. At the end, provide a report listing:
+
+The exact root cause(s).
+Every file modified.
+Every API endpoint involved.
+Every database table affected.
+The verification performed for each deletion operation.
+Confirmation that all deletion actions now work successfully.

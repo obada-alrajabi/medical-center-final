@@ -1,0 +1,67 @@
+/**
+ * FinancialEngine.js
+ * الكود الشامل لربط النظام المالي بالكامل
+ */
+
+export const calculateFinancials = (transactions, departmentId = null) => {
+  // 1. الفلترة: إذا تم تمرير departmentId، نحسب بيانات القسم فقط.
+  // إذا لم يتم تمريره، المدير يرى المحصلة العامة (الكل).
+  const data = departmentId 
+    ? transactions.filter(t => t.departmentId === departmentId)
+    : transactions;
+
+  // 2. تصنيف المعاملات إلى "إيرادات" و "مصروفات"
+  // هذا التوزيع يشمل كل الحالات التي ذكرتها
+  const classifications = {
+    income: ['invoice', 'payment', 'receipt', 'income'], // فواتير، سندات قبض
+    expenses: [
+      'expense', 'salary', 'advance', 'purchase', 
+      'supply_lab', 'supply_clinic', 'voucher_out'
+    ] // رواتب، سلف، طلبات شراء، مستلزمات، سندات صرف
+  };
+
+  // 3. المحصلة التراكمية
+  const report = data.reduce((acc, t) => {
+    const amount = Number(t.amount) || 0;
+    const type = t.type;
+
+    if (classifications.income.includes(type)) {
+      acc.totalIncome += amount;
+      if (type === 'invoice') acc.invoices += amount;
+      if (type === 'receipt') acc.receipts += amount;
+    } 
+    else if (classifications.expenses.includes(type)) {
+      acc.totalExpenses += amount;
+      if (type === 'salary') acc.salaries += amount;
+      if (type === 'advance') acc.advances += amount;
+      if (type === 'purchase') acc.purchases += amount;
+      if (type.includes('supply')) acc.supplies += amount;
+      if (type === 'voucher_out') acc.vouchersOut += amount;
+    }
+    else if (type === 'debt') {
+      acc.totalDebts += amount;
+    }
+
+    return acc;
+  }, { 
+    totalIncome: 0, totalExpenses: 0, invoices: 0, receipts: 0, 
+    salaries: 0, advances: 0, purchases: 0, supplies: 0, 
+    vouchersOut: 0, totalDebts: 0 
+  });
+
+  return {
+    ...report,
+    netProfit: report.totalIncome - report.totalExpenses
+  };
+};
+
+/**
+ * طريقة الربط في النظام:
+ * عند إضافة أي حركة، احرص على تسجيلها في جدول الـ Transactions بهذا الشكل:
+ * {
+ * type: 'salary', // أو 'purchase', 'invoice', 'supply_lab', الخ...
+ * amount: 5000,
+ * departmentId: 'clinic_01',
+ * date: new Date()
+ * }
+ */

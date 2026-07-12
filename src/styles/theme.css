@@ -1,0 +1,397 @@
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 18px;
+  --background: #F5F5F5;
+  --foreground: #111111;
+  --card: #FFFFFF;
+  --card-foreground: #111111;
+  --popover: #FFFFFF;
+  --popover-foreground: #111111;
+  --primary: #1B3A6B;
+  --primary-foreground: #FFFFFF;
+  --secondary: #0D7377;
+  --secondary-foreground: #FFFFFF;
+  --muted: #EBF3FB;
+  --muted-foreground: #333333;
+  --accent: #E6F4F4;
+  --accent-foreground: #0D5C60;
+  --destructive: #B71C1C;
+  --destructive-foreground: #FFFFFF;
+  --border: #CCCCCC;
+  --input: transparent;
+  --input-background: #F5F5F5;
+  --switch-background: #CCCCCC;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #0D7377;
+  --chart-1: #1B3A6B;
+  --chart-2: #0D7377;
+  --chart-3: #388E3C;
+  --chart-4: #FF8F00;
+  --chart-5: #D32F2F;
+  --radius: 0.5rem;
+  --sidebar: #1B3A6B;
+  --sidebar-foreground: #FFFFFF;
+  --sidebar-primary: #FFFFFF;
+  --sidebar-primary-foreground: #1B3A6B;
+  --sidebar-accent: rgba(255,255,255,0.12);
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgba(255,255,255,0.15);
+  --sidebar-ring: #0D7377;
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  html {
+    font-size: var(--font-size);
+  }
+
+  /* ── Typography scale (base = 18px = 1rem) ─────────────────────────────────
+     h1  : 2rem     = 36px  — page titles / hero
+     h2  : 1.5rem   = 27px  — section headings
+     h3  : 1.25rem  = 22.5px — card / sub-section headings
+     h4  : 1.1rem   = 19.8px — minor headings / labels
+     body: 1rem     = 18px  — normal text
+     sm  : 0.875rem = 15.75px (text-sm utility)
+     xs  : 0.75rem  = 13.5px  (text-xs utility — captions, badges)
+  ──────────────────────────────────────────────────────────────────────────── */
+
+  h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  h4 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    line-height: 1.5;
+  }
+
+  p {
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+
+  label {
+    font-size: 1rem;
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  button {
+    font-size: 1rem;
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+    color: #1A1A1A;
+  }
+
+  input, select, textarea {
+    font-size: 1rem;
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
+    color: #1A1A1A;
+  }
+
+  input::placeholder, textarea::placeholder {
+    color: #999;
+    opacity: 1;
+  }
+
+  td, th {
+    font-size: 0.925rem;
+    line-height: 1.5;
+  }
+}
+
+/* ── Page transition animation ────────────────────────────────────────────────
+   Applied to <main> whenever the route changes (via React key prop).
+   Gives a smooth fade + slight upward slide — feels native/app-like.        */
+
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; }
+}
+
+.page-enter {
+  animation: pageEnter 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+/* ── Sidebar & content-area slide ─────────────────────────────────────────── */
+.sidebar-anim {
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  overflow: hidden;
+}
+
+/* ── Button / link micro-interactions ─────────────────────────────────────── */
+button, [role="button"] {
+  transition:
+    background-color 0.15s ease,
+    color            0.15s ease,
+    border-color     0.15s ease,
+    box-shadow       0.15s ease,
+    opacity          0.15s ease;
+}
+button:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 0.08s ease !important;
+}
+
+/* ── Card lift on hover ────────────────────────────────────────────────────── */
+.card-lift {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.card-lift:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.09) !important;
+  transform: translateY(-2px);
+}
+
+/* ── Sidebar item hover smooth ────────────────────────────────────────────── */
+.sb-item {
+  transition: background-color 0.14s ease, padding-right 0.14s ease;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   @media print — يطبع البيانات فقط، يُخفي واجهة النظام بالكامل
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Default page margins — overridden per screen via injected <style id="print-style"> */
+@page {
+  margin: 20mm 15mm 20mm 15mm;
+  size: A4 portrait;
+}
+
+@media print {
+
+  /* ── 1. إخفاء واجهة النظام (السايدبار، الشريط العلوي، الإشعارات …) ── */
+  .no-print {
+    display: none !important;
+  }
+
+  /* ── 2. تنظيف خلفية وهوامش الصفحة ──────────────────────────────────── */
+  html, body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* ── 3. إلغاء دفع المحتوى الناتج عن السايدبار ──────────────────────── */
+  body > div > div[style*="margin-right"] {
+    margin-right: 0 !important;
+  }
+
+  /* ── 4. إلغاء الـ padding الذي يحجز مكان TopBar الثابت ──────────────── */
+  body > div > div > div[style*="padding-top"] {
+    padding-top: 0 !important;
+  }
+
+  /* ── 5. المنطقة الرئيسية — بدون هوامش زائدة ────────────────────────── */
+  main {
+    padding: 6px !important;
+  }
+
+  /* ── 6. الجداول ─────────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    page-break-inside: auto;
+  }
+  thead { display: table-header-group; }
+  tr    { page-break-inside: avoid; }
+  th, td {
+    border: 1px solid #bbb;
+    padding: 5px 8px;
+    font-size: 10pt;
+  }
+  th { background: #f0f0f0 !important; font-weight: 700; -webkit-print-color-adjust: exact; }
+
+  /* ── 7. خط وألوان مناسبة للطباعة ───────────────────────────────────── */
+  * {
+    font-family: 'Tajawal', Arial, sans-serif !important;
+    color: #111 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body { direction: rtl; }
+
+  /* ── 8. إخفاء الظلال والحواف الدائرية لورق نظيف ────────────────────── */
+  [class*="shadow"] { box-shadow: none !important; }
+  [class*="rounded"] { border-radius: 2px !important; }
+
+  /* ── 9. إبقاء الحدود الهيكلية ───────────────────────────────────────── */
+  [style*="border:1px solid"], [style*="border: 1px solid"] {
+    border-color: #ccc !important;
+  }
+
+  /* ── 10. إخفاء عناصر التحكم (أزرار، فلاتر، مدخلات …) ─────────────── */
+  button,
+  input[type="button"],
+  input[type="submit"],
+  input[type="search"],
+  [data-no-print] { display: none !important; }
+
+  /* إبقاء مدخلات النص العادية مرئية كنص فقط */
+  input[type="text"], input[type="number"], textarea {
+    border: none !important;
+    background: transparent !important;
+  }
+  select { border: none !important; background: transparent !important; }
+}
+
+/* ── Recharts — freeze SVG text at fixed px sizes ────────────────────────────
+   CSS font-size cascades into SVG and overrides the fontSize prop on ticks.
+   These rules restore the intended small sizes for all chart text globally.  */
+
+.recharts-cartesian-axis-tick text,
+.recharts-cartesian-axis-tick-value,
+.recharts-text {
+  font-size: 12px !important;
+  font-family: 'Tajawal', sans-serif !important;
+}
+
+.recharts-label,
+.recharts-pie-label-text {
+  font-size: 11px !important;
+  font-family: 'Tajawal', sans-serif !important;
+}
+
+.recharts-legend-item-text,
+.recharts-legend-wrapper {
+  font-size: 12px !important;
+}
+
+.recharts-tooltip-label,
+.recharts-tooltip-item,
+.recharts-tooltip-item-name,
+.recharts-tooltip-item-value,
+.recharts-default-tooltip {
+  font-size: 13px !important;
+  font-family: 'Tajawal', sans-serif !important;
+}
+
+/* ── Global contrast overrides ───────────────────────────────────────────────
+   Inline styles and Tailwind arbitrary colours like text-[#999] are replaced
+   with darker equivalents so every shade stays legible on its background.    */
+@layer utilities {
+
+  /* Very light grays → readable mid-gray */
+  .text-\[\#999\], .text-\[\#9E9E9E\], .text-\[\#9e9e9e\] { color: #555 !important; }
+  .text-\[\#888\], .text-\[\#8E8E8E\] { color: #444 !important; }
+  .text-\[\#777\] { color: #444 !important; }
+  .text-\[\#666\] { color: #333 !important; }
+  .text-\[\#aaa\], .text-\[\#AAA\] { color: #555 !important; }
+  .text-\[\#bbb\], .text-\[\#BBB\] { color: #666 !important; }
+  .text-\[\#ccc\], .text-\[\#CCC\] { color: #777 !important; }
+
+  /* Force readable text in all interactive fields — overrides any inherited color */
+  input, select, textarea { color: #1A1A1A !important; }
+  input::placeholder, textarea::placeholder { color: #888 !important; opacity: 1 !important; }
+
+  /* White text must stay white on dark backgrounds — protect sidebar & dark cards */
+  .text-white { color: #FFFFFF !important; }
+  .text-white\/60 { color: rgba(255,255,255,0.85) !important; }
+  .text-white\/70 { color: rgba(255,255,255,0.9)  !important; }
+  .text-white\/80 { color: rgba(255,255,255,0.95) !important; }
+
+  /* Ensure badge/status text inside coloured pills stays fully opaque */
+  [class*="bg-[#"][class*="text-white"] { color: #FFFFFF !important; }
+}
