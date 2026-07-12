@@ -110,6 +110,11 @@ pool
     `ALTER TABLE staff_members ADD COLUMN IF NOT EXISTS can_attendance BOOLEAN DEFAULT false`,
   )
   .catch(() => {});
+pool
+  .query(
+    `ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS paid_amount numeric(12,2) DEFAULT 0`,
+  )
+  .catch(() => {});
 // Composite unique constraint on code and is_l2l for lab tests
 pool
   .query(

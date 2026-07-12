@@ -2124,6 +2124,7 @@ function DeptPurchaseReqsScreen({purchaseRequests,onSubmitPurchaseRequest,onAppr
     onSubmitPurchaseRequest({
       dept:screenDept,requestedBy:staffName||(screenDept==="surgery"?"موظف الجراحة والطوارئ":screenDept==="lab"?"موظف المختبر":screenDept==="rehab"?"موظف قسم العلاج التأهيلي":screenDept==="radiology"?"موظف قسم الأشعة الطبية":"موظف"),date:`${today} — ${nowTime}`,
       items:purchItems,totalAmount:totalCalc,
+      paidAmount:parseFloat(paidAmt)||totalCalc,
       note:`شركة: ${company} | المبلغ المدفوع: ${paidAmt||totalCalc} | المتبقي للشركة (دين على المركز): ${autoRemain}${note?` | ${note}`:""}`
     });
     toast("✅ تم تقديم طلب الشراء — في انتظار موافقة المدير","info");
@@ -2158,9 +2159,9 @@ function DeptPurchaseReqsScreen({purchaseRequests,onSubmitPurchaseRequest,onAppr
         <div className="space-y-3">
           {recReqs.length===0&&<EmptyState msg="لا توجد طلبات شراء بعد — اضغط على طلب جديد"/>}
           {recReqs.map(req=>{
-            const companyName=req.note.match(/شركة: ([^|]+)/)?.[1]?.trim()||"—";
-            const paidInfo=req.note.match(/المبلغ المدفوع: ([^|]+)/)?.[1]?.trim()||"—";
-            const remainInfo=req.note.match(/المتبقي للشركة: ([^|]+)/)?.[1]?.trim()||"—";
+            const companyName=req.note.match(/شركة:\s*([^|]+)/)?.[1]?.trim()||"—";
+            const paidInfo=req.note.match(/المبلغ المدفوع:\s*([^|]+)/)?.[1]?.trim()||String(req.paidAmount||0);
+            const remainInfo=req.note.match(/المتبقي للشركة(?:\s*\(.*?\))?:\s*([^|]+)/)?.[1]?.trim()||String(req.totalAmount-(req.paidAmount||0));
             return(
               <div key={req.id} className="bg-white rounded-xl p-4 shadow-sm space-y-3" style={{border:`2px solid ${req.status==="pending"?"#FFE082":req.status==="approved"?"#A5D6A7":"#FFCDD2"}`}}>
                 <div className="flex items-start justify-between gap-2">
@@ -2464,7 +2465,7 @@ function OpenPatientScreen({dept,onNavigate,sessions,debts,customDepts=[],logged
                   </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-                  {[{l:"الجلسات",v:String(pSess.length),c:"#1B3A6B"},{l:"إجمالي الفواتير",v:fmt(totalAmt),c:"#555"},{l:"المدفوع",v:fmt(totalPaid),c:"#388E3C"},{l:"الديون",v:fmt(liveDebt(p.id)),c:liveDebt(p.id)>0?"#D32F2F":"#388E3C"}].map(k=>(
+                  {[{l:"الجلسات",v:String(visibleSessionsCount),c:"#1B3A6B"},{l:"إجمالي الفواتير",v:fmt(totalAmt),c:"#555"},{l:"المدفوع",v:fmt(totalPaid),c:"#388E3C"},{l:"الديون",v:fmt(liveDebt(p.id)),c:liveDebt(p.id)>0?"#D32F2F":"#388E3C"}].map(k=>(
                     <div key={k.l} className="bg-white rounded-xl p-3 text-center" style={{border:"1px solid #E0E0E0"}}>
                       <p className="text-xs text-[#999] mb-1">{k.l}</p>
                       <p className="text-sm font-bold" style={{color:k.c}}>{k.v}</p>
@@ -2709,6 +2710,25 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
         setSessions(prev=>[ns,...prev]);
         api.sessions.create({patient_id:effectiveId,dept,doctor:autoDoc||deptInfo.short,date:form.joinDate||_localISO(),diagnoses:sessionDiag,medications:medications.filter(m=>m.name.trim()),notes:sessionNotesComputed,lab_refs:sessionLabR,rad_refs:sessionRadR,amount:sessionNet,paid:sessionPaid,debt:sessionDebt}).then((r:any)=>{
           if(pendingFiles.length>0&&r&&r.id){const fd=new FormData();pendingFiles.forEach(f=>fd.append("files",f));const _tok=getAdminToken();fetch(`/api/sessions/${r.id}/files`,{method:"POST",headers:_tok?{Authorization:`Bearer ${_tok}`}:{},body:fd}).catch(()=>{});}
+          if(isLab && sessionLabR.length>0){
+            api.queues.create({
+              dept: "lab",
+              patient_name: form.name,
+              items: selTestsDataNP.map(t=>t.name),
+              queue_time: _nowHHMM(),
+              status: "pending",
+              notes: "lab_type:internal"
+            }).catch(()=>{});
+          }
+          if(isRad && sessionRadR.length>0){
+            api.queues.create({
+              dept: "radiology",
+              patient_name: form.name,
+              items: sessionRadR,
+              queue_time: _nowHHMM(),
+              status: "pending"
+            }).catch(()=>{});
+          }
         }).catch(()=>{});
       }
       if(sessionDebt>0&&setDebts){
@@ -2737,7 +2757,15 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
       {remaining>0&&<p className="text-sm text-[#D32F2F] mb-3">دين مسجَّل: <strong>{fmt(remaining)}</strong></p>}
       {remaining<0&&<p className="text-sm text-[#388E3C] mb-3">رصيد لصالح المريض: <strong>{fmt(-remaining)}</strong></p>}
       {insComp&&insDiscAmt>0&&<p className="text-sm text-[#1B3A6B] mb-3">دين تأمين ({insComp.name}): <strong>{fmt(insDiscAmt)}</strong></p>}
-      <Btn variant="secondary" onClick={()=>onNavigate({screen:"patient-file",dept,patientId:prefillPatient?.id||fileId})}><Eye size={14}/>فتح ملف المريض</Btn>
+      <div className="flex gap-3 justify-center mt-4">
+        {isLab && (
+          <Btn variant="secondary" onClick={()=>onNavigate({screen:"lab-session",dept})}><Layers size={14}/>الانتقال لطلبات المختبر وتعبئة النتائج</Btn>
+        )}
+        {isRad && (
+          <Btn variant="secondary" onClick={()=>onNavigate({screen:"rad-session",dept})}><Layers size={14}/>الانتقال لطلبات الأشعة وتعبئة النتائج</Btn>
+        )}
+        <Btn variant="outline" onClick={()=>onNavigate({screen:"patient-file",dept,patientId:prefillPatient?.id||fileId})}><Eye size={14}/>فتح ملف المريض</Btn>
+      </div>
     </div>
   );
   const errF=(k:string)=>errors[k]&&<p className="text-xs text-[#D32F2F] mt-0.5">{errors[k]}</p>;
@@ -3343,7 +3371,7 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
     }catch{/* silent */}finally{setDeletingSessionId(null);}
   };
   const [p,setP]=useState<PatientRecord|undefined>(()=>mockPatients.find(x=>x.id===patientId)||mockPatients[0]);
-  const [tab,setTab]=useState<"clinic"|"lab"|"rehab"|"prescriptions"|"referrals"|"finance">("clinic");
+  const [tab,setTab]=useState<"clinic"|"lab"|"radiology"|"rehab"|"prescriptions"|"referrals"|"finance">("clinic");
   const [labEntries,setLabEntries]=useState<{id:number;patient:string;tests:string[];time:string;status:"pending"|"done";results?:Record<string,{name:string;unit:string;min:string;max:string;value:string}[]>}[]>([]);
   const [labLoading,setLabLoading]=useState(false);
   const [expanded,setExpanded]=useState<number|null>(null);
@@ -3368,6 +3396,18 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
       const all=(rows as any[]).map((r:any)=>({id:r.id,patient:r.patient_name,tests:Array.isArray(r.items)?r.items:[],time:r.queue_time??"",status:r.status as "pending"|"done",results:r.results||undefined}));
       setLabEntries(all.filter(e=>e.patient===p.name));
     }).catch(()=>{}).finally(()=>setLabLoading(false));
+  },[p?.name]);
+
+  const [radEntries,setRadEntries]=useState<{id:number;patient:string;images:string[];time:string;status:"pending"|"done";reports?:Record<string,string>}[]>([]);
+  const [radLoading,setRadLoading]=useState(false);
+  useEffect(()=>{
+    if(!p?.name)return;
+    setRadLoading(true);
+    api.queues.getAll("radiology").then(rows=>{
+      if(!rows){setRadLoading(false);return;}
+      const all=(rows as any[]).map((r:any)=>({id:r.id,patient:r.patient_name,images:Array.isArray(r.items)?r.items:[],time:r.queue_time??"",status:r.status as "pending"|"done",reports:r.results||undefined}));
+      setRadEntries(all.filter(e=>e.patient===p.name));
+    }).catch(()=>{}).finally(()=>setRadLoading(false));
   },[p?.name]);
   const loadFilesForSession=(sessionId:number)=>{
     if(sessionFiles[sessionId])return;
@@ -3402,8 +3442,22 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
   const deptShort=(dId:string)=>DEPARTMENTS.find(d=>d.id===dId)?.short||customDepts.find(d=>d.id===dId)?.short||dId;
   const totalAmt=finSess.reduce((s,x)=>s+x.amount,0);
   const totalPaid=finSess.reduce((s,x)=>s+x.paid,0);
-  const allMeds=pSess.flatMap(s=>s.medications.map(m=>({...m,date:s.date,dept:deptShort(s.dept)})));
-  const allRefs=pSess.flatMap(s=>[...s.labRefs.map(r=>({type:"lab" as const,name:r,date:s.date,dept:deptShort(s.dept)})),...s.radRefs.map(r=>({type:"rad" as const,name:r,date:s.date,dept:deptShort(s.dept)}))]);
+  const clinicSessions = pSess.filter(s => s.dept === "surgery" || customDepts.some(cd => cd.id === s.dept));
+  const allMeds=pSess.flatMap(s=>s.medications.map(m=>({...m,date:s.date,dept:deptShort(s.dept),rawDept:s.dept})));
+  const filteredMeds = isAdmin ? allMeds : allMeds.filter(m => m.rawDept === dept);
+  const allRefs=pSess.flatMap(s=>[...s.labRefs.map(r=>({type:"lab" as const,name:r,date:s.date,dept:deptShort(s.dept),rawDept:s.dept})),...s.radRefs.map(r=>({type:"rad" as const,name:r,date:s.date,dept:deptShort(s.dept),rawDept:s.dept}))]);
+  const filteredRefs = isAdmin ? allRefs : allRefs.filter(r => r.rawDept === dept);
+  const visibleSessionsCount = isAdmin 
+    ? pSess.length 
+    : (dept === "surgery" || customDepts.some(cd => cd.id === dept))
+      ? clinicSessions.length
+      : dept === "lab"
+        ? labEntries.length
+        : dept === "radiology"
+          ? radEntries.length
+          : dept === "rehab"
+            ? pRehab.length
+            : 0;
   const pRehab=(rehabQueueEntries||[]).filter(e=>e.patientId===p.id).sort((a,b)=>b.id-a.id);
   const handleDebtPayment=()=>{
     const amt=parseFloat(debtAmt)||0;
@@ -3419,14 +3473,39 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
     });
     setDebtModal(false);setDebtAmt("");
   };
-  const TABS=[
-    {id:"clinic",       l:`🩺 العيادة (${pSess.length})`},
+  const TABS_ALL=[
+    {id:"clinic",       l:`🩺 العيادة (${clinicSessions.length})`},
     {id:"lab",          l:`🔬 المختبر (${labEntries.length})`},
+    {id:"radiology",    l:`☢️ الأشعة (${radEntries.length})`},
     {id:"rehab",        l:`🏃 التأهيل (${pRehab.length})`},
-    {id:"prescriptions",l:`💊 الوصفات (${allMeds.length})`},
-    {id:"referrals",    l:`📋 الإحالات (${allRefs.length})`},
+    {id:"prescriptions",l:`💊 الوصفات (${filteredMeds.length})`},
+    {id:"referrals",    l:`📋 الإحالات (${filteredRefs.length})`},
     {id:"finance",      l:"💰 الملف المالي"},
   ];
+
+  const visibleTabs = TABS_ALL.filter(t => {
+    if (isAdmin) return true;
+    if (dept === "surgery" || customDepts.some(cd => cd.id === dept)) {
+      return ["clinic", "prescriptions", "referrals", "finance"].includes(t.id);
+    }
+    if (dept === "lab") {
+      return ["lab", "finance"].includes(t.id);
+    }
+    if (dept === "radiology") {
+      return ["radiology", "finance"].includes(t.id);
+    }
+    if (dept === "rehab") {
+      return ["rehab", "finance"].includes(t.id);
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const ids = visibleTabs.map(t => t.id);
+    if (!ids.includes(tab) && ids.length > 0) {
+      setTab(ids[0] as any);
+    }
+  }, [dept, isAdmin]);
   return(
     <div className="space-y-5">
       {/* ── Admin: edit registration date modal ── */}
@@ -3531,10 +3610,13 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
         footer={<>
           <Btn variant="primary" onClick={()=>{
             let html="";
+            const printSessions = isAdmin ? pSess : (dept === "surgery" || customDepts.some(cd => cd.id === dept) ? clinicSessions : []);
+            const printMeds = isAdmin ? allMeds : filteredMeds;
+            const printRefs = isAdmin ? allRefs : filteredRefs;
             if(printOpts.info)html+=`<h2>بيانات المريض</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">الاسم الكامل</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">العمر</div><div class="kpi-v">${p.age} سنة</div></div><div class="kpi-box"><div class="kpi-l">فصيلة الدم</div><div class="kpi-v">${p.blood}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div>${p.insurance?`<div class="kpi-box"><div class="kpi-l">التأمين</div><div class="kpi-v">يمتلك تأمين</div></div>`:""} ${p.chronic?`<div class="kpi-box"><div class="kpi-l">أمراض مزمنة</div><div class="kpi-v">${p.chronic}</div></div>`:""} ${p.allergy?`<div class="kpi-box"><div class="kpi-l">حساسية</div><div class="kpi-v out">${p.allergy}</div></div>`:""}</div>`;
-            if(printOpts.sessions)html+=`<h2>الجلسات (${pSess.length})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>الطبيب</th><th>الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${pSess.map(s=>canSeeFinance(s.dept)?`<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0,2).join(" · ")||"—"}</td><td>${s.doctor||"—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt>0?"out":"in"}">${s.debt>0?fmt(s.debt):"✓"}</td></tr>`:`<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0,2).join(" · ")||"—"}</td><td>${s.doctor||"—"}</td><td colspan="3">بيانات مالية غير متاحة لهذا القسم</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="4">الإجمالي (قسمك فقط)</td><td>${fmt(totalAmt)}</td><td class="in">${fmt(totalPaid)}</td><td class="${liveDebt>0?"out":"in"}">${liveDebt>0?fmt(liveDebt):"مسدد ✓"}</td></tr></tfoot></table>`;
-            if(printOpts.meds&&allMeds.length>0)html+=`<h2>الوصفات الطبية (${allMeds.length})</h2><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${allMeds.map(m=>`<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td><td>${m.date}</td><td>${m.dept}</td></tr>`).join("")}</tbody></table>`;
-            if(printOpts.refs&&allRefs.length>0)html+=`<h2>الإحالات (${allRefs.length})</h2><table><thead><tr><th>النوع</th><th>الطلب</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${allRefs.map(r=>`<tr><td>${r.type==="lab"?"مختبر":"أشعة"}</td><td>${r.name}</td><td>${r.date}</td><td>${r.dept}</td></tr>`).join("")}</tbody></table>`;
+            if(printOpts.sessions)html+=`<h2>الجلسات (${printSessions.length})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>الطبيب</th><th>الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${printSessions.map(s=>canSeeFinance(s.dept)?`<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0,2).join(" · ")||"—"}</td><td>${s.doctor||"—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt>0?"out":"in"}">${s.debt>0?fmt(s.debt):"✓"}</td></tr>`:`<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0,2).join(" · ")||"—"}</td><td>${s.doctor||"—"}</td><td colspan="3">بيانات مالية غير متاحة لهذا القسم</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="4">الإجمالي (قسمك فقط)</td><td>${fmt(totalAmt)}</td><td class="in">${fmt(totalPaid)}</td><td class="${liveDebt>0?"out":"in"}">${liveDebt>0?fmt(liveDebt):"مسدد ✓"}</td></tr></tfoot></table>`;
+            if(printOpts.meds&&printMeds.length>0)html+=`<h2>الوصفات الطبية (${printMeds.length})</h2><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printMeds.map(m=>`<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td><td>${m.date}</td><td>${m.dept}</td></tr>`).join("")}</tbody></table>`;
+            if(printOpts.refs&&printRefs.length>0)html+=`<h2>الإحالات (${printRefs.length})</h2><table><thead><tr><th>النوع</th><th>الطلب</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printRefs.map(r=>`<tr><td>${r.type==="lab"?"مختبر":"أشعة"}</td><td>${r.name}</td><td>${r.date}</td><td>${r.dept}</td></tr>`).join("")}</tbody></table>`;
             printHtml(html,`ملف المريض — ${p.name}`);
             setPrintModal(false);
           }}><Printer size={14}/>طباعة</Btn>
@@ -3596,20 +3678,20 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-[#E0E0E0]" style={{borderTop:"1px solid #E0E0E0"}}>
-          {[{l:"الجلسات",v:String(pSess.length),c:"#1B3A6B"},{l:"إجمالي الفواتير",v:fmt(totalAmt),c:"#555"},{l:"المدفوع",v:fmt(totalPaid),c:"#388E3C"},{l:"الديون",v:fmt(liveDebt),c:liveDebt>0?"#D32F2F":"#388E3C"}].map(k=>(
+          {[{l:"الجلسات",v:String(visibleSessionsCount),c:"#1B3A6B"},{l:"إجمالي الفواتير",v:fmt(totalAmt),c:"#555"},{l:"المدفوع",v:fmt(totalPaid),c:"#388E3C"},{l:"الديون",v:fmt(liveDebt),c:liveDebt>0?"#D32F2F":"#388E3C"}].map(k=>(
             <div key={k.l} className="p-3 sm:p-4 text-center"><p className="text-xs text-[#999] mb-1">{k.l}</p><p className="text-base sm:text-lg font-bold" style={{color:k.c}}>{k.v}</p></div>
           ))}
         </div>
       </div>
       {/* ── TABS ── */}
       <div className="flex gap-1.5 flex-wrap">
-        {TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id as any)} className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.id?"bg-[#1B3A6B] text-white shadow-sm":"bg-white text-[#555] hover:bg-[#F5F5F5]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}
+        {visibleTabs.map(t=><button key={t.id} onClick={()=>setTab(t.id as any)} className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.id?"bg-[#1B3A6B] text-white shadow-sm":"bg-white text-[#555] hover:bg-[#F5F5F5]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}
       </div>
 
       {/* ══════════ تبويب العيادة ══════════ */}
       {tab==="clinic"&&<Card title="السجل الطبي — زيارات العيادة" action={<Btn small variant="secondary" onClick={()=>onNavigate({screen:"new-session",dept,patientId:p.id})}><Plus size={13}/>جلسة جديدة</Btn>}>
-        {pSess.length===0?<EmptyState msg="لا توجد زيارات عيادية مسجَّلة"/>:
-          <div className="space-y-3">{pSess.map(s=>(
+        {clinicSessions.length===0?<EmptyState msg="لا توجد زيارات عيادية مسجَّلة"/>:
+          <div className="space-y-3">{clinicSessions.map(s=>(
             <div key={s.id} className="rounded-xl overflow-hidden transition-shadow hover:shadow-sm" style={{border:`1px solid ${expanded===s.id?"#0D7377":"#E0E0E0"}`}}>
               <button className="w-full flex items-center justify-between p-4 text-right" onClick={()=>{const target=expanded===s.id?null:s.id;setExpanded(target);if(target)loadFilesForSession(s.id);}}>
                 <div className="flex items-center gap-3">
@@ -3764,6 +3846,46 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
         )}
       </Card>}
 
+      {/* ══════════ تبويب الأشعة ══════════ */}
+      {tab==="radiology"&&<Card title="نتائج الأشعة الطبية">
+        {radLoading?(
+          <div className="flex items-center justify-center py-10 gap-2 text-[#999] text-sm"><span className="animate-spin">⏳</span>جارٍ تحميل نتائج الأشعة...</div>
+        ):radEntries.length===0?(
+          <EmptyState msg="لا توجد صور أشعة مسجَّلة لهذا المريض"/>
+        ):(
+          <div className="space-y-4">
+            {radEntries.map(entry=>(
+              <div key={entry.id} className="rounded-xl overflow-hidden" style={{border:"1px solid #E0E0E0"}}>
+                {/* رأس الأشعة */}
+                <div className="flex items-center justify-between px-4 py-3" style={{backgroundColor:"#FFF9F2",borderBottom:"1px solid #FFE0B2"}}>
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-[#FFF3E0] flex items-center justify-center"><Aperture size={15} className="text-[#E65100]"/></div>
+                    <div>
+                      <p className="text-sm font-semibold text-[#1A1A1A]">{entry.images.join(" · ")||"صور أشعة"}</p>
+                      <p className="text-xs text-[#999]">{entry.time}</p>
+                    </div>
+                  </div>
+                  <Badge color={entry.status==="done"?"success":"warning"}>{entry.status==="done"?"مُنجز ✓":"قيد الإنجاز"}</Badge>
+                </div>
+                {/* التقارير */}
+                {entry.reports&&Object.keys(entry.reports).length>0?(
+                  <div className="divide-y divide-[#F0F0F0] bg-white">
+                    {Object.entries(entry.reports).map(([imgName,reportText])=>(
+                      <div key={imgName} className="px-4 py-3">
+                        <p className="text-xs font-bold text-[#E65100] mb-2">📋 {imgName}</p>
+                        <p className="text-sm text-[#444] p-3 rounded-lg bg-white" style={{border:"1px solid #E0E0E0",lineHeight:1.7}}>{reportText||"لا يوجد تقرير مدخل"}</p>
+                      </div>
+                    ))}
+                  </div>
+                ):(
+                  <div className="px-4 py-3 bg-white"><p className="text-xs text-[#AAA]">لم تُدخل تقارير بعد لهذا الطلب</p></div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>}
+
       {/* ══════════ تبويب التأهيل ══════════ */}
       {tab==="rehab"&&<Card title="السجل العلاجي — قسم التأهيل">
         {pRehab.length===0?<EmptyState msg="لا توجد جلسات تأهيل مسجَّلة لهذا المريض"/>:(
@@ -3818,18 +3940,18 @@ function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,s
 
       {/* ══════════ تبويب الوصفات ══════════ */}
       {tab==="prescriptions"&&<Card title="💊 الوصفات الطبية">
-        {allMeds.length===0?<EmptyState msg="لا توجد وصفات طبية مسجَّلة"/>:
+        {filteredMeds.length===0?<EmptyState msg="لا توجد وصفات طبية مسجَّلة"/>:
           <table className="w-full text-sm"><THead cols={["الدواء","الجرعة","التكرار","المدة","التاريخ","القسم"]}/>
-            <tbody>{allMeds.map((m,i)=><TRow key={i} i={i}><TD className="font-medium">{m.name}</TD><TD className="text-[#555]">{m.dose||"—"}</TD><TD className="text-[#555]">{m.freq||"—"}</TD><TD className="text-[#555]">{m.duration||"—"}</TD><TD className="text-[#999]">{m.date}</TD><TD><Badge color="info">{m.dept}</Badge></TD></TRow>)}</tbody>
+            <tbody>{filteredMeds.map((m,i)=><TRow key={i} i={i}><TD className="font-medium">{m.name}</TD><TD className="text-[#555]">{m.dose||"—"}</TD><TD className="text-[#555]">{m.freq||"—"}</TD><TD className="text-[#555]">{m.duration||"—"}</TD><TD className="text-[#999]">{m.date}</TD><TD><Badge color="info">{m.dept}</Badge></TD></TRow>)}</tbody>
           </table>
         }
       </Card>}
 
       {/* ══════════ تبويب الإحالات ══════════ */}
       {tab==="referrals"&&<Card title="📋 طلبات المختبر والأشعة">
-        {allRefs.length===0?<EmptyState msg="لا توجد إحالات مسجَّلة"/>:
+        {filteredRefs.length===0?<EmptyState msg="لا توجد إحالات مسجَّلة"/>:
           <table className="w-full text-sm"><THead cols={["النوع","الطلب","التاريخ","القسم"]}/>
-            <tbody>{allRefs.map((r,i)=><TRow key={i} i={i}><TD><Badge color={r.type==="lab"?"info":"warning"}>{r.type==="lab"?<><FlaskConical size={11}/>مختبر</>:<><Aperture size={11}/>أشعة</>}</Badge></TD><TD className="font-medium">{r.name}</TD><TD className="text-[#999]">{r.date}</TD><TD><Badge color="info">{r.dept}</Badge></TD></TRow>)}</tbody>
+            <tbody>{filteredRefs.map((r,i)=><TRow key={i} i={i}><TD><Badge color={r.type==="lab"?"info":"warning"}>{r.type==="lab"?<><FlaskConical size={11}/>مختبر</>:<><Aperture size={11}/>أشعة</>}</Badge></TD><TD className="font-medium">{r.name}</TD><TD className="text-[#999]">{r.date}</TD><TD><Badge color="info">{r.dept}</Badge></TD></TRow>)}</tbody>
           </table>
         }
       </Card>}
@@ -6755,7 +6877,7 @@ function FinExpensesScreen({drawers,purchaseRequests=[],employeeAdvances=[],dept
   const paymentVoucherTotal=outTxs.filter(t=>t.category==="سند صرف"||t.category==="إلغاء سند قبض").reduce((s,t)=>s+(t.amount||0),0);
   const personalTotal=outTxs.filter(t=>t.category==="مصروف شخصي"||t.category==="مصروف شخصي — موظف").reduce((s,t)=>s+(t.amount||0),0);
   const otherExpenses=outTxs.filter(t=>!["راتب موظف","سلف موظفين","مشتريات مباشرة","مشتريات تشغيلية","سند صرف","إلغاء سند قبض","مصروف شخصي","مصروف شخصي — موظف"].includes(t.category||"")).reduce((s,t)=>s+(t.amount||0),0);
-  const _prExpFin=purchaseRequests.filter(r=>r.status==="approved"&&ir(r.date||"")&&(!dept||r.dept===dept)).reduce((s,r)=>s+(Number(r.totalAmount)||Number((r as any).total_amount)||0),0);
+  const _prExpFin=purchaseRequests.filter(r=>r.status==="approved"&&ir(r.date||"")&&(!dept||r.dept===dept)).reduce((s,r)=>s+(Number(r.paidAmount)||0),0);
   const _personalPVFin=paymentVouchers.filter(v=>ir(v.date||"")&&(!dept||(v.dept||"")===(dept||""))&&["نفقة شخصية للموظف","مصروف شخصي — موظف","مصروف شخصي"].some(c=>(v.category||"").includes(c))).reduce((s,v)=>s+(Number(v.amount)||0),0);
   const rangeOut=engExpTotal;
   const catData=[
@@ -6878,7 +7000,7 @@ function FinChartsScreen({drawers,debts,employees,invoices=[],sessions=[],receip
     {name:"ديون الشركات",value:totalInvoiceDebt,fill:"#F57C00"},
   ];
   const expPersonal=paymentVouchers.filter(v=>ir(v.date||"")&&["نفقة شخصية للموظف","مصروف شخصي — موظف","مصروف شخصي"].some(c=>(v.category||"").includes(c))).reduce((s,v)=>s+(Number(v.amount)||0),0);
-  const expPurchase=purchaseRequests.filter(r=>r.status==="approved"&&ir(r.date||"")).reduce((s,r)=>s+(Number(r.totalAmount)||0),0);
+  const expPurchase=purchaseRequests.filter(r=>r.status==="approved"&&ir(r.date||"")).reduce((s,r)=>s+(Number(r.paidAmount)||0),0);
   const allOutTxs=Object.values(drawers).flatMap(d=>d.txs||[]).filter(t=>t.type==="out"&&ir(t.date||""));
   const expSalaries=allOutTxs.filter(t=>["راتب موظف","salary"].some(c=>(t.category||"").includes(c))).reduce((s,t)=>s+t.amount,0);
   const expAdvances=employeeAdvances.filter(a=>!a.repaid&&ir(a.date||"")).reduce((s,a)=>s+(Number(a.amount)||0),0);
@@ -9112,7 +9234,7 @@ function ReportsScreen({toast,debts,sessions,drawers,invoices,customDepts=[]}:{t
   const insuredSessions=sessions.filter(s=>inRange(s.date)&&insuredPatients.find(p=>p.id===s.patientId));
   return(
     <div className="space-y-5">
-      <div className="flex gap-2 flex-wrap">{TABS.map(t=><button key={t.k} onClick={()=>setTab(t.k)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.k?"bg-[#1B3A6B] text-white":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}</div>
+      <div className="flex gap-2 flex-wrap">{visibleTabs.map(t=><button key={t.k} onClick={()=>setTab(t.k)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.k?"bg-[#1B3A6B] text-white":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}</div>
 
       <Card title="فترة التقرير">
         <div className="grid grid-cols-2 gap-4">
@@ -9714,7 +9836,7 @@ function GeneralSettingsScreen({toast,insurances,setInsurances,adminAccounts=[],
 
   return(
     <div className="space-y-5">
-      <div className="flex gap-2">{TABS.map(t=><button key={t.k} onClick={()=>setTab(t.k)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.k?"bg-[#1B3A6B] text-white":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}</div>
+      <div className="flex gap-2">{visibleTabs.map(t=><button key={t.k} onClick={()=>setTab(t.k)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.k?"bg-[#1B3A6B] text-white":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}</div>
 
       {tab==="insurance"&&(
         <Card title="شركات التأمين" action={<div className="flex gap-2"><Btn small variant="secondary" onClick={openInsNew}><Plus size={14}/>إضافة</Btn><Btn small variant="ghost" onClick={()=>{const rows=insurances.map(c=>[c.name,c.phone||"",c.discountClinic,c.discountLab,c.discountRad]);const ws=XLSX.utils.aoa_to_sheet([["اسم الشركة","رقم التواصل","خصم الكشفية %","خصم المختبر %","خصم الأشعة %"],...rows]);ws["!cols"]=[{wch:24},{wch:16},{wch:16},{wch:16},{wch:16}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"شركات التأمين");XLSX.writeFile(wb,`شركات_التأمين_${new Date().toLocaleDateString("en-GB").replace(/\//g,"-")}.xlsx`);toast("✅ تم تصدير Excel","success");}}><Download size={14}/>Excel</Btn><Btn small variant="ghost" onClick={()=>{const html=`<h2>شركات التأمين</h2><table><thead><tr><th>اسم الشركة</th><th>رقم التواصل</th><th>خصم الكشفية %</th><th>خصم المختبر %</th><th>خصم الأشعة %</th></tr></thead><tbody>${insurances.map(c=>`<tr><td>${c.name}</td><td>${c.phone||"—"}</td><td>${c.discountClinic>0?c.discountClinic+"%":"—"}</td><td>${c.discountLab>0?c.discountLab+"%":"—"}</td><td>${c.discountRad>0?c.discountRad+"%":"—"}</td></tr>`).join("")}</tbody></table>`;printHtml(html,"شركات التأمين");}}><Printer size={14}/>طباعة</Btn></div>}>
@@ -12810,7 +12932,7 @@ function AttendanceScreen({dept,attendance,setAttendance,loggedUser,staffList,to
         setAttendance((dbAttendance as any[]).map((r:any)=>({id:r.id,empId:r.emp_id||"",empName:r.emp_name||"",dept:r.dept||"",date:r.date?String(r.date).slice(0,10):"",dayName:r.day_name||"",checkIn:r.check_in?String(r.check_in).slice(0,5):"",checkOut:r.check_out?String(r.check_out).slice(0,5):"",totalHours:r.total_hours!=null?Number(r.total_hours):undefined})));
       }
       if(dbPurchaseRequests&&(dbPurchaseRequests as any[]).length>0){
-        setPurchaseRequests((dbPurchaseRequests as any[]).map((r:any)=>({id:r.id,dept:r.dept||"",requestedBy:r.requested_by||"",date:r.date?String(r.date).slice(0,10):"",items:Array.isArray(r.items)?r.items.map((it:any,idx:number)=>({id:it.id??idx+1,name:it.name||"",qty:Number(it.qty)||1,unit:it.unit||"",estimatedPrice:Number(it.estimated_price)||0,note:it.note||""})):[],totalAmount:Number(r.total_amount)||0,status:(r.status||"pending") as "pending"|"approved"|"rejected",note:r.note||"",approvedBy:r.approved_by||"",approvedDate:r.approved_date?String(r.approved_date).slice(0,10):"",rejectionReason:r.rejection_reason||""})));
+        setPurchaseRequests((dbPurchaseRequests as any[]).map((r:any)=>({id:r.id,dept:r.dept||"",requestedBy:r.requested_by||"",date:r.date?String(r.date).slice(0,10):"",items:Array.isArray(r.items)?r.items.map((it:any,idx:number)=>({id:it.id??idx+1,name:it.name||"",qty:Number(it.qty)||1,unit:it.unit||"",estimatedPrice:Number(it.estimated_price)||0,note:it.note||""})):[],totalAmount:Number(r.total_amount)||0,paidAmount:Number(r.paid_amount)||0,status:(r.status||"pending") as "pending"|"approved"|"rejected",note:r.note||"",approvedBy:r.approved_by||"",approvedDate:r.approved_date?String(r.approved_date).slice(0,10):"",rejectionReason:r.rejection_reason||""})));
       }
       if(dbDiagnoses&&(dbDiagnoses as any[]).length>0){
         setDiagnoses((dbDiagnoses as any[]).map((d:any)=>({id:d.id,code:d.code||"",name:d.name||"",category:d.category||"أخرى",dept:d.dept||"surgery"})));
@@ -14350,7 +14472,7 @@ export default function App(){
         setAttendance((dbAttendance as any[]).map((r:any)=>({id:r.id,empId:r.emp_id||"",empName:r.emp_name||"",dept:r.dept||"",date:r.date?String(r.date).slice(0,10):"",dayName:r.day_name||"",checkIn:r.check_in?String(r.check_in).slice(0,5):"",checkOut:r.check_out?String(r.check_out).slice(0,5):"",totalHours:r.total_hours!=null?Number(r.total_hours):undefined})));
       }
       if(dbPurchaseRequests&&(dbPurchaseRequests as any[]).length>0){
-        setPurchaseRequests((dbPurchaseRequests as any[]).map((r:any)=>({id:r.id,dept:r.dept||"",requestedBy:r.requested_by||"",date:r.date?String(r.date).slice(0,10):"",items:Array.isArray(r.items)?r.items.map((it:any,idx:number)=>({id:it.id??idx+1,name:it.name||"",qty:Number(it.qty)||1,unit:it.unit||"",estimatedPrice:Number(it.estimated_price)||0,note:it.note||""})):[],totalAmount:Number(r.total_amount)||0,status:(r.status||"pending") as "pending"|"approved"|"rejected",note:r.note||"",approvedBy:r.approved_by||"",approvedDate:r.approved_date?String(r.approved_date).slice(0,10):"",rejectionReason:r.rejection_reason||""})));
+        setPurchaseRequests((dbPurchaseRequests as any[]).map((r:any)=>({id:r.id,dept:r.dept||"",requestedBy:r.requested_by||"",date:r.date?String(r.date).slice(0,10):"",items:Array.isArray(r.items)?r.items.map((it:any,idx:number)=>({id:it.id??idx+1,name:it.name||"",qty:Number(it.qty)||1,unit:it.unit||"",estimatedPrice:Number(it.estimated_price)||0,note:it.note||""})):[],totalAmount:Number(r.total_amount)||0,paidAmount:Number(r.paid_amount)||0,status:(r.status||"pending") as "pending"|"approved"|"rejected",note:r.note||"",approvedBy:r.approved_by||"",approvedDate:r.approved_date?String(r.approved_date).slice(0,10):"",rejectionReason:r.rejection_reason||""})));
       }
       if(dbDiagnoses&&(dbDiagnoses as any[]).length>0){
         setDiagnoses((dbDiagnoses as any[]).map((d:any)=>({id:d.id,code:d.code||"",name:d.name||"",category:d.category||"أخرى",dept:d.dept||"surgery"})));
@@ -14441,13 +14563,14 @@ export default function App(){
   const onSubmitPurchaseRequest=(req:Omit<PurchaseRequest,"id"|"status">)=>{
     const _prId=Date.now();
     setPurchaseRequests(p=>[...p,{...req,id:_prId,status:"pending"}]);
-    api.finance.purchaseRequests.create({dept:req.dept,requested_by:req.requestedBy,date:_prDateISO(req.date),items:req.items,total_amount:req.totalAmount,note:req.note}).then(r=>{if(r&&(r as any).id)setPurchaseRequests(p=>p.map(x=>x.id===_prId?{...x,id:(r as any).id}:x));}).catch(()=>{});
+    api.finance.purchaseRequests.create({dept:req.dept,requested_by:req.requestedBy,date:_prDateISO(req.date),items:req.items,total_amount:req.totalAmount,paid_amount:req.paidAmount || 0,note:req.note}).then(r=>{if(r&&(r as any).id)setPurchaseRequests(p=>p.map(x=>x.id===_prId?{...x,id:(r as any).id}:x));}).catch(()=>{});
   };
   const onApprovePurchaseRequest=(id:number)=>{
     const req=purchaseRequests.find(r=>r.id===id); if(!req)return;
-    doWithdraw(req.dept,req.totalAmount,`مشتريات مُعتمدة — طلب #${id}`,"مشتريات تشغيلية");
+    const approvedPaidAmount = req.paidAmount !== undefined ? req.paidAmount : req.totalAmount;
+    doWithdraw(req.dept,approvedPaidAmount,`مشتريات مُعتمدة — طلب #${id}`,"مشتريات تشغيلية");
     setPurchaseRequests(p=>p.map(r=>r.id===id?{...r,status:"approved",approvedBy:"المدير",approvedDate:_today()}:r));
-    api.finance.purchaseRequests.update(id,{dept:req.dept,requested_by:req.requestedBy,date:_prDateISO(req.date),total_amount:req.totalAmount,status:"approved",approved_by:"المدير",approved_date:_localISO(),note:req.note});
+    api.finance.purchaseRequests.update(id,{dept:req.dept,requested_by:req.requestedBy,date:_prDateISO(req.date),total_amount:req.totalAmount,paid_amount:approvedPaidAmount,status:"approved",approved_by:"المدير",approved_date:_localISO(),note:req.note});
   };
   const onRejectPurchaseRequest=(id:number,reason:string)=>{
     setPurchaseRequests(p=>p.map(r=>r.id===id?{...r,status:"rejected",rejectionReason:reason}:r));
@@ -14469,7 +14592,7 @@ export default function App(){
     if(route.screen==="fin-purchase-reqs"&&loggedUser?.type==="admin"){
       api.finance.purchaseRequests.getAll().then(data=>{
         if(data&&Array.isArray(data)){
-          setPurchaseRequests((data as any[]).map((r:any)=>({id:r.id,dept:r.dept||"",requestedBy:r.requested_by||"",date:r.date?String(r.date).slice(0,10):"",items:Array.isArray(r.items)?r.items.map((it:any,idx:number)=>({id:it.id??idx+1,name:it.name||"",qty:Number(it.qty)||1,unit:it.unit||"",estimatedPrice:Number(it.estimated_price)||0,note:it.note||""})):[],totalAmount:Number(r.total_amount)||0,status:(r.status||"pending") as "pending"|"approved"|"rejected",note:r.note||"",approvedBy:r.approved_by||"",approvedDate:r.approved_date?String(r.approved_date).slice(0,10):"",rejectionReason:r.rejection_reason||""})));
+          setPurchaseRequests((data as any[]).map((r:any)=>({id:r.id,dept:r.dept||"",requestedBy:r.requested_by||"",date:r.date?String(r.date).slice(0,10):"",items:Array.isArray(r.items)?r.items.map((it:any,idx:number)=>({id:it.id??idx+1,name:it.name||"",qty:Number(it.qty)||1,unit:it.unit||"",estimatedPrice:Number(it.estimated_price)||0,note:it.note||""})):[],totalAmount:Number(r.total_amount)||0,paidAmount:Number(r.paid_amount)||0,status:(r.status||"pending") as "pending"|"approved"|"rejected",note:r.note||"",approvedBy:r.approved_by||"",approvedDate:r.approved_date?String(r.approved_date).slice(0,10):"",rejectionReason:r.rejection_reason||""})));
         }
       }).catch(()=>{});
     }
