@@ -2532,7 +2532,7 @@ function OpenPatientScreen({dept,onNavigate,sessions,debts,customDepts=[],logged
 
 // ─── NEW PATIENT ───────────────────────────────────────────────────────────────
 
-function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,radImages:radImagesP,insurances=[],setInvoices,diagnoses=[],setDiagnoses,loggedUser,drugs=[],setDrugs,rehabServices=[]}:{dept:string;doDeposit:(dept:string,amount:number,title:string,type:string)=>void;setSessions?:React.Dispatch<React.SetStateAction<PatientSession[]>>;setDebts?:React.Dispatch<React.SetStateAction<DebtRow[]>>;toast:(m:string,t?:any)=>void;onNavigate:(r:Route)=>void;radImages?:RadImage[];insurances?:InsuranceCo[];setInvoices?:React.Dispatch<React.SetStateAction<Invoice[]>>;diagnoses?:DiagnosisEntry[];setDiagnoses?:React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;loggedUser?:LoggedUser;drugs?:string[];setDrugs?:React.Dispatch<React.SetStateAction<string[]>>;rehabServices?:RehabServiceItem[]}){
+function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,radImages:radImagesP,insurances=[],setInvoices,diagnoses=[],setDiagnoses,loggedUser,drugs=[],setDrugs,rehabServices=[],labTests:labTestsP=[]}:{dept:string;doDeposit:(dept:string,amount:number,title:string,type:string)=>void;setSessions?:React.Dispatch<React.SetStateAction<PatientSession[]>>;setDebts?:React.Dispatch<React.SetStateAction<DebtRow[]>>;toast:(m:string,t?:any)=>void;onNavigate:(r:Route)=>void;radImages?:RadImage[];insurances?:InsuranceCo[];setInvoices?:React.Dispatch<React.SetStateAction<Invoice[]>>;diagnoses?:DiagnosisEntry[];setDiagnoses?:React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;loggedUser?:LoggedUser;drugs?:string[];setDrugs?:React.Dispatch<React.SetStateAction<string[]>>;rehabServices?:RehabServiceItem[];labTests?:LabTest[]}){
   const isAdmin=!loggedUser||loggedUser.type==="admin";
   const isLab=dept==="lab";
   const isRad=dept==="radiology";
@@ -2564,13 +2564,15 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
   const [pendingFiles,setPendingFiles]=useState<File[]>([]);
 
   // ── Lab: tests selection ──
-  const [selTests,setSelTests]=useState<string[]>([]);
+  const [selTests,setSelTests]=useState<number[]>([]);
   const [testSearch,setTestSearch]=useState("");
   const [catFilter,setCatFilter]=useState("الكل");
-  const filteredTestsNP=initialLabTests.filter(t=>(catFilter==="الكل"||t.cat===catFilter)&&(!testSearch||(t.name+t.code).includes(testSearch)));
-  const selTestsDataNP=selTests.map(c=>initialLabTests.find(t=>t.code===c)).filter(Boolean) as LabTest[];
+  const [labTypeFilterNP,setLabTypeFilterNP]=useState<"internal"|"external">("internal");
+  const _labTestsSource = labTestsP && labTestsP.length > 0 ? labTestsP : initialLabTests;
+  const filteredTestsNP=_labTestsSource.filter(t=>(catFilter==="الكل"||t.cat===catFilter)&&(labTypeFilterNP==="internal"?!t.isL2L:t.isL2L)&&(!testSearch||(t.name+t.code).includes(testSearch)));
+  const selTestsDataNP=selTests.map(id=>_labTestsSource.find(t=>t.id===id)).filter(Boolean) as LabTest[];
   const testTotalNP=selTestsDataNP.reduce((s,t)=>s+t.price,0);
-  const toggleTestNP=(code:string)=>setSelTests(p=>p.includes(code)?p.filter(c=>c!==code):[...p,code]);
+  const toggleTestNP=(id:number)=>setSelTests(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
 
   // ── Surgery / Rehab: diagnoses (قائمة منفصلة لكل قسم) ──
   const deptDiagnoses=diagnoses.filter(d=>dept==="rehab"?d.dept==="rehab":d.dept==="surgery");
@@ -2704,7 +2706,7 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
               rehabRecommendations&&`التوصيات: ${rehabRecommendations}`,
             ].filter(Boolean).join("\n")
           :sessionNotes;
-        const sessionLabR=isLab?selTests:[] as string[];
+        const sessionLabR=isLab?selTestsDataNP.map(t=>t.code):[] as string[];
         const sessionRadR=isRad?selImgsDataNP.map(t=>t.name):[] as string[];
         const ns:PatientSession={id:Date.now(),patientId:effectiveId,dept,doctor:autoDoc||deptInfo.short,date:today,diagnoses:sessionDiag,medications:medications.filter(m=>m.name.trim()).map(m=>({name:m.name,dose:m.dose,freq:m.freq,duration:m.duration})),notes:sessionNotesComputed,labRefs:sessionLabR,radRefs:sessionRadR,amount:sessionNet,paid:sessionPaid,debt:sessionDebt};
         setSessions(prev=>[ns,...prev]);
@@ -2717,7 +2719,7 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
               items: selTestsDataNP.map(t=>t.name),
               queue_time: _nowHHMM(),
               status: "pending",
-              notes: "lab_type:internal"
+              notes: `lab_type:${labTypeFilterNP}`
             }).catch(()=>{});
           }
           if(isRad && sessionRadR.length>0){
@@ -2983,12 +2985,16 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 md:gap-5">
           <div className="md:col-span-3">
             <Card title="اختيار الفحوصات المطلوبة">
+              <div className="flex gap-2 mb-4 bg-[#F5F5F5] p-1 rounded-lg">
+                <button type="button" onClick={()=>setLabTypeFilterNP("internal")} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${labTypeFilterNP==="internal"?"bg-[#1B3A6B] text-white shadow-sm":"text-[#555] hover:bg-white"}`}>🔬 المختبر الداخلي</button>
+                <button type="button" onClick={()=>setLabTypeFilterNP("external")} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${labTypeFilterNP==="external"?"bg-[#FF8F00] text-white shadow-sm":"text-[#555] hover:bg-white"}`}>🔗 مختبر خارجي L2L</button>
+              </div>
               <div className="flex gap-1.5 mb-3 flex-wrap">{(["الكل",...LAB_CATS]).map(c=><button key={c} onClick={()=>setCatFilter(c)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${catFilter===c?"bg-[#0D7377] text-white":"bg-[#F5F5F5] text-[#555] hover:bg-[#E6F4F4]"}`}>{c}</button>)}</div>
               <div className="relative mb-3"><Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input value={testSearch} onChange={e=>setTestSearch(e.target.value)} placeholder="ابحث عن فحص..." className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #E0E0E0",backgroundColor:"#FAFAFA"}}/></div>
               <div className="space-y-1.5 overflow-y-auto" style={{maxHeight:360}}>
                 {filteredTestsNP.map(t=>(
-                  <label key={t.code} onClick={()=>toggleTestNP(t.code)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${selTests.includes(t.code)?"bg-[#E6F4F4] border-[#0D7377]":"bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#0D7377]"}`} style={{border:"1px solid"}}>
-                    <input type="checkbox" readOnly checked={selTests.includes(t.code)} className="accent-[#0D7377] flex-shrink-0"/>
+                  <label key={t.id} onClick={()=>toggleTestNP(t.id)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${selTests.includes(t.id)?"bg-[#E6F4F4] border-[#0D7377]":"bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#0D7377]"}`} style={{border:"1px solid"}}>
+                    <input type="checkbox" readOnly checked={selTests.includes(t.id)} className="accent-[#0D7377] flex-shrink-0"/>
                     <div className="flex-1 min-w-0"><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-[#999]">{t.code} · {t.cat} · {t.time}</p></div>
                     <div className="text-left flex-shrink-0"><p className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</p>{t.kitQty>0&&t.kitQty<=t.kitThreshold&&<p className="text-xs text-[#FF8F00]">⚠️ مخزون منخفض</p>}</div>
                   </label>
@@ -3002,8 +3008,8 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
                 {selTests.length===0?<p className="text-sm text-[#999] text-center py-4">لم يُحدَّد فحص بعد</p>:(
                   <div className="space-y-2">
                     {selTestsDataNP.map(t=>(
-                      <div key={t.code} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{backgroundColor:"#E6F4F4",border:"1px solid #B2DFDB"}}>
-                        <button onClick={()=>toggleTestNP(t.code)} className="text-[#D32F2F] hover:text-[#B71C1C] ml-1"><X size={12}/></button>
+                      <div key={t.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{backgroundColor:"#E6F4F4",border:"1px solid #B2DFDB"}}>
+                        <button onClick={()=>toggleTestNP(t.id)} className="text-[#D32F2F] hover:text-[#B71C1C] ml-1"><X size={12}/></button>
                         <span className="text-sm flex-1 text-right mx-2">{t.name}</span>
                         <span className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</span>
                       </div>
@@ -4472,7 +4478,8 @@ function LabSessionScreen({toast,doDeposit,setDebts,debts,patientId,inventory=[]
     setResultsModal(s);setResultVals({});
     const p:Record<string,KitParam[]>={};
     s.tests.forEach(testName=>{
-      const t=_labTests.find(x=>x.name===testName);
+      const isL2L = s.labType === "external";
+      const t = _labTests.find(x => x.name === testName && x.isL2L === isL2L) || _labTests.find(x => x.name === testName);
       const defaults=t?DEFAULT_TEST_PARAMS[t.code]:undefined;
       if(defaults&&defaults.length>0){
         p[testName]=defaults.map(d=>({name:d.name,unit:d.unit,min:d.min,max:d.max}));
@@ -6019,7 +6026,7 @@ function TestCatalogScreen({toast,labTests:labTestsProp=[],setLabTests,perms}:{t
   const handleSave=()=>{
     if(!form.name.trim()||!form.code.trim()||!form.price)return;
     const base={code:form.code,name:form.name,nameEn:form.nameEn,cat:form.cat,priceOfficial:parseFloat(form.priceOfficial)||0,price:parseFloat(form.price)||0,consumablesCost:parseFloat(form.consumablesCost)||0,priceCost:parseFloat(form.priceCost)||0,isL2L:form.isL2L==="true",kit:form.kit,kitQty:parseInt(form.kitQty)||0,kitUnit:form.kitUnit,kitThreshold:parseInt(form.kitThreshold)||10,time:form.time,normalRanges};
-    const dbPayload={code:form.code,name:form.name,name_en:form.nameEn,category:form.cat,price_official:parseFloat(form.priceOfficial)||0,price:parseFloat(form.price)||0,consumables_cost:parseFloat(form.consumablesCost)||0,price_cost:parseFloat(form.priceCost)||0,is_l2l:form.isL2L==="true",kit:form.kit,kit_qty:parseInt(form.kitQty)||0,kit_unit:form.kitUnit,kit_threshold:parseInt(form.kitThreshold)||10,time_estimate:form.time};
+    const dbPayload={code:form.code,name:form.name,name_en:form.nameEn,category:form.cat,price_official:parseFloat(form.priceOfficial)||0,price:parseFloat(form.price)||0,consumables_cost:parseFloat(form.consumablesCost)||0,price_cost:parseFloat(form.priceCost)||0,is_l2l:form.isL2L==="true",kit:form.kit,kit_qty:parseInt(form.kitQty)||0,kit_unit:form.kitUnit,kit_threshold:parseInt(form.kitThreshold)||10,time_estimate:form.time,normalRanges};
     if(editItem){
       const updated=tests.map(t=>t.id===editItem.id?{...t,...base}:t);
       initialLabTests.splice(0,initialLabTests.length,...updated);
@@ -12043,7 +12050,7 @@ function StaffPortal({staff, drawers, sessions, debts, invoices, setInvoices, do
                 <OpenPatientScreen dept={activeDept} onNavigate={r=>{setRoute(r);setSubScreen(r.screen);}} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast}/>
               )}
               {subScreen==="new-patient"&&activeDept&&(
-                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r=>{setRoute(r);setSubScreen(r.screen);}} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{type:"staff",staff}} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices}/>
+                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r=>{setRoute(r);setSubScreen(r.screen);}} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{type:"staff",staff}} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests}/>
               )}
               {subScreen==="new-session"&&activeDept&&(
                 <NewSessionScreen dept={activeDept} patientId={route.patientId||""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r=>{setRoute(r);setSubScreen(r.screen);}} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{type:"staff",staff}} drugs={drugs} setDrugs={setDrugs}/>
@@ -12881,13 +12888,13 @@ function AttendanceScreen({dept,attendance,setAttendance,loggedUser,staffList,to
       }
       if(dbLabTests&&(dbLabTests as any[]).length>0){
         const mapped=(dbLabTests as any[]).map((t:any)=>{
-          const ranges = Array.isArray(t.ranges) 
-            ? t.ranges.map((r: any) => ({
-                param: r.parameter_name || "",
+          const ranges = Array.isArray(t.normalRanges) 
+            ? t.normalRanges.map((r: any) => ({
+                param: r.param || "",
                 unit: r.unit || "",
-                min: r.min_value || "",
-                max: r.max_value || "",
-                note: r.normal_value || ""
+                min: r.min || "",
+                max: r.max || "",
+                note: r.note || ""
               }))
             : [];
           return {
@@ -14449,7 +14456,36 @@ export default function App(){
         setEmployeeAdvances((dbEmployeeAdvances as any[]).map((a:any)=>({id:a.id,empName:a.emp_name||"",dept:a.dept||"",amount:Number(a.amount)||0,date:a.date||"",note:a.note||"",repaid:!!a.repaid,repaidDate:a.repaid_date||""})));
       }
       if(dbLabTests&&(dbLabTests as any[]).length>0){
-        const mapped=(dbLabTests as any[]).map((t:any)=>({id:t.id,code:t.code||"",name:t.name||"",nameEn:t.name_en||"",cat:t.category||"تحاليل الدم",priceOfficial:Number(t.price_official)||0,price:Number(t.price)||0,consumablesCost:Number(t.consumables_cost)||0,priceCost:Number(t.price_cost)||0,isL2L:!!t.is_l2l,kit:t.kit||"",kitQty:Number(t.kit_qty)||0,kitUnit:t.kit_unit||"وحدة",kitThreshold:Number(t.kit_threshold)||10,time:t.time_estimate||"",timeUnit:"ساعة",normalRanges:[]}));
+        const mapped=(dbLabTests as any[]).map((t:any)=>{
+          const ranges = Array.isArray(t.normalRanges) 
+            ? t.normalRanges.map((r: any) => ({
+                param: r.param || "",
+                unit: r.unit || "",
+                min: r.min || "",
+                max: r.max || "",
+                note: r.note || ""
+              }))
+            : [];
+          return {
+            id:t.id,
+            code:t.code||"",
+            name:t.name||"",
+            nameEn:t.name_en||"",
+            cat:t.category||"تحاليل الدم",
+            priceOfficial:Number(t.price_official)||0,
+            price:Number(t.price)||0,
+            consumablesCost:Number(t.consumables_cost)||0,
+            priceCost:Number(t.price_cost)||0,
+            isL2L:!!t.is_l2l,
+            kit:t.kit||"",
+            kitQty:Number(t.kit_qty)||0,
+            kitUnit:t.kit_unit||"وحدة",
+            kitThreshold:Number(t.kit_threshold)||10,
+            time:t.time_estimate||"",
+            timeUnit:"ساعة",
+            normalRanges: ranges
+          };
+        });
         initialLabTests.splice(0,initialLabTests.length,...mapped);
         setLabTests([...mapped]);
       }
@@ -14681,7 +14717,7 @@ export default function App(){
     switch(route.screen){
       case"dashboard":         return<DashboardScreen drawers={drawers} debts={debts} invoices={invoices} purchaseRequests={purchaseRequests} onNavigate={setRoute} customDepts={customDepts} sessions={sessions} deptCapacity={sidebarSettings.deptCapacity} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} externalDebts={externalDebts}/>;
       case"open-patient":      return<OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast}/>;
-      case"new-patient":       return<NewPatientScreen dept={dept} doDeposit={(d,a,t,ty)=>doDeposit(d,a,t,ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices}/>;
+      case"new-patient":       return<NewPatientScreen dept={dept} doDeposit={(d,a,t,ty)=>doDeposit(d,a,t,ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests}/>;
       case"new-session":       return<NewSessionScreen dept={dept} patientId={route.patientId||mockPatients[0]?.id||""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs}/>;
       case"patient-file":      return<PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId||mockPatients[0]?.id||""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id=>setSessions(p=>p.filter(s=>s.id!==id))}/>;
       case"surgery-clinic-inv":return<SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify}/>;
