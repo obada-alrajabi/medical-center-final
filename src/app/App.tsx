@@ -4332,7 +4332,7 @@ function LabSessionScreen({toast,doDeposit,setDebts,debts,patientId,inventory=[]
   labTests?:LabTest[];
 }){
   const preselected=patientId?mockPatients.find(p=>p.id===patientId)||null:null;
-  const [view,setView]=useState<"register"|"board">("register");
+  const [view,setView]=useState<"register"|"board">("board");
   const [lastSaved,setLastSaved]=useState<{name:string;tests:number;debtAmt:number}|null>(null);
   const [step,setStep]=useState(preselected?2:0);
   const [mode,setMode]=useState<"new"|"existing">("existing");
@@ -4492,32 +4492,13 @@ function LabSessionScreen({toast,doDeposit,setDebts,debts,patientId,inventory=[]
   return(
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex gap-2">
-          {([{k:"register",l:"طلب فحوصات جديدة",Icon:Plus},{k:"board",l:"قائمة الانتظار",Icon:Layers}] as const).map(t=>(
-            <button key={t.k} onClick={()=>{setView(t.k);if(t.k==="register"&&!patientId){setStep(0);setSelPat(null);setSelTests([]);}}}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${view===t.k?"bg-[#0D7377] text-white shadow-sm":"bg-white text-[#555] hover:bg-[#E6F4F4]"}`}
-              style={{border:"1px solid #E0E0E0"}}>
-              <t.Icon size={14}/>{t.l}
-              {t.k==="board"&&pendingCount>0&&<span className="bg-[#FF8F00] text-white text-xs rounded-full px-1.5 font-bold">{pendingCount}</span>}
-            </button>
-          ))}
+        <div>
+          <h2 className="text-lg font-bold text-[#1B3A6B]">طلبات فحص المرضى قيد الإنجاز (بانتظار النتائج)</h2>
+          <p className="text-xs text-[#888] mt-0.5">تظهر هنا الفحوصات الطبية المطلوبة لكي يتم إدخال نتائجها.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {view==="register"&&step>0&&(
-            <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl" style={{border:"1px solid #E0E0E0"}}>
-              {STEP_LABELS.map((s,i)=>(
-                <div key={s} className="flex items-center gap-2">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${stepIdx>=i?"bg-[#0D7377] text-white":"bg-[#E0E0E0] text-[#999]"}`}>{i+1}</div>
-                  <span className={`text-xs ${stepIdx===i?"text-[#0D7377] font-bold":stepIdx>i?"text-[#555]":"text-[#999]"}`}>{s}</span>
-                  {i<STEP_LABELS.length-1&&<ChevronLeft size={12} className="text-[#CCC] mx-1"/>}
-                </div>
-              ))}
-            </div>
-          )}
-          {view==="board"&&<>
-            <Btn small variant="ghost" onClick={()=>{const html=`<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s,i)=>`<tr><td>${i+1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>${s.status==="done"?"✅ منجز":"⏳ قيد الإنجاز"}</td></tr>`).join("")}</tbody></table>`;printHtml(html,"طلبات المختبر");}}><Printer size={14}/>طباعة</Btn>
-            <Btn small variant="ghost" onClick={()=>{const html=`<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s,i)=>`<tr><td>${i+1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>${s.status==="done"?"✅ منجز":"⏳ قيد الإنجاز"}</td></tr>`).join("")}</tbody></table>`;savePdfHtml(html,"طلبات المختبر");}}><FileDown size={14}/>PDF</Btn>
-          </>}
+          <Btn small variant="ghost" onClick={()=>{const html=`<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s=>s.status==="pending").map((s,i)=>`<tr><td>${i+1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`;printHtml(html,"طلبات المختبر");}}><Printer size={14}/>طباعة</Btn>
+          <Btn small variant="ghost" onClick={()=>{const html=`<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s=>s.status==="pending").map((s,i)=>`<tr><td>${i+1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`;savePdfHtml(html,"طلبات المختبر");}}><FileDown size={14}/>PDF</Btn>
         </div>
       </div>
       {view==="register"&&(
@@ -4694,34 +4675,22 @@ function LabSessionScreen({toast,doDeposit,setDebts,debts,patientId,inventory=[]
               <button onClick={()=>setLastSaved(null)} className="text-[#555] hover:text-[#1B3A6B] flex-shrink-0"><X size={16}/></button>
             </div>
           )}
-          <p className="text-sm text-[#555]">لوحة متابعة حالة الفحوصات</p>
-          <div className="grid grid-cols-2 gap-5">
-          <Card title={`قيد الإنجاز (${board.filter(s=>s.status==="pending").length})`}>
-            {board.filter(s=>s.status==="pending").length===0?<EmptyState msg="لا توجد فحوصات قيد الإنجاز"/>:(
-              <div className="space-y-3">{board.filter(s=>s.status==="pending").map(s=>(
-                <div key={s.id} className="rounded-xl" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}>
-                  <div className="p-4">
-                    <div className="flex items-center gap-2 mb-2"><FileText size={15} className="text-[#FF8F00]"/><p className="text-sm font-bold">{s.patient}</p>{s.labType==="external"&&<span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{backgroundColor:"#FFF8E1",color:"#E65100",border:"1px solid #FFE082"}}>خارجي 🔗</span>}</div>
-                    <div className="flex flex-wrap gap-1 mb-3">{s.tests.map(t=><Badge key={t} color="warning">{t}</Badge>)}</div>
-                    <div className="flex items-center justify-between"><span className="text-xs text-[#999] flex items-center gap-1"><Clock size={11}/>{s.time}</span><Btn small variant="secondary" onClick={()=>openResults(s)}>إدخال النتائج</Btn></div>
+          <Card title={`الفحوصات المطلوبة وقيد الإنجاز (${board.filter(s=>s.status==="pending").length})`}>
+            {board.filter(s=>s.status==="pending").length===0?<EmptyState msg="لا توجد فحوصات قيد الإنجاز حالياً"/>:(
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{board.filter(s=>s.status==="pending").map(s=>(
+                <div key={s.id} className="rounded-xl transition-all hover:shadow-md" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}>
+                  <div className="p-4 flex flex-col justify-between h-full min-h-[140px]">
+                    <div>
+                      <div className="flex items-center gap-2 mb-2"><FileText size={15} className="text-[#FF8F00]"/><p className="text-sm font-bold text-[#333]">{s.patient}</p>{s.labType==="external"&&<span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{backgroundColor:"#FFF8E1",color:"#E65100",border:"1px solid #FFE082"}}>خارجي 🔗</span>}</div>
+                      <div className="flex flex-wrap gap-1 mb-3">{s.tests.map(t=><Badge key={t} color="warning">{t}</Badge>)}</div>
+                    </div>
+                    <div className="flex items-center justify-between mt-auto pt-2 border-t border-[#FFF3E0]"><span className="text-xs text-[#999] flex items-center gap-1"><Clock size={11}/>{s.time}</span><Btn small variant="secondary" onClick={()=>openResults(s)}>إدخال النتائج</Btn></div>
                   </div>
                 </div>
               ))}</div>
             )}
           </Card>
-          <Card title={`مكتمل (${board.filter(s=>s.status==="done").length})`}>
-            {board.filter(s=>s.status==="done").length===0?<EmptyState msg="لا توجد فحوصات مكتملة"/>:(
-              <div className="space-y-2">{board.filter(s=>s.status==="done").map(s=>(
-                <div key={s.id} className="p-3 rounded-xl" style={{backgroundColor:"#E8F5E9",border:"1px solid #A5D6A7"}}>
-                  <div className="flex items-center justify-between">
-                    <div><p className="text-sm font-semibold">{s.patient}{s.labType==="external"&&<span className="text-xs font-bold px-2 py-0.5 rounded-full mr-2" style={{backgroundColor:"#FFF8E1",color:"#E65100",border:"1px solid #FFE082"}}>خارجي 🔗</span>}</p><div className="flex gap-1 mt-1 flex-wrap">{s.tests.map(t=><Badge key={t} color="success">{t}</Badge>)}</div></div>
-                    <div className="flex items-center gap-2"><Badge color="success"><CheckCircle size={12}/>مُسلَّم</Badge><Btn small variant="ghost" onClick={()=>printLabReport(s.patient,s.results)}><Printer size={14}/></Btn></div>
-                  </div>
-                </div>
-              ))}</div>
-            )}
-          </Card>
-        </div></div>
+        </div>
       )}
       {view==="inventory"&&setInventory&&computeKitStatus&&<InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus}/>}
       {resultsModal&&(
@@ -4814,7 +4783,7 @@ function RadSessionScreen({toast,doDeposit,setDebts,debts,patientId,radImages:_r
   radImages?:RadImage[];
 }){
   const preselected=patientId?mockPatients.find(p=>p.id===patientId)||null:null;
-  const [view,setView]=useState<"register"|"board">("register");
+  const [view,setView]=useState<"register"|"board">("board");
   const [step,setStep]=useState(preselected?2:0);
   const [uploadedResults,setUploadedResults]=useState<Record<number,string[]>>({});
   const [uploadTargetId,setUploadTargetId]=useState<number|null>(null);
@@ -5376,7 +5345,7 @@ function LabQueueScreen({isAdmin=false,perms}:{isAdmin?:boolean;perms?:DeptPermi
   const canEditStatus=!perms||perms.canQueueEditStatus!==false;
   const canDelete=!perms||perms.canQueueDelete!==false;
   const [tab,setTab]=useState<"pending"|"done">("pending");
-  const [data,setData]=useState<{id:number;patient:string;tests:string[];time:string;status:"pending"|"done"}[]>([]);
+  const [data,setData]=useState<{id:number;patient:string;tests:string[];time:string;status:"pending"|"done";date:string}[]>([]);
   const [loading,setLoading]=useState(true);
   const [dateFrom,setDateFrom]=useState("");
   const [dateTo,setDateTo]=useState("");
@@ -5391,16 +5360,22 @@ function LabQueueScreen({isAdmin=false,perms}:{isAdmin?:boolean;perms?:DeptPermi
             patient:r.patient_name??"—",
             tests:Array.isArray(r.items)?r.items:[],
             time:r.queue_time??"",
-            status:r.status==="done"?"done":"pending"
+            status:r.status==="done"?"done":"pending",
+            date:r.created_at ? r.created_at.substring(0,10) : ""
           })));
         }catch(e){}
         setLoading(false);
       }).catch(()=>setLoading(false));
     }catch(e){setLoading(false);}
   },[]);
-  const filterDate=(s:{time?:string})=>!dateFrom&&!dateTo?true:true;
-  const pending=(data??[]).filter(s=>s.status==="pending");
-  const done=(data??[]).filter(s=>s.status==="done");
+  const filterDate=(item:any)=>{
+    if(!item.date)return true;
+    if(dateFrom&&item.date<dateFrom)return false;
+    if(dateTo&&item.date>dateTo)return false;
+    return true;
+  };
+  const pending=(data??[]).filter(s=>s.status==="pending"&&filterDate(s));
+  const done=(data??[]).filter(s=>s.status==="done"&&filterDate(s));
   const list=tab==="pending"?pending:done;
   const markDone=(id:number)=>{
     try{
@@ -5481,7 +5456,7 @@ function RadQueueScreen({isAdmin=false,perms}:{isAdmin?:boolean;perms?:DeptPermi
   const canEditStatus=!perms||perms.canQueueEditStatus!==false;
   const canDelete=!perms||perms.canQueueDelete!==false;
   const [tab,setTab]=useState<"pending"|"done">("pending");
-  const [data,setData]=useState<{id:number;patient:string;images:string[];time:string;status:"pending"|"done"}[]>([]);
+  const [data,setData]=useState<{id:number;patient:string;images:string[];time:string;status:"pending"|"done";date:string}[]>([]);
   const [loading,setLoading]=useState(true);
   const [dateFrom,setDateFrom]=useState("");
   const [dateTo,setDateTo]=useState("");
@@ -5495,7 +5470,8 @@ function RadQueueScreen({isAdmin=false,perms}:{isAdmin?:boolean;perms?:DeptPermi
             patient:r.patient_name??"—",
             images:Array.isArray(r.items)?r.items:[],
             time:r.queue_time??"",
-            status:r.status==="done"?"done":"pending"
+            status:r.status==="done"?"done":"pending",
+            date:r.created_at ? r.created_at.substring(0,10) : ""
           })));
         }catch(e){}
         setLoading(false);
@@ -5513,8 +5489,14 @@ function RadQueueScreen({isAdmin=false,perms}:{isAdmin?:boolean;perms?:DeptPermi
     setData(p=>(p??[]).filter(s=>s.id!==id));
     api.queues.delete(id).catch(()=>{});
   };
-  const pending=(data??[]).filter(s=>s.status==="pending");
-  const done=(data??[]).filter(s=>s.status==="done");
+  const filterDate=(item:any)=>{
+    if(!item.date)return true;
+    if(dateFrom&&item.date<dateFrom)return false;
+    if(dateTo&&item.date>dateTo)return false;
+    return true;
+  };
+  const pending=(data??[]).filter(s=>s.status==="pending"&&filterDate(s));
+  const done=(data??[]).filter(s=>s.status==="done"&&filterDate(s));
   const list=tab==="pending"?pending:done;
   if(loading)return<div className="flex items-center justify-center h-40"><div className="text-[#1B3A6B] text-sm font-medium">جاري تحميل قائمة الحالات…</div></div>;
   return(
