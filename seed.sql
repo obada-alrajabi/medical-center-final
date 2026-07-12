@@ -32,7 +32,6 @@ COPY public.admin_accounts (id, username, password_hash, display_name, created_a
 --
 
 COPY public.departments (id, name, short_name, icon, is_custom, sub_item_ids, sort_order, created_at) FROM stdin;
-reception       الاستقبال       الاستقبال       UserPlus        f       \N      0       2026-07-01 16:23:21.05701+00
 surgery عيادة الجراحة العامة والطوارئ   الجراحة Scissors        f       \N      1       2026-07-01 16:23:21.05701+00
 lab     مختبر التحاليل الطبية   المختبر FlaskConical    f       \N      2       2026-07-01 16:23:21.05701+00
 radiology       الأشعة التشخيصية        الأشعة  Aperture        f       \N      3       2026-07-01 16:23:21.05701+00

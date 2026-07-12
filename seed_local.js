@@ -2,7 +2,6 @@ import pg from 'pg';
 const { Client } = pg;
 
 const DEPARTMENTS = [
-  { id: 'reception', name: 'الاستقبال', short_name: 'الاستقبال', icon: 'UserPlus', is_custom: false, sub_item_ids: null, sort_order: 0 },
   { id: 'surgery', name: 'عيادة الجراحة العامة والطوارئ', short_name: 'الجراحة', icon: 'Scissors', is_custom: false, sub_item_ids: null, sort_order: 1 },
   { id: 'lab', name: 'مختبر التحاليل الطبية', short_name: 'المختبر', icon: 'FlaskConical', is_custom: false, sub_item_ids: null, sort_order: 2 },
   { id: 'radiology', name: 'الأشعة التشخيصية', short_name: 'الأشعة', icon: 'Aperture', is_custom: false, sub_item_ids: null, sort_order: 3 },

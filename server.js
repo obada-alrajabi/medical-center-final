@@ -151,7 +151,7 @@ pool
   )
   .catch(() => {});
 // Sovereign order — granular dept-permission sub-sections (register patient, print/export,
-// reception queue, catalog CRUD, inventory CRUD, per-dept attendance, staff advance, surgery clinic inventory)
+// catalog CRUD, inventory CRUD, per-dept attendance, staff advance, surgery clinic inventory)
 pool
   .query(
     `ALTER TABLE staff_dept_permissions ADD COLUMN IF NOT EXISTS can_register_patient     BOOLEAN DEFAULT false`,

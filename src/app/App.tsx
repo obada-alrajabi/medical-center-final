@@ -59,7 +59,7 @@ import {
 
 const makeTx = (id:number,type:"in"|"out",title:string,cat:string,amount:number,bal:number,time:string,date?:string,auto?:boolean,ben?:string):DrawerTx=>({id,type,title,category:cat,amount,balance:bal,time,date:date||"28/06/2026",auto,beneficiary:ben});
 const initialDrawers:Record<string,DrawerState> = {
-    reception:{ balance:0, txs:[] },
+    
     surgery:  { balance:0, txs:[] },
     lab:      { balance:0, txs:[] },
     radiology:{ balance:0, txs:[] },
@@ -1287,17 +1287,7 @@ function LowStockBanner({items}:{items:typeof initialInventory}){
 
 const NAV_ITEMS_BASE = [
   {id:"dashboard",label:"الرئيسية",Icon:Home,children:[]},
-  {id:"reception",label:"قسم الاستقبال",Icon:ClipboardList,children:[
-    {id:"reception-main",   label:"قائمة الانتظار",          screen:"reception"},
-    {id:"rec-purchase-reqs",label:"طلبات الشراء",              screen:"reception-purchase-reqs"},
-    {id:"rec-print",        label:"الطباعة والتصدير",          screen:"reception-print"},
-    {id:"rec-att",          label:"دوام الموظفين",             screen:"attendance"},
-    {id:"rec-vouchers",     label:"السندات وحساباتها",         screen:"dept-vouchers"},
-    {id:"rec-profit",       label:"الربح",                     screen:"dept-profit",   adminOnly:true},
-    {id:"rec-debts",        label:"الديون",                    screen:"dept-debts",    adminOnly:true},
-    {id:"rec-revenue",      label:"الإيرادات / الدخل",         screen:"dept-revenue",  adminOnly:true},
-    {id:"rec-expenses",     label:"المصروفات",                 screen:"dept-expenses", adminOnly:true},
-  ]},
+
   ...DEPARTMENTS.map(d=>({
     id:d.id,label:d.name,Icon:d.Icon,
     children: d.id==="lab"?[
@@ -1904,7 +1894,7 @@ function DashboardScreen({drawers,debts,invoices,purchaseRequests,onNavigate,cus
 
   // ── بيانات الرسوم البيانية — ديناميكية (تشمل الاستقبال + الأقسام الثابتة + المخصصة)
   const allDepts4Charts=[
-    {id:"reception", short:"الاستقبال", Icon:ClipboardList as React.ElementType},
+    
     ...DEPARTMENTS.map(d=>({...d,Icon:d.Icon as React.ElementType})),
     ...customDepts.map(d=>({id:d.id,short:d.short,Icon:Building2 as React.ElementType})),
   ];
@@ -2000,8 +1990,8 @@ function DashboardScreen({drawers,debts,invoices,purchaseRequests,onNavigate,cus
           );
         })}
         {(()=>{
-          const todayCountRec=sessions.filter(s=>s.dept==="reception"&&ir(s.date)).length;
-          const capRec=deptCapacity["reception"]||DEPT_CAPACITY["reception"]||20;
+          
+          
           const pctRec=Math.round((todayCountRec/capRec)*100);
           const colorRec=pctRec>=85?C.danger:pctRec>=60?C.warning:C.success;
           return(
@@ -2101,374 +2091,10 @@ function DashboardScreen({drawers,debts,invoices,purchaseRequests,onNavigate,cus
   );
 }
 
-// ─── RECEPTION SCREEN ──────────────────────────────────────────────────────────
-
-type QueueEntry={id:number;num:number;name:string;phone:string;destDept:string;notes:string;time:string;status:"waiting"|"called"|"done"};
-function ReceptionScreen({drawers,doDeposit,doWithdraw,toast,onNavigate,customDepts=[],insurances=[]}:{drawers:Record<string,DrawerState>;doDeposit:(dept:string,amount:number,title:string,cat:string)=>void;doWithdraw:(dept:string,amount:number,title:string,cat:string,ben?:string)=>void;toast:(m:string,t?:any)=>void;onNavigate:(r:Route)=>void;customDepts?:Array<{id:string;name:string;short:string}>;insurances?:InsuranceCo[]}){
-  const [queue,setQueue]=useState<QueueEntry[]>([]);
-  const [tab,setTab]=useState<"queue"|"add"|"book">("queue");
-  useEffect(()=>{api.queues.getAll("reception").then(rows=>{if(!rows)return;setQueue((rows as any[]).map(r=>({id:r.id,num:r.patient_num??r.id,name:r.patient_name,phone:r.phone??"",destDept:r.dest_dept??"",notes:r.notes??"",time:r.queue_time??"",status:r.status as "waiting"|"called"|"done"})));}).catch(()=>{});},[]);
-  const blankForm=()=>({name:"",age:"",nid:"",phone:"",email:"",address:"",gender:"ذكر",blood:"",hasAllergy:false,allergyDetails:"",hasChronic:false,chronicDetails:"",weight:"",height:"",insurance:"",destDepts:["surgery"] as string[],notes:""});
-  const [form,setForm]=useState(blankForm());
-  const [nextPatId,setNextPatId]=useState(()=>generatePatientId());
-  const [bookSearch,setBookSearch]=useState("");
-  const [bookDests,setBookDests]=useState<string[]>(["surgery"]);
-  const [bookNotes,setBookNotes]=useState("");
-  const [addPrefillSearch,setAddPrefillSearch]=useState("");
-  const [addPrefillPatient,setAddPrefillPatient]=useState<PatientRecord|null>(null);
-  const bookFiltered=bookSearch.trim()?mockPatients.filter(p=>p.name.includes(bookSearch)||p.id.includes(bookSearch)):mockPatients;
-  const bookPatient=(p:typeof mockPatients[0])=>{
-    if(bookDests.length===0){toast("اختر قسماً واحداً على الأقل","error");return;}
-    const now=_nowHHMM();
-    const num=nextNum;
-    const destLabel=bookDests.join(",");
-    const lid=Date.now();
-    setQueue(prev=>[...prev,{id:lid,num,name:p.name,phone:p.phone,destDept:destLabel,notes:bookNotes,time:now,status:"waiting"}]);
-    api.queues.create({dept:"reception",patient_name:p.name,patient_num:num,phone:p.phone,dest_dept:destLabel,notes:bookNotes,queue_time:now,status:"waiting"}).then(r=>{if(r)setQueue(prev=>prev.map(q=>q.id===lid?{...q,id:r.id}:q));}).catch(()=>{});
-    bookDests.forEach((dept,idx)=>{
-      if(dept==="surgery")return;
-      const dLid=Date.now()+100+idx;
-      api.queues.create({dept,patient_name:p.name,patient_num:num,phone:p.phone,dest_dept:dept,notes:bookNotes,queue_time:now,status:"waiting"});
-    });
-    const deptLabels=bookDests.map(d=>DEPARTMENTS.find(x=>x.id===d)?.short||customDepts.find(x=>x.id===d)?.short||d).join(" + ");
-    toast(`تم حجز ${p.name} — رقم ${num} — أقسام: ${deptLabels}`,"success");
-    setBookSearch("");setBookNotes("");setBookDests(["surgery"]);setTab("queue");
-  };
-  const waiting=queue.filter(q=>q.status==="waiting").length;
-  const called=queue.filter(q=>q.status==="called").length;
-  const done=queue.filter(q=>q.status==="done").length;
-  const nextNum=queue.length===0?1:Math.max(...queue.map(q=>q.num))+1;
-  const receDrawer=drawers["reception"]||{balance:0,txs:[]};
-
-  const today=_today();
-  const addToQueue=()=>{
-    if(!form.name.trim()){toast("أدخل اسم المريض","error");return;}
-    if(!form.age||isNaN(Number(form.age))||Number(form.age)<=0){toast("العمر بالسنوات مطلوب","error");return;}
-    if(!form.phone.trim()){toast("رقم الهاتف مطلوب","error");return;}
-    if(form.destDepts.length===0){toast("اختر قسماً واحداً على الأقل","error");return;}
-    if(form.nid.trim()&&mockPatients.find(p=>p.id===form.nid.trim())){toast("رقم الهوية مستخدم مسبقاً","error");return;}
-    const now=_nowHHMM();
-    const patId=addPrefillPatient?addPrefillPatient.id:(form.nid.trim()||nextPatId);
-    const savedName=form.name; const savedDepts=form.destDepts;
-    if(!addPrefillPatient){
-      mockPatients.push({id:patId,name:form.name,age:Number(form.age),phone:form.phone,blood:form.blood||"غير معروف",insurance:!!form.insurance,dept:"reception",date:today,debt:0,gender:form.gender,address:form.address,chronic:form.hasChronic?form.chronicDetails:"",allergy:form.hasAllergy?form.allergyDetails:""});
-      _syncPatients();
-      api.patients.create({id:patId,name:form.name,age:Number(form.age),phone:form.phone,gender:form.gender,address:form.address,blood_type:form.blood||"غير معروف",has_insurance:!!form.insurance,dept:"reception",date:api.parseDateISO(today),has_allergy:form.hasAllergy,allergy_detail:form.allergyDetails,has_chronic:form.hasChronic,chronic_detail:form.chronicDetails,debt:0});
-    }
-    setAddPrefillPatient(null);setAddPrefillSearch("");
-    setNextPatId(generatePatientId());
-    const num2=nextNum;
-    const destLabel=form.destDepts.join(",");
-    const lid2=Date.now();
-    setQueue(p=>[...p,{id:lid2,num:num2,name:form.name,phone:form.phone,destDept:destLabel,notes:form.notes,time:now,status:"waiting"}]);
-    api.queues.create({dept:"reception",patient_name:form.name,patient_num:num2,phone:form.phone,dest_dept:destLabel,notes:form.notes,queue_time:now,status:"waiting"}).then(r=>{if(r)setQueue(prev=>prev.map(q=>q.id===lid2?{...q,id:r.id}:q));}).catch(()=>{});
-    form.destDepts.forEach((dept,idx)=>{
-      if(dept==="surgery")return;
-      api.queues.create({dept,patient_name:form.name,patient_num:num2,phone:form.phone,dest_dept:dept,notes:form.notes,queue_time:now,status:"waiting"});
-    });
-    const deptLabels=savedDepts.map(d=>DEPARTMENTS.find(x=>x.id===d)?.short||customDepts.find(x=>x.id===d)?.short||d).join(" + ");
-    setForm(blankForm());
-    toast(`تمت إضافة ${savedName} — ملف: ${patId} — دور: ${num2} — أقسام: ${deptLabels}`,"success");
-    setTab("queue");
-  };
-
-  const callPatient=(id:number)=>{
-    setQueue(p=>{
-      const cur=p.find(q=>q.status==="called"&&q.id!==id);
-      if(cur)api.queues.updateStatus(cur.id,"waiting");
-      api.queues.updateStatus(id,"called");
-      return p.map(q=>q.id===id?{...q,status:"called" as const}:q.status==="called"?{...q,status:"waiting" as const}:q);
-    });
-    toast("تم استدعاء المريض","info");
-  };
-  const donePatient=(id:number)=>{setQueue(p=>p.map(q=>q.id===id?{...q,status:"done" as const}:q));api.queues.updateStatus(id,"done");toast("تم إنهاء دور المريض","success");};
-  const removePatient=(id:number)=>{setQueue(p=>p.filter(q=>q.id!==id));api.queues.delete(id);};
-  const deptName=(id:string)=>{
-    if(id.includes(","))return id.split(",").map(d=>DEPARTMENTS.find(x=>x.id===d)?.short||customDepts.find(x=>x.id===d)?.short||d).join(" + ");
-    return DEPARTMENTS.find(d=>d.id===id)?.short||customDepts.find(d=>d.id===id)?.short||id;
-  };
-  const statusColor=(s:string)=>s==="called"?"bg-[#E3F2FD] border-[#1565C0] text-[#1565C0]":s==="done"?"bg-[#F5F5F5] border-[#CCC] text-[#999]":"bg-white border-[#E0E0E0]";
-
-  return(
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <KPICard title="في الانتظار" value={String(waiting)} Icon={Hourglass} color="warning"/>
-        <KPICard title="مُستدعى الآن" value={String(called)} Icon={UserCheck} color="info"/>
-        <KPICard title="أُنجز اليوم" value={String(done)} Icon={CheckCircle} color="success"/>
-      </div>
-      <div className="flex gap-2 flex-wrap">
-        {([{id:"queue",label:"قائمة الانتظار",Icon:ListOrdered},{id:"book",label:"حجز مريض مسجل",Icon:CalendarCheck},{id:"add",label:"تسجيل مريض جديد",Icon:UserPlus}] as const).map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.id?"bg-[#1B3A6B] text-white":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>
-            <t.Icon size={15}/>{t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab==="queue"&&(
-        <div className="space-y-3">
-          {queue.filter(q=>q.status!=="done").length===0&&<EmptyState msg="لا يوجد مرضى في قائمة الانتظار"/>}
-          {[...queue].sort((a,b)=>a.num-b.num).map(q=>(
-            <div key={q.id} className={`rounded-xl p-4 border-2 transition-all ${statusColor(q.status)}`}>
-              <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold flex-shrink-0 ${q.status==="called"?"bg-[#1565C0] text-white":q.status==="done"?"bg-[#E0E0E0] text-[#999]":"bg-[#1B3A6B] text-white"}`}>{q.num}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-[#1B3A6B]">{q.name}</span>
-                    {q.status==="called"&&<Badge color="info">مُستدعى</Badge>}
-                    {q.status==="done"&&<Badge color="neutral">أُنجز</Badge>}
-                    {q.status==="waiting"&&<Badge color="warning">ينتظر</Badge>}
-                  </div>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-[#555] flex-wrap">
-                    <span>📍 {deptName(q.destDept)}</span>
-                    <span>🕐 {q.time}</span>
-                    {q.phone&&<span>📞 {q.phone}</span>}
-                    {q.notes&&<span>📝 {q.notes}</span>}
-                  </div>
-                </div>
-                {q.status!=="done"&&(
-                  <div className="flex gap-2 flex-shrink-0">
-                    {q.status==="waiting"&&<Btn small variant="primary" onClick={()=>callPatient(q.id)}><UserCheck size={13}/>استدعاء</Btn>}
-                    {q.status==="called"&&<Btn small variant="success" onClick={()=>donePatient(q.id)}><Check size={13}/>إنهاء</Btn>}
-                    <Btn small variant="outline" onClick={()=>removePatient(q.id)}><X size={13}/></Btn>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          {done>0&&(
-            <div className="mt-2 p-2 rounded-xl text-center" style={{backgroundColor:"#F5F5F5",border:"1px solid #E0E0E0"}}>
-              <p className="text-xs text-[#999]">المرضى المُنجزون ({done}) — يمكن مسح القائمة في نهاية اليوم</p>
-              <button onClick={()=>{setQueue(p=>p.filter(q=>q.status!=="done"));api.queues.clearDone("reception");}} className="text-xs text-[#D32F2F] hover:underline mt-1">مسح المُنجزين</button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab==="book"&&(
-        <div className="bg-white rounded-2xl overflow-hidden shadow-sm" style={{border:"1px solid #E0E0E0",minHeight:"60vh"}}>
-          <div className="p-4 flex flex-col gap-3" style={{borderBottom:"1px solid #E0E0E0",background:"linear-gradient(135deg,#F8FBFF,#EBF3FB)"}}>
-            <h3 className="font-bold text-[#1B3A6B] text-sm">حجز مريض مسجل مسبقاً في قائمة الانتظار</h3>
-            <div className="relative"><Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input type="text" placeholder="ابحث بالاسم أو رقم الملف / الهوية..." value={bookSearch} onChange={e=>setBookSearch(e.target.value)} className="w-full h-10 pr-8 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #E0E0E0",backgroundColor:"#FFF"}}/></div>
-            <div className="space-y-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-[#555]">الأقسام المطلوبة <span className="text-[#D32F2F]">*</span> <span className="text-[10px] text-[#888] font-normal">(يمكن اختيار أكثر من قسم)</span></label>
-                <div className="flex flex-wrap gap-2 p-2.5 rounded-lg min-h-[40px]" style={{border:"1px solid #CCC",backgroundColor:"white"}}>
-                  {[...DEPARTMENTS,...customDepts].map(d=>{
-                    const sel=bookDests.includes(d.id);
-                    return(
-                      <button key={d.id} type="button"
-                        onClick={()=>setBookDests(p=>sel?p.filter(x=>x!==d.id):[...p,d.id])}
-                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                        style={{border:`1px solid ${sel?"#1B3A6B":"#E0E0E0"}`,backgroundColor:sel?"#1B3A6B":"#F8F8F8",color:sel?"white":"#555"}}>
-                        {sel&&<Check size={10}/>}{d.short||d.name}
-                      </button>
-                    );
-                  })}
-                </div>
-                {bookDests.length>0&&<p className="text-[10px] text-[#1B3A6B]">✓ {bookDests.length} قسم مختار — سيُوجَّه الملف تلقائياً لقوائم الانتظار</p>}
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-[#555]">ملاحظات / سبب الزيارة</label>
-                <input type="text" placeholder="اختياري..." value={bookNotes} onChange={e=>setBookNotes(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-              </div>
-            </div>
-          </div>
-          <div className="overflow-y-auto" style={{maxHeight:"50vh"}}>
-            {bookFiltered.length===0&&<div className="p-8 text-center text-sm text-[#999]">لا يوجد نتائج — جرّب اسماً أو رقم ملف مختلفاً</div>}
-            {bookFiltered.map(p=>{
-              const initials=(n:string)=>n.split(" ").slice(0,2).map((w:string)=>w[0]).join("");
-              return(
-                <div key={p.id} className="flex items-center gap-4 px-4 py-3 hover:bg-[#F5F9FF] transition-colors" style={{borderBottom:"1px solid #F0F0F0"}}>
-                  <div className="w-10 h-10 rounded-xl bg-[#EBF3FB] flex items-center justify-center text-sm font-bold text-[#1B3A6B] flex-shrink-0">{initials(p.name)}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-[#1A1A1A] text-sm truncate">{p.name}</p>
-                    <div className="flex items-center gap-3 text-xs text-[#777] mt-0.5 flex-wrap">
-                      <span>رقم الملف: {p.id}</span>
-                      {p.phone&&<span>📞 {p.phone}</span>}
-                      <span>{p.age} سنة · {p.blood}</span>
-                      {p.insurance&&<Badge color="success">مؤمَّن</Badge>}
-                    </div>
-                  </div>
-                  <Btn small variant="primary" onClick={()=>bookPatient(p)}><CalendarCheck size={13}/>حجز</Btn>
-                </div>
-              );
-            })}
-          </div>
-          <div className="px-4 py-2 text-xs text-[#999] text-center" style={{borderTop:"1px solid #F0F0F0"}}>{bookFiltered.length} مريض مسجل</div>
-        </div>
-      )}
-
-      {tab==="add"&&(
-        <div className="max-w-2xl">
-          <div className="bg-white rounded-2xl p-6 shadow-sm space-y-4" style={{border:"1px solid #E0E0E0"}}>
-
-            {/* ── بحث: هل المريض مسجّل مسبقاً؟ ── */}
-            <div className="p-4 rounded-xl" style={{backgroundColor:addPrefillPatient?"#E8F5E9":"#EBF3FB",border:addPrefillPatient?"2px solid #4CAF50":"1px solid #BBDEFB"}}>
-              <p className="text-xs font-bold mb-2" style={{color:addPrefillPatient?"#2E7D32":"#1B3A6B"}}>
-                {addPrefillPatient?"✓ مريض موجود — سيُضاف لقائمة الانتظار دون تكرار الملف":"🔍 هل المريض مسجَّل مسبقاً؟"}
-              </p>
-              {addPrefillPatient?(
-                <div className="flex items-center gap-3 p-2.5 rounded-lg bg-white" style={{border:"1px solid #A5D6A7"}}>
-                  <div className="w-9 h-9 rounded-full bg-[#388E3C] text-white flex items-center justify-center text-sm font-bold flex-shrink-0">{addPrefillPatient.name[0]}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-[#1A1A1A]">{addPrefillPatient.name}</p>
-                    <p className="text-xs text-[#388E3C]">رقم الملف: <strong className="font-mono">{addPrefillPatient.id}</strong> · {addPrefillPatient.phone}</p>
-                    <p className="text-xs text-[#555] mt-0.5">لن يُنشأ ملف مكرر — سيُضاف فقط لقائمة الانتظار</p>
-                  </div>
-                  <button type="button" onClick={()=>{setAddPrefillPatient(null);setAddPrefillSearch("");setForm(blankForm());}} className="text-xs text-[#999] hover:text-[#D32F2F] px-2 py-1 rounded border border-[#DDD]">✕ إلغاء</button>
-                </div>
-              ):(
-                <>
-                  <div className="relative">
-                    <Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/>
-                    <input value={addPrefillSearch} onChange={e=>setAddPrefillSearch(e.target.value)} placeholder="ابحث بالاسم أو رقم الهوية أو الجوال..." className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #BBDEFB",backgroundColor:"white"}}/>
-                  </div>
-                  {addPrefillSearch.trim()&&(()=>{
-                    const hits=mockPatients.filter(p=>p.name.includes(addPrefillSearch)||p.id.includes(addPrefillSearch)||(p.phone||"").includes(addPrefillSearch));
-                    return hits.length>0?(
-                      <div className="mt-2 space-y-1">
-                        {hits.slice(0,5).map(p=>(
-                          <button key={p.id} type="button" onClick={()=>{
-                            setAddPrefillPatient(p as PatientRecord);
-                            setForm(prev=>({...prev,name:p.name,age:p.age?String(p.age):"",nid:p.id||"",phone:p.phone,gender:(p as any).gender||"ذكر",blood:p.blood||"",address:(p as any).address||"",hasAllergy:!!((p as any).allergy?.trim()),allergyDetails:(p as any).allergy||"",hasChronic:!!((p as any).chronic?.trim()),chronicDetails:(p as any).chronic||""}));
-                            setAddPrefillSearch("");
-                          }} className="w-full flex items-center gap-3 p-2.5 rounded-lg text-right hover:bg-[#F0FFF4] transition-colors" style={{border:"1px solid #E0E0E0",backgroundColor:"white"}}>
-                            <div className="w-8 h-8 rounded-full bg-[#1B3A6B] text-white flex items-center justify-center text-xs font-bold flex-shrink-0">{p.name[0]}</div>
-                            <div className="flex-1 min-w-0 text-right">
-                              <p className="text-sm font-bold text-[#1A1A1A] truncate">{p.name}</p>
-                              <p className="text-xs text-[#555]">رقم الملف: <span className="font-mono">{p.id}</span> · {p.phone}</p>
-                            </div>
-                            <span className="text-xs text-[#388E3C] font-bold flex-shrink-0">اختر ←</span>
-                          </button>
-                        ))}
-                      </div>
-                    ):<p className="text-xs text-[#999] mt-2 text-center">لا يوجد مريض مطابق — سيُسجَّل كمريض جديد</p>;
-                  })()}
-                </>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex items-center gap-3 p-3 rounded-xl" style={{backgroundColor:C.primaryLight}}>
-                <div className="w-9 h-9 rounded-lg bg-[#1B3A6B] flex items-center justify-center flex-shrink-0 text-white font-bold text-base">#{nextNum}</div>
-                <div><p className="text-sm font-bold text-[#1B3A6B]">رقم الدور القادم</p><p className="text-xs text-[#777]">دور رقم {nextNum} في قائمة الانتظار</p></div>
-              </div>
-              <div className="flex items-center gap-3 p-3 rounded-xl" style={{backgroundColor:"#F0FAF4",border:"1px solid #C8E6C9"}}>
-                <div className="px-3 h-9 rounded-lg bg-[#2E7D32] flex items-center justify-center flex-shrink-0 text-white font-bold text-sm tracking-wide whitespace-nowrap">
-                  {addPrefillPatient?.id||form.nid.trim()||nextPatId}
-                </div>
-                <div><p className="text-sm font-bold text-[#2E7D32]">رقم ملف المريض</p><p className="text-xs text-[#777]">{addPrefillPatient?"ملف موجود":form.nid.trim()?"مُدخَل يدوياً":"تسلسلي تلقائي"}</p></div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <InputField label="الاسم الكامل" required placeholder="اسم المريض بالكامل..." value={form.name} onChange={v=>setForm(p=>({...p,name:v}))}/>
-              <InputField label="العمر بالسنوات" required type="number" placeholder="مثال: 35" value={form.age} onChange={v=>setForm(p=>({...p,age:v}))}/>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <InputField label="رقم الهوية" placeholder="اختياري" value={form.nid} onChange={v=>setForm(p=>({...p,nid:v}))}/>
-              <InputField label="رقم الهاتف" required placeholder="+970..." value={form.phone} onChange={v=>setForm(p=>({...p,phone:v}))}/>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <InputField label="البريد الإلكتروني" placeholder="اختياري" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))}/>
-              <InputField label="العنوان" placeholder="اختياري" value={form.address} onChange={v=>setForm(p=>({...p,address:v}))}/>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">الجنس <span className="text-[#D32F2F]">*</span></label>
-                <select value={form.gender} onChange={e=>setForm(p=>({...p,gender:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}>
-                  <option value="ذكر">ذكر (Male)</option>
-                  <option value="أنثى">أنثى (Female)</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">فصيلة الدم</label>
-                <select value={form.blood} onChange={e=>setForm(p=>({...p,blood:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}>
-                  <option value="">— اختر —</option>
-                  {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(b=><option key={b}>{b}</option>)}
-                  <option value="غير معروف">غير معروف</option>
-                </select>
-              </div>
-            </div>
-
-            {/* الحساسية */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-4">
-                <label className="text-xs font-semibold text-[#555] w-28">الحساسية:</label>
-                <div className="flex gap-2">
-                  <button onClick={()=>setForm(p=>({...p,hasAllergy:false}))} className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-colors ${!form.hasAllergy?"bg-[#388E3C] text-white border-[#388E3C]":"bg-white text-[#555] border-[#E0E0E0]"}`}>● لا</button>
-                  <button onClick={()=>setForm(p=>({...p,hasAllergy:true}))} className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-colors ${form.hasAllergy?"bg-[#D32F2F] text-white border-[#D32F2F]":"bg-white text-[#555] border-[#E0E0E0]"}`}>● نعم</button>
-                </div>
-              </div>
-              {form.hasAllergy&&<InputField label="تفاصيل الحساسية" placeholder="نوع الحساسية..." value={form.allergyDetails} onChange={v=>setForm(p=>({...p,allergyDetails:v}))}/>}
-            </div>
-
-            {/* الأمراض المزمنة */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-4">
-                <label className="text-xs font-semibold text-[#555] w-28">أمراض مزمنة:</label>
-                <div className="flex gap-2">
-                  <button onClick={()=>setForm(p=>({...p,hasChronic:false}))} className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-colors ${!form.hasChronic?"bg-[#388E3C] text-white border-[#388E3C]":"bg-white text-[#555] border-[#E0E0E0]"}`}>● لا</button>
-                  <button onClick={()=>setForm(p=>({...p,hasChronic:true}))} className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-colors ${form.hasChronic?"bg-[#D32F2F] text-white border-[#D32F2F]":"bg-white text-[#555] border-[#E0E0E0]"}`}>● نعم</button>
-                </div>
-              </div>
-              {form.hasChronic&&<InputField label="تفاصيل الأمراض المزمنة" placeholder="أذكر الأمراض..." value={form.chronicDetails} onChange={v=>setForm(p=>({...p,chronicDetails:v}))}/>}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <InputField label="الوزن (كغ)" type="number" placeholder="اختياري" value={form.weight} onChange={v=>setForm(p=>({...p,weight:v}))}/>
-              <InputField label="الطول (م)" type="number" placeholder="اختياري — مثال: 1.75" value={form.height} onChange={v=>setForm(p=>({...p,height:v}))}/>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-[#555]">التأمين الصحي</label>
-              <select value={form.insurance} onChange={e=>setForm(p=>({...p,insurance:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}>
-                <option value="">— بدون تأمين —</option>
-                {insurances.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
-              </select>
-            </div>
-
-            <div className="border-t border-[#F0F0F0] pt-3 space-y-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">الأقسام المطلوبة <span className="text-[#D32F2F]">*</span> <span className="text-[10px] text-[#888] font-normal">(يمكن اختيار أكثر من قسم)</span></label>
-                <div className="flex flex-wrap gap-2 p-3 rounded-xl min-h-[44px]" style={{border:`1px solid ${form.destDepts.length===0?"#D32F2F":"#CCC"}`,backgroundColor:"#FAFAFA"}}>
-                  {[...DEPARTMENTS,...customDepts].map(d=>{
-                    const sel=form.destDepts.includes(d.id);
-                    return(
-                      <button key={d.id} type="button"
-                        onClick={()=>setForm(p=>({...p,destDepts:sel?p.destDepts.filter(x=>x!==d.id):[...p.destDepts,d.id]}))}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                        style={{border:`1px solid ${sel?"#1B3A6B":"#E0E0E0"}`,backgroundColor:sel?"#1B3A6B":"white",color:sel?"white":"#555"}}>
-                        {sel&&<Check size={11}/>}{d.short||d.name}
-                      </button>
-                    );
-                  })}
-                </div>
-                {form.destDepts.length>0&&(
-                  <p className="text-[10px] text-[#1B3A6B] flex items-center gap-1">
-                    <Check size={11}/>{form.destDepts.length} قسم مختار — سيُوجَّه الملف تلقائياً لقائمة انتظار كل قسم
-                  </p>
-                )}
-              </div>
-              <InputField label="ملاحظات / سبب الزيارة" placeholder="اختياري..." value={form.notes} onChange={v=>setForm(p=>({...p,notes:v}))}/>
-            </div>
-
-            <div className="flex gap-3">
-              <Btn variant="primary" onClick={addToQueue}><Plus size={16}/>تسجيل وإضافة للقائمة</Btn>
-              <Btn variant="outline" onClick={()=>{setForm(blankForm());setTab("queue");}}><X size={16}/>إلغاء</Btn>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-// ─── RECEPTION: طلبات الشراء ───────────────────────────────────────────────────
+// ─── DEPT PURCHASE REQS ─────────────────────────────────────────────────────────
 
 type RecPurchItem={id:number;name:string;qty:string;unit:string;price:string};
-function ReceptionPurchaseReqsScreen({purchaseRequests,onSubmitPurchaseRequest,onApprovePurchaseRequest,onRejectPurchaseRequest,onDeletePurchaseRequest,toast,isAdmin,dept:screenDept="surgery",staffName}:{purchaseRequests:PurchaseRequest[];onSubmitPurchaseRequest:(req:Omit<PurchaseRequest,"id"|"status">)=>void;onApprovePurchaseRequest:(id:number)=>void;onRejectPurchaseRequest:(id:number,reason:string)=>void;onDeletePurchaseRequest?:(id:number)=>void;toast:(m:string,t?:any)=>void;isAdmin?:boolean;dept?:string;staffName?:string}){
+function DeptPurchaseReqsScreen({purchaseRequests,onSubmitPurchaseRequest,onApprovePurchaseRequest,onRejectPurchaseRequest,onDeletePurchaseRequest,toast,isAdmin,dept:screenDept="surgery",staffName}:{purchaseRequests:PurchaseRequest[];onSubmitPurchaseRequest:(req:Omit<PurchaseRequest,"id"|"status">)=>void;onApprovePurchaseRequest:(id:number)=>void;onRejectPurchaseRequest:(id:number,reason:string)=>void;onDeletePurchaseRequest?:(id:number)=>void;toast:(m:string,t?:any)=>void;isAdmin?:boolean;dept?:string;staffName?:string}){
   const [tab,setTab]=useState<"list"|"new">("list");
   const [company,setCompany]=useState("");
   const [paidAmt,setPaidAmt]=useState("");
@@ -2496,7 +2122,7 @@ function ReceptionPurchaseReqsScreen({purchaseRequests,onSubmitPurchaseRequest,o
     if(!company.trim()){toast("أدخل اسم الشركة","error");return;}
     const purchItems:PurchaseItem[]=items.map((i,idx)=>({id:idx+1,name:i.name,qty:parseFloat(i.qty)||1,unit:i.unit,estimatedPrice:parseFloat(i.price)||0,note:""}));
     onSubmitPurchaseRequest({
-      dept:screenDept,requestedBy:staffName||(screenDept==="surgery"?"موظف الجراحة والطوارئ":screenDept==="lab"?"موظف المختبر":screenDept==="rehab"?"موظف قسم العلاج التأهيلي":screenDept==="radiology"?"موظف قسم الأشعة الطبية":"موظف الاستقبال"),date:`${today} — ${nowTime}`,
+      dept:screenDept,requestedBy:staffName||(screenDept==="surgery"?"موظف الجراحة والطوارئ":screenDept==="lab"?"موظف المختبر":screenDept==="rehab"?"موظف قسم العلاج التأهيلي":screenDept==="radiology"?"موظف قسم الأشعة الطبية":"موظف"),date:`${today} — ${nowTime}`,
       items:purchItems,totalAmount:totalCalc,
       note:`شركة: ${company} | المبلغ المدفوع: ${paidAmt||totalCalc} | المتبقي للشركة (دين على المركز): ${autoRemain}${note?` | ${note}`:""}`
     });
@@ -2514,7 +2140,7 @@ function ReceptionPurchaseReqsScreen({purchaseRequests,onSubmitPurchaseRequest,o
       {isAdmin&&pendingCount>0&&(
         <div className="flex items-center gap-3 p-4 rounded-xl" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}>
           <AlertTriangle size={20} className="text-[#FF8F00]"/>
-          <p className="text-sm font-semibold text-[#FF8F00]">{pendingCount} طلب شراء معلق من الاستقبال — بانتظار موافقتك</p>
+          <p className="text-sm font-semibold text-[#FF8F00]">{pendingCount} طلب شراء معلق من الأقسام — بانتظار موافقتك</p>
         </div>
       )}
 
@@ -2910,7 +2536,7 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
   const isLab=dept==="lab";
   const isRad=dept==="radiology";
   const isRehab=dept==="rehab";
-  const isReception=dept==="reception";
+  
   const [step,setStep]=useState(1);
   const [errors,setErrors]=useState<Record<string,string>>({});
   const [saving,setSaving]=useState(false);
@@ -3034,13 +2660,13 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
     if(!form.name.trim())e.name="الاسم إلزامي";
     if(!form.age||isNaN(Number(form.age))||Number(form.age)<=0)e.age="العمر إلزامي";
     if(!form.phone||form.phone==="+970")e.phone="أدخل رقم صحيح";
-    if(!isReception&&form.phone&&form.phone!=="+970"){const dup=mockPatients.find(p=>p.phone===form.phone);setDupWarning(dup||null);}
+    if(!false&&form.phone&&form.phone!=="+970"){const dup=mockPatients.find(p=>p.phone===form.phone);setDupWarning(dup||null);}
     setErrors(e);return Object.keys(e).length===0;
   };
   const v2=()=>{const e:Record<string,string>={};if(!form.price||parseFloat(form.price)<=0)e.price="أدخل سعر الخدمة";setErrors(e);return Object.keys(e).length===0;};
   const handleSave=()=>{
     setSaving(true);
-    if(!isReception){
+    if(!false){
       const today=_today();
       const joinDateDisplay=form.joinDate?new Date(form.joinDate).toLocaleDateString("en-GB",{day:"2-digit",month:"2-digit",year:"numeric"}):today;
       // ── Determine effective patient ID ──
@@ -3154,7 +2780,7 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
       </Modal>
 
       {/* ── Step indicator ── */}
-      {!isReception&&(
+      {!false&&(
       <div className="flex items-center justify-center gap-4">
         {[{n:1,l:"بيانات المريض"},{n:2,l:"التشخيص والعلاج"},{n:3,l:"التفاصيل المالية للكشفية"}].map(({n,l})=>(
           <div key={n} className="flex items-center gap-2">
@@ -3169,8 +2795,8 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
       {/* ── Step 1: Patient data ── */}
       {step===1&&(
         <div className="space-y-4">
-          {/* بحث تعبئة تلقائية من سجل الاستقبال */}
-          {!isReception&&(
+          
+          {!false&&(
           <div className="p-4 rounded-xl" style={{backgroundColor:prefillPatient?"#E8F5E9":"#EBF3FB",border:prefillPatient?"2px solid #4CAF50":"1px solid #BBDEFB"}}>
             <p className="text-xs font-bold mb-2" style={{color:prefillPatient?"#2E7D32":"#1B3A6B"}}>
               {prefillPatient?"✓ مريض موجود — مرتبط بملفه الأصلي (لن يتكرر في قاعدة البيانات)":"🔍 بحث في السجلات — هل المريض مسجَّل مسبقاً؟"}
@@ -3232,7 +2858,7 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
           )}
           <Card title="بيانات المريض — Patient Data">
             {/* ── File ID (read-only, unique) ── */}
-            {!isReception&&(
+            {!false&&(
               <div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}>
                 <div className="w-8 h-8 rounded-lg bg-[#1B3A6B] flex items-center justify-center flex-shrink-0"><FileText size={14} className="text-white"/></div>
                 <div className="flex-1">
@@ -3315,7 +2941,7 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
               </div>
             </div>
             <div className="flex justify-start mt-6">
-              {isReception
+              {false
                 ?<Btn variant="success" loading={saving} onClick={()=>{if(v1())handleSave();}}><Save size={16}/>حفظ بيانات المريض</Btn>
                 :<Btn variant="secondary" onClick={()=>{if(v1())setStep(2)}}>التالي <ChevronRight size={16}/></Btn>
               }
@@ -10560,7 +10186,7 @@ const deptNavScreenToSubItemId=(screen:string):string|undefined=>{
 // Permission-only extras preserved even though they are not admin menu items
 // (kept per product decision so existing permission toggles are not lost).
 const DEPT_PERM_EXTRAS: Record<string,string[]> = {
-  reception:["open-patient","staff-advance"],
+  
   surgery:["staff-advance"],
   lab:["staff-advance"],
   radiology:["staff-advance"],
@@ -11832,7 +11458,7 @@ function StaffPortal({staff, drawers, sessions, debts, invoices, setInvoices, do
 }){
   
   const customDeptsAsDepts=customDepts.map(d=>({...d,Icon:Building2 as React.ElementType}));
-  const ALL_DEPTS=[RECEPTION_DEPT,...DEPARTMENTS,...customDeptsAsDepts];
+  const ALL_DEPTS=[...DEPARTMENTS,...customDeptsAsDepts];
   const allowedDepts=ALL_DEPTS.filter(d=>staff.deptPermissions[d.id]?.canView);
   const [staffBellOpen,setStaffBellOpen]=useState(false);
   const [staffNotices,setStaffNotices]=useState<any[]>([]);
@@ -11930,7 +11556,7 @@ function StaffPortal({staff, drawers, sessions, debts, invoices, setInvoices, do
   );
 
   const activeDeptInfo=ALL_DEPTS.find(d=>d.id===activeDept);
-  const topTitle=subScreen==="home"?(activeDeptInfo?.name||"الرئيسية"):subScreen==="open-patient"?"فتح ملف مريض / تسجيل مريض":subScreen==="lab-session"?"طلبات المختبر وتعبئة النتائج":subScreen==="rad-session"?"طلبات الأشعة وتعبئة النتائج":subScreen==="test-catalog"?"دليل أسعار الفحوصات المخبرية":subScreen==="image-catalog"?"دليل أسعار صور الأشعة الطبية":subScreen==="reception"?"قائمة الانتظار":subScreen==="rehab-session"?"طلبات العلاج التأهيلي وتعبئة النتائج":subScreen==="rehab-catalog"?"دليل أسعار خدمات العلاج التأهيلي":subScreen==="purchase-reqs"?"طلبات الشراء":subScreen==="lab-queue"?"قوائم الحالات":subScreen==="rad-queue"?"قوائم الحالات":subScreen==="rehab-queue"?"قوائم الحالات":subScreen==="lab-inventory"?"مخزون مستلزمات المختبر":subScreen==="my-account"?"حسابي المالي":subScreen==="fin"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"}`:subScreen==="vouchers"?"السندات وحساباتها":subScreen==="attendance"?"دوام الموظفين":subScreen==="staff-advance"?"طلب سلفة مالية":subScreen==="rehab-new-plan"?"إنشاء خطة علاجية تأهيلية":subScreen==="dept-drawer"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الصندوق`:subScreen==="dept-profit"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الربح`:subScreen==="dept-debts"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الديون`:subScreen==="dept-revenue"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الإيرادات / الدخل`:subScreen==="dept-expenses"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — المصروفات`:subScreen==="surgery-clinic-inv"?"مستلزمات عيادة الجراحة والطوارئ":subScreen==="print-export"?"الطباعة والتصدير":subScreen;
+  const topTitle=subScreen==="home"?(activeDeptInfo?.name||"الرئيسية"):subScreen==="open-patient"?"فتح ملف مريض / تسجيل مريض":subScreen==="lab-session"?"طلبات المختبر وتعبئة النتائج":subScreen==="rad-session"?"طلبات الأشعة وتعبئة النتائج":subScreen==="test-catalog"?"دليل أسعار الفحوصات المخبرية":subScreen==="image-catalog"?"دليل أسعار صور الأشعة الطبية":subScreen==="rehab-session"?"طلبات العلاج التأهيلي وتعبئة النتائج":subScreen==="rehab-catalog"?"دليل أسعار خدمات العلاج التأهيلي":subScreen==="purchase-reqs"?"طلبات الشراء":subScreen==="lab-queue"?"قوائم الحالات":subScreen==="rad-queue"?"قوائم الحالات":subScreen==="rehab-queue"?"قوائم الحالات":subScreen==="lab-inventory"?"مخزون مستلزمات المختبر":subScreen==="my-account"?"حسابي المالي":subScreen==="fin"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"}`:subScreen==="vouchers"?"السندات وحساباتها":subScreen==="attendance"?"دوام الموظفين":subScreen==="staff-advance"?"طلب سلفة مالية":subScreen==="rehab-new-plan"?"إنشاء خطة علاجية تأهيلية":subScreen==="dept-drawer"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الصندوق`:subScreen==="dept-profit"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الربح`:subScreen==="dept-debts"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الديون`:subScreen==="dept-revenue"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — الإيرادات / الدخل`:subScreen==="dept-expenses"?`النظام المالي لـ${activeDeptInfo?.name||"القسم"} — المصروفات`:subScreen==="surgery-clinic-inv"?"مستلزمات عيادة الجراحة والطوارئ":subScreen==="print-export"?"الطباعة والتصدير":subScreen;
 
   return(
     <div className="min-h-screen bg-[#F5F5F5]" style={{fontFamily:"'Tajawal',sans-serif"}} dir="rtl">
@@ -12303,11 +11929,9 @@ function StaffPortal({staff, drawers, sessions, debts, invoices, setInvoices, do
               {subScreen==="patient-file"&&activeDept&&(
                 <PatientFileScreen dept={activeDept} onNavigate={r=>{setRoute(r);setSubScreen(r.screen);}} patientId={route.patientId||""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{type:"staff",staff}} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans}/>
               )}
-              {false&&(
-                <ReceptionScreen drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} toast={staffToast} onNavigate={r=>{setRoute(r);setSubScreen(r.screen);}} insurances={insurances}/>
-              )}
+
               {subScreen==="purchase-reqs"&&activeDept&&(
-                <ReceptionPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={deptPerms?.canDeletePurchaseReqs ? onDeletePurchaseRequest : undefined} toast={staffToast} isAdmin={false} dept={activeDept} staffName={staff.name}/>
+                <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={deptPerms?.canDeletePurchaseReqs ? onDeletePurchaseRequest : undefined} toast={staffToast} isAdmin={false} dept={activeDept} staffName={staff.name}/>
               )}
               {subScreen==="lab-session"&&(
                 <LabSessionScreen toast={staffToast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} labTests={labTests}/>
@@ -14496,7 +14120,7 @@ function PatientDeleteRequestsScreen({requests,onApprove,onReject,isAdmin}:{requ
 
 // ─── APP ───────────────────────────────────────────────────────────────────────
 
-const PAGE_TITLES:Record<string,string>={dashboard:"لوحة التحكم","open-patient":"فتح ملف مريض","new-patient":"تسجيل مريض جديد","new-session":"جلسة جديدة","patient-file":"ملف المريض","surgery-clinic-inv":"مستلزمات عيادة الجراحة والطوارئ","delete-requests":"طلبات حذف المرضى","surgery-purchase-reqs":"طلبات الشراء — الجراحة والطوارئ","lab-session":"طلبات المختبر وتعبئة النتائج","lab-inventory":"مخزون مستلزمات المختبر","lab-queue":"قوائم الحالات","lab-purchase-reqs":"طلبات الشراء — المختبر","rehab-new-plan":"إنشاء خطة علاجية تأهيلية","rehab-session":"طلبات العلاج التأهيلي وتعبئة النتائج","rehab-catalog":"دليل أسعار خدمات العلاج التأهيلي","rehab-queue":"قوائم الحالات","rehab-purchase-reqs":"طلبات الشراء — التأهيلي","rad-results":"طلبات الأشعة وتعبئة النتائج","rad-catalog":"دليل أسعار صور الأشعة التشخيصية","rad-queue":"قوائم الحالات","rad-purchase-reqs":"طلبات الشراء — الأشعة","rad-session":"جلسة أشعة","test-catalog":"دليل أسعار الفحوصات المخبرية","image-catalog":"دليل الصور والأسعار","fin-profit":"الربح","fin-debts":"الديون","fin-revenue":"الإيرادات / الدخل","fin-expenses":"المصروفات","fin-purchase-reqs":"طلبات الشراء — جميع الأقسام","fin-payroll":"الرواتب","fin-advances":"سلف الموظفين","fin-external-debts":"ديون وسلف خارجية","fin-charts":"الرسوم البيانية المالية","fin-summary":"الملخص المالي","fin-statements":"الكشوفات والتقارير","inventory":"المخزون والكيتات","backup":"النسخ الاحتياطي","print-settings":"إعدادات الطباعة","general-settings":"الإعدادات العامة","staff-management":"الموظفون والصلاحيات","dept-management":"إدارة الأقسام","data-import":"استيراد المعلومات","data-delete":"حذف البيانات","reception-print":"الطباعة والتصدير — الاستقبال","surgery-print":"الطباعة والتصدير — الجراحة والطوارئ","lab-print":"الطباعة والتصدير — المختبر","rehab-print":"الطباعة والتصدير — التأهيل","rad-print":"الطباعة والتصدير — الأشعة","reception-purchase-reqs":"الاستقبال — طلبات الشراء","attendance":"دوام الموظفين","my-account":"حسابي المالي"};
+const PAGE_TITLES:Record<string,string>={dashboard:"لوحة التحكم","open-patient":"فتح ملف مريض","new-patient":"تسجيل مريض جديد","new-session":"جلسة جديدة","patient-file":"ملف المريض","surgery-clinic-inv":"مستلزمات عيادة الجراحة والطوارئ","delete-requests":"طلبات حذف المرضى","surgery-purchase-reqs":"طلبات الشراء — الجراحة والطوارئ","lab-session":"طلبات المختبر وتعبئة النتائج","lab-inventory":"مخزون مستلزمات المختبر","lab-queue":"قوائم الحالات","lab-purchase-reqs":"طلبات الشراء — المختبر","rehab-new-plan":"إنشاء خطة علاجية تأهيلية","rehab-session":"طلبات العلاج التأهيلي وتعبئة النتائج","rehab-catalog":"دليل أسعار خدمات العلاج التأهيلي","rehab-queue":"قوائم الحالات","rehab-purchase-reqs":"طلبات الشراء — التأهيلي","rad-results":"طلبات الأشعة وتعبئة النتائج","rad-catalog":"دليل أسعار صور الأشعة التشخيصية","rad-queue":"قوائم الحالات","rad-purchase-reqs":"طلبات الشراء — الأشعة","rad-session":"جلسة أشعة","test-catalog":"دليل أسعار الفحوصات المخبرية","image-catalog":"دليل الصور والأسعار","fin-profit":"الربح","fin-debts":"الديون","fin-revenue":"الإيرادات / الدخل","fin-expenses":"المصروفات","fin-purchase-reqs":"طلبات الشراء — جميع الأقسام","fin-payroll":"الرواتب","fin-advances":"سلف الموظفين","fin-external-debts":"ديون وسلف خارجية","fin-charts":"الرسوم البيانية المالية","fin-summary":"الملخص المالي","fin-statements":"الكشوفات والتقارير","inventory":"المخزون والكيتات","backup":"النسخ الاحتياطي","print-settings":"إعدادات الطباعة","general-settings":"الإعدادات العامة","staff-management":"الموظفون والصلاحيات","dept-management":"إدارة الأقسام","data-import":"استيراد المعلومات","data-delete":"حذف البيانات","surgery-print":"الطباعة والتصدير — الجراحة والطوارئ","lab-print":"الطباعة والتصدير — المختبر","rehab-print":"الطباعة والتصدير — التأهيل","rad-print":"الطباعة والتصدير — الأشعة","attendance":"دوام الموظفين","my-account":"حسابي المالي"};
 
 export default function App(){
   const [loggedUser,setLoggedUser]=useState<LoggedUser|null>(()=>{
@@ -14573,7 +14197,7 @@ export default function App(){
     }
     setStaffAdvanceRequests(p=>p.map(r=>r.id===id?{...r,status:"approved",reviewedBy:"المدير",reviewDate:rDate}:r));
     api.staff.advanceRequests.review(id,{status:"approved",reviewed_by:"المدير",review_date:api.parseDateISO(rDate)});
-    toast(`تمت الموافقة على طلب السلفة — تم الخصم من صندوق ${req?.dept||"الاستقبال"} ✓`,"success");
+    toast(`تمت الموافقة على طلب السلفة — تم الخصم من صندوق ${req?.dept||"القسم"} ✓`,"success");
   };
   const onRejectStaffAdvanceRequest=(id:number,reason:string)=>{
     const rDate=_today();
@@ -14938,22 +14562,22 @@ export default function App(){
       case"new-session":       return<NewSessionScreen dept={dept} patientId={route.patientId||mockPatients[0]?.id||""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs}/>;
       case"patient-file":      return<PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId||mockPatients[0]?.id||""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id=>setSessions(p=>p.filter(s=>s.id!==id))}/>;
       case"surgery-clinic-inv":return<SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify}/>;
-      case"surgery-purchase-reqs": return<ReceptionPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="surgery"/>;
+      case"surgery-purchase-reqs": return<DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="surgery"/>;
       case"lab-session":       return<LabSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests}/>;
       case"rad-session":       return<RadSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages}/>;
       case"test-catalog":      return<TestCatalogScreen toast={toast} labTests={labTests} setLabTests={setLabTests}/>;
       case"lab-inventory":     return<InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify}/>;
       case"lab-queue":         return<LabQueueScreen/>;
-      case"lab-purchase-reqs": return<ReceptionPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="lab"/>;
+      case"lab-purchase-reqs": return<DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="lab"/>;
       case"rehab-new-plan":    return<RehabNewPlanScreen patientId={route.patientId} dept={dept} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} onNavigate={setRoute} toast={toast} doDeposit={doDeposit}/>;
       case"rehab-session":     return<RehabSessionScreen toast={toast} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries}/>;
       case"rehab-catalog":     return<RehabCatalogScreen toast={toast} rehabServices={rehabServices} setRehabServices={setRehabServices}/>;
       case"rehab-queue":       return<RehabQueueScreen/>;
-      case"rehab-purchase-reqs":return<ReceptionPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="rehab"/>;
+      case"rehab-purchase-reqs":return<DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="rehab"/>;
       case"rad-results":       return<RadResultsScreen toast={toast}/>;
       case"rad-catalog":       return<RadCatalogScreen toast={toast} radImages={radImages} setRadImages={setRadImages}/>;
       case"rad-queue":         return<RadQueueScreen/>;
-      case"rad-purchase-reqs": return<ReceptionPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="radiology"/>;
+      case"rad-purchase-reqs": return<DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="radiology"/>;
       case"image-catalog":     return<ImageCatalogScreen toast={toast}/>;
       case"fin-profit":        return<FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts}/>;
       case"fin-expenses":        return<FinExpensesScreen drawers={drawers} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal}/>;
@@ -14979,14 +14603,11 @@ export default function App(){
       case"general-settings":  return<GeneralSettingsScreen toast={toast} insurances={insurances} setInsurances={setInsurances} adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} sidebarSettings={sidebarSettings} setSidebarSettings={setSidebarSettings} loggedUser={loggedUser} setLoggedUser={setLoggedUser} suppliers={suppliersRoot} setSuppliers={setSuppliersRoot}/>;
       case"data-import":       return<DataImportScreen setSessions={setSessions} toast={toast}/>;
       case"data-delete":       return<DataDeletionScreen sessions={sessions} setSessions={setSessions} debts={debts} setDebts={setDebts} attendance={attendance} setAttendance={setAttendance} purchaseRequests={purchaseRequests} setPurchaseRequests={setPurchaseRequests} drawers={drawers} setDrawers={setDrawers} invoices={invoices} setInvoices={setInvoices} toast={toast}/>;
-      case"reception-print":   return<PrintExportScreen dept="reception" deptLabel="قسم الاستقبال" sessions={sessions} toast={toast}/>;
-      case"surgery-print":     return<PrintExportScreen dept="surgery" deptLabel="العيادة والطوارئ" sessions={sessions} toast={toast}/>;
+            case"surgery-print":     return<PrintExportScreen dept="surgery" deptLabel="العيادة والطوارئ" sessions={sessions} toast={toast}/>;
       case"lab-print":         return<PrintExportScreen dept="lab" deptLabel="مختبر التحاليل الطبية" sessions={sessions} toast={toast}/>;
       case"rehab-print":       return<PrintExportScreen dept="rehab" deptLabel="العلاج التأهيلي" sessions={sessions} toast={toast}/>;
       case"rad-print":         return<PrintExportScreen dept="radiology" deptLabel="الأشعة التشخيصية" sessions={sessions} toast={toast}/>;
-      case"reception":              return<ReceptionScreen drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} toast={toast} onNavigate={setRoute} customDepts={customDepts} insurances={insurances}/>;
-      case"reception-purchase-reqs":return<ReceptionPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="reception"/>;
-      case"staff-management":       return<StaffManagementScreen staffList={staffList} setStaffList={setStaffList} drawers={drawers} toast={toast} customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} sessions={sessions}/>;
+                  case"staff-management":       return<StaffManagementScreen staffList={staffList} setStaffList={setStaffList} drawers={drawers} toast={toast} customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} sessions={sessions}/>;
       case"dept-management":        return<DeptManagementScreen customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} toast={toast}/>;
       case"delete-requests":        return<PatientDeleteRequestsScreen requests={patientDeleteRequests} onApprove={approveDeleteRequest} onReject={rejectDeleteRequest} isAdmin={loggedUser?.type==="admin"}/>;
       case"admin-reminders":        {if(loggedUser?.type!=="admin")return<AccessDeniedScreen/>;return<AdminRemindersScreen reminders={reminders} setReminders={setReminders} toast={toast}/>;}
@@ -15073,7 +14694,7 @@ export default function App(){
   .flex.items-center.gap-3.p-2\\.5{flex-wrap:wrap!important}
   /* Page-level main toolbar: date + refresh button */
   .flex.items-center.gap-3.flex-wrap>.mr-auto{margin-right:0!important;width:100%!important}
-  /* Reception queue card: action buttons */
+  
   .flex.items-center.gap-3.mt-2{flex-wrap:wrap!important}
   .flex.items-center.gap-3.mt-3{flex-wrap:wrap!important}
   /* Text size reduction for KPI values in small screens */
