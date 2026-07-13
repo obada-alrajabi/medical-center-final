@@ -878,22 +878,31 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
   else metaItems.push(`<span class="rm-item">📅 تاريخ التقرير: <strong>${date}</strong></span>`);
   const metaRow = `<div class="rm">${metaItems.join("")}</div>`;
   const effectiveLh = withHeader ? (gLetterheadImg || _lsGetLetterheadGlobal()) : "";
-  const lhBgCss = effectiveLh ? `background-image:url('${effectiveLh}');background-size:cover;background-position:center;background-repeat:no-repeat;-webkit-print-color-adjust:exact;print-color-adjust:exact;` : "";
+  const lhBgCss = effectiveLh ? `background-image:url('${effectiveLh}');background-size:100% 100%;background-position:center;background-repeat:no-repeat;-webkit-print-color-adjust:exact;print-color-adjust:exact;` : "";
   const lhHtml = effectiveLh ? `<div class="lh-bg"></div>` : "";
-  const head = withHeader
-    ? (effectiveLh
-      ? metaRow
-      : `<div class="ch"><div><b class="ct">${title}</b><div class="cs">مركز وعيادة الدكتور مهند سليمان جابر</div></div><div class="cm">تاريخ الطباعة: ${date}<br/>${time}</div></div>${metaRow}`)
-    : `${metaRow}`;
+  const head = effectiveLh
+    ? ""
+    : (withHeader
+      ? `<div class="ch"><div><b class="ct">${title}</b><div class="cs">مركز وعيادة الدكتور مهند سليمان جابر</div></div><div class="cm">تاريخ الطباعة: ${date}<br/>${time}</div></div>${metaRow}`
+      : `${metaRow}`);
   const topMargin = withHeader ? top : Math.max(top, 45);
   const pdfBar = pdfMode ? `<div class="pdf-bar"><span>📄 ${title}</span><button onclick="window.print()" class="pdf-btn">🖨️ حفظ كـ PDF / طباعة</button></div>` : "";
+  
+  const marginCss = effectiveLh
+    ? `@page{size:${paperSize} ${orientation};margin:0} .content{padding:${topMargin}mm ${right}mm ${bottom}mm ${left}mm}`
+    : `@page{size:${paperSize} ${orientation};margin:${topMargin}mm ${right}mm ${bottom}mm ${left}mm} .content{padding:16px 20px}`;
+
+  const footerHtml = effectiveLh
+    ? ""
+    : `<div class="footer">مركز وعيادة الدكتور مهند سليمان جابر — طُبع في ${date} الساعة ${time}${userName ? ` — بواسطة: ${userName}` : ""}</div>`;
+
   return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>${title}</title>
 <style>@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&family=Cairo:wght@400;500;700&family=Amiri&display=swap');
 *{box-sizing:border-box}body{font-family:${gDeptPrintAdv.fontFamily},Arial,sans-serif;direction:rtl;color:#1A1A1A;font-size:${gDeptPrintAdv.fontSize}px;margin:0;padding:0;background:transparent}
 .lh-bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;${lhBgCss}}
 .pdf-bar{display:flex;align-items:center;justify-content:space-between;background:#1B3A6B;color:white;padding:10px 18px;font-size:13px;font-weight:600;position:sticky;top:0;z-index:99}
 .pdf-btn{background:#0D7377;color:white;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-family:Tajawal,sans-serif;cursor:pointer;font-weight:700}
-.content{padding:16px 20px}
+.content{position:relative;z-index:1;}
 .ch{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;margin-bottom:0;border-bottom:2px solid #1B3A6B}
 .ct{font-size:17px;color:#1B3A6B;display:block;font-weight:700;margin-bottom:3px}.cs{font-size:11px;color:#555}.cm{font-size:10px;color:#888;text-align:left;white-space:nowrap;line-height:1.6}
 .rm{display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:14px;border-bottom:1px solid #E8EDF5;background:#F5F8FF;padding:6px 10px;border-radius:0 0 6px 6px}
@@ -918,9 +927,9 @@ tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .sig-area{display:flex;justify-content:space-between;margin-top:22px;padding-top:10px;border-top:1px dashed #CCC}
 .sig-box{text-align:center;font-size:10px;color:#888}.sig-line{border-top:1px solid #888;width:120px;margin:28px auto 4px}
 .footer{margin-top:20px;font-size:9px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}
-@media print{.pdf-bar{display:none!important}.pt-card{page-break-inside:avoid}@page{size:${paperSize} ${orientation};margin:${topMargin}mm ${right}mm ${bottom}mm ${left}mm}}</style></head><body>
-${lhHtml}${pdfBar}<div class="content" style="position:relative;z-index:1;">${head}${html}
-<div class="footer">مركز وعيادة الدكتور مهند سليمان جابر — طُبع في ${date} الساعة ${time}${userName ? ` — بواسطة: ${userName}` : ""}</div></div>
+@media print{.pdf-bar{display:none!important}.pt-card{page-break-inside:avoid} ${marginCss}}</style></head><body>
+${lhHtml}${pdfBar}<div class="content">${head}${html}
+${footerHtml}</div>
 </body></html>`;
 };
 
@@ -3523,6 +3532,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   const filteredMeds = isAdmin ? allMeds : allMeds.filter(m => m.rawDept === dept);
   const allRefs = pSess.flatMap(s => [...s.labRefs.map(r => ({ type: "lab" as const, name: r, date: s.date, dept: deptShort(s.dept), rawDept: s.dept })), ...s.radRefs.map(r => ({ type: "rad" as const, name: r, date: s.date, dept: deptShort(s.dept), rawDept: s.dept }))]);
   const filteredRefs = isAdmin ? allRefs : allRefs.filter(r => r.rawDept === dept);
+  const pRehab = (rehabQueueEntries || []).filter(e => e.patientId === p.id).sort((a, b) => b.id - a.id);
   const visibleSessionsCount = isAdmin
     ? pSess.length
     : (dept === "surgery" || customDepts.some(cd => cd.id === dept))
@@ -3534,7 +3544,6 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
           : dept === "rehab"
             ? pRehab.length
             : 0;
-  const pRehab = (rehabQueueEntries || []).filter(e => e.patientId === p.id).sort((a, b) => b.id - a.id);
   const handleDebtPayment = () => {
     const amt = parseFloat(debtAmt) || 0;
     if (amt <= 0 || amt > liveDebt) return;
