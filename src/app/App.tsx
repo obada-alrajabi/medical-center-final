@@ -1177,7 +1177,7 @@ function PurchaseRequestModal({ open, onClose, dept, onSubmit, requestedBy }: { 
 function TopBar({ pageTitle, sidebarCollapsed, isMobile, onToggle, notifications = [], onDismissNotif, onClearAllNotif }: { pageTitle: string; sidebarCollapsed: boolean; isMobile: boolean; onToggle: () => void; notifications?: AppNotification[]; onDismissNotif?: (id: string) => void; onClearAllNotif?: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [nowT, setNowT] = useState(new Date());
-  useEffect(() => { const t = setInterval(() => setNowT(new Date()), 10000); return () => clearInterval(t); }, []);
+  useEffect(() => { const t = setInterval(() => setNowT(new Date()), 30000); return () => clearInterval(t); }, []);
   const today = nowT.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
   const timeStr = nowT.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const mr = isMobile ? 0 : sidebarCollapsed ? 64 : 260;
