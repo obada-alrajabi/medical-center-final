@@ -7908,7 +7908,7 @@ function ExternalDebtsScreen({ externalDebts, setExternalDebts, drawers, doWithd
 
 // ─── PAYROLL ───────────────────────────────────────────────────────────────────
 
-function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], staffList = [], sessions = [] }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; staffList?: StaffMember[]; sessions?: PatientSession[] }) {
+function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], staffList = [], sessions = [], paymentVouchers = [] }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[] }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [confirmModal, setConfirmModal] = useState<Employee | null>(null); const [paying, setPaying] = useState(false);
   const [payFrom, setPayFrom] = useState(""); const [payTo, setPayTo] = useState("");
@@ -7924,9 +7924,9 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const commission = isFix ? 0 : Math.round(rangeRevenue * ((sm!.percentageValue || 0) / 100));
     const pendingAdvances = employeeAdvances.filter(a => a.empName === e.name && !a.repaid);
     const totalAdvances = pendingAdvances.reduce((s, a) => s + a.amount, 0);
-    const rangeExpTxs = Object.values(drawers).flatMap(d => d?.txs || [])
-      .filter(t => t.type === "out" && t.beneficiary === e.name && ["مصروف شخصي", "مصروف شخصي — موظف", "نفقة شخصية للموظف"].some(c => (t.category || "").includes(c)) && inRangeDDMMYYYY(t.date, from, to));
-    const rangeExpenses = rangeExpTxs.reduce((s, t) => s + t.amount, 0);
+    const rangeExpVouchers = paymentVouchers
+      .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name && inRangeDDMMYYYY(v.date, from, to));
+    const rangeExpenses = rangeExpVouchers.reduce((s, v: any) => s + (Number(v.amount) || 0), 0);
     const net = Math.max(0, e.salary + commission - rangeExpenses - totalAdvances);
     return { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, totalAdvances, rangeExpenses, net };
   };
@@ -7939,12 +7939,11 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     printHtml(html, `قسيمة راتب — ${e.name} — ${periodLabel}`, from, to);
   };
   const getStaffMember = (name: string) => staffList.find(s => s.name === name);
-  // ── الخصومات الفعلية = سندات "مصروف شخصي" المسجَّلة فعلياً باسم الموظف بكل الصناديق
-  //    (وليس حقل employees.expenses الساكن الذي لا يتحدث تلقائياً عند صرف أي مصروف) ──
-  const PAYROLL_PERSONAL_EXP_CATS = ["مصروف شخصي", "مصروف شخصي — موظف", "نفقة شخصية للموظف"];
-  const getExpenses = (e: Employee) => Object.values(drawers).flatMap(d => d?.txs || [])
-    .filter(t => t.type === "out" && t.beneficiary === e.name && PAYROLL_PERSONAL_EXP_CATS.some(c => (t.category || "").includes(c)))
-    .reduce((s, t) => s + t.amount, 0);
+  // ── الخصومات الفعلية = سندات الصرف المسجَّلة للموظف من "السندات وحساباتها"
+  //    (وليس حقل employees.expenses الساكن الذي لا يتحدث تلقائياً عند صرف أي سند) ──
+  const getExpenses = (e: Employee) => paymentVouchers
+    .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name)
+    .reduce((s, v: any) => s + (Number(v.amount) || 0), 0);
   const getCommission = (e: Employee) => {
     const sm = getStaffMember(e.name);
     if (!sm || sm.salaryType === "fixed") return 0;
@@ -10512,6 +10511,7 @@ const DEPT_PERM_TREE: Record<string, PermSubItem[]> = buildDeptPermTree();
 
 function StaffManagementScreen({
   staffList, setStaffList, drawers, toast, customDepts, setCustomDepts, onAddDeptDrawer, sessions = [],
+  employees = [], setEmployees,
 }: {
   staffList: StaffMember[];
   setStaffList: React.Dispatch<React.SetStateAction<StaffMember[]>>;
@@ -10521,6 +10521,8 @@ function StaffManagementScreen({
   setCustomDepts: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; short: string; iconId: string; subItemIds?: string[] }>>>;
   onAddDeptDrawer: (deptId: string) => void;
   sessions?: PatientSession[];
+  employees?: Employee[];
+  setEmployees?: React.Dispatch<React.SetStateAction<Employee[]>>;
 }) {
   const [tab, setTab] = useState<"list" | "add" | "edit" | "perms">("list");
   const [selected, setSelected] = useState<StaffMember | null>(null);
@@ -10588,10 +10590,32 @@ function StaffManagementScreen({
       (api.staff.create({ name: form.name, national_id: form.nationalId, dob: form.dob ? api.parseDateISO(form.dob) : null, username: form.username, password_hash: form.password, job_title: form.jobTitle, primary_dept: form.primaryDept, assigned_depts: JSON.stringify(form.assignedDepts || []), phone: form.phone, role: form.role, salary_type: form.salaryType, fixed_salary: form.fixedSalary, percentage_dept: form.percentageDept, percentage_depts: JSON.stringify(form.percentageDepts || []), pay_from_depts: JSON.stringify(form.payFromDepts || []), percentage_value: form.percentageValue, shift_start: form.shiftStart, shift_end: form.shiftEnd, shift_amount: form.shiftAmount, status: form.status, join_date: form.joinDate ? api.parseDateISO(form.joinDate) : null, notes: form.notes, can_access_financial: form.canAccessFinancial, can_access_settings: form.canAccessSettings, can_access_reports: form.canAccessReports, can_manage_staff: form.canManageStaff, is_admin_role: form.isAdminRole, can_attendance: form.canAttendance }) as Promise<any>)
         .then((created: any) => { if (created?.id && created.id !== tempId) setStaffList(p => p.map(s => s.id === tempId ? { ...s, id: created.id } : s)); })
         .catch(() => { });
+      // ── إنشاء سجل موظف مطابق بجدول الرواتب تلقائياً — بدون هذا، الموظف الجديد
+      //    ما بيظهر إطلاقاً بشاشة "الرواتب" ولا براتبه الشخصي بحسابه المالي ──
+      if (!employees.find(e => e.name === form.name)) {
+        const tempEmpId = Date.now() + 1;
+        setEmployees?.(p => [...p, { id: tempEmpId, name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending", paidDate: "" }]);
+        api.staff.employees.create({ name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending" })
+          .then((r: any) => { if (r?.id) setEmployees?.(p => p.map(e => e.id === tempEmpId ? { ...e, id: r.id } : e)); })
+          .catch(() => { });
+      }
       toast("تم إضافة الموظف بنجاح", "success");
     } else {
+      const prevName = staffList.find(s => s.id === form.id)?.name;
       setStaffList(p => p.map(s => s.id === form.id ? { ...form } : s));
       api.staff.update(form.id, { name: form.name, national_id: form.nationalId, dob: form.dob ? api.parseDateISO(form.dob) : null, username: form.username, password_hash: form.password, job_title: form.jobTitle, primary_dept: form.primaryDept, assigned_depts: JSON.stringify(form.assignedDepts || []), phone: form.phone, role: form.role, salary_type: form.salaryType, fixed_salary: form.fixedSalary, percentage_dept: form.percentageDept, percentage_depts: JSON.stringify(form.percentageDepts || []), pay_from_depts: JSON.stringify(form.payFromDepts || []), percentage_value: form.percentageValue, shift_start: form.shiftStart, shift_end: form.shiftEnd, shift_amount: form.shiftAmount, status: form.status, join_date: form.joinDate ? api.parseDateISO(form.joinDate) : null, notes: form.notes, can_access_financial: form.canAccessFinancial, can_access_settings: form.canAccessSettings, can_access_reports: form.canAccessReports, can_manage_staff: form.canManageStaff, is_admin_role: form.isAdminRole, can_attendance: form.canAttendance });
+      // ── مزامنة سجل الرواتب: حدّثه إذا موجود، أنشئه إذا كان ناقص من قبل (موظفين قدامى) ──
+      const existingEmp = employees.find(e => e.name === (prevName || form.name));
+      if (existingEmp) {
+        setEmployees?.(p => p.map(e => e.id === existingEmp.id ? { ...e, name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary } : e));
+        api.staff.employees.update(existingEmp.id, { name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary });
+      } else {
+        const tempEmpId = Date.now() + 1;
+        setEmployees?.(p => [...p, { id: tempEmpId, name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending", paidDate: "" }]);
+        api.staff.employees.create({ name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending" })
+          .then((r: any) => { if (r?.id) setEmployees?.(p => p.map(e => e.id === tempEmpId ? { ...e, id: r.id } : e)); })
+          .catch(() => { });
+      }
       toast("تم حفظ التعديلات بنجاح", "success");
     }
     setTab("list");
@@ -11450,10 +11474,10 @@ function DeptManagementScreen({ customDepts, setCustomDepts, onAddDeptDrawer, to
 
 // ─── MY FINANCIAL ACCOUNT SCREEN (شاشة الحساب المالي الشخصي للموظف) ──────────
 
-function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employees, staffAdvanceRequests, onSubmitStaffAdvanceRequest, toast, drawers = {}, sessions = [] }: {
+function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employees, staffAdvanceRequests, onSubmitStaffAdvanceRequest, toast, drawers = {}, sessions = [], paymentVouchers = [] }: {
   staff: StaffMember; employeeAdvances: EmployeeAdvance[]; attendance: AttendanceRecord[]; employees: Employee[];
   staffAdvanceRequests: StaffAdvanceRequest[]; onSubmitStaffAdvanceRequest: (r: Omit<StaffAdvanceRequest, "id" | "status">) => void; toast: (m: string, t?: any) => void;
-  drawers?: Record<string, DrawerState>; sessions?: PatientSession[];
+  drawers?: Record<string, DrawerState>; sessions?: PatientSession[]; paymentVouchers?: any[];
 }) {
   const salaryLabel: Record<SalaryType, string> = { fixed: "راتب ثابت", percentage: "نسبة من الإيرادات", both: "راتب ثابت + نسبة", daily: "الإيرادات اليومية", shift: "الورديات / الشيفتات" };
   const myAdvances = employeeAdvances.filter(a => a.empName === staff.name);
@@ -11471,13 +11495,11 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   const [advReason, setAdvReason] = useState("");
   const today = _today();
 
-  // ── سندات الصرف الشخصية (مصروفات شخصية مسجَّلة باسم الموظف من كل الصناديق) ──
-  const PERSONAL_EXP_CATS = ["مصروف شخصي", "مصروف شخصي — موظف", "نفقة شخصية للموظف"];
-  const myExpenseVouchers = Object.entries(drawers).flatMap(([deptId, d]) =>
-    (d?.txs || [])
-      .filter(t => t.type === "out" && t.beneficiary === staff.name && PERSONAL_EXP_CATS.some(c => (t.category || "").includes(c)))
-      .map(t => ({ ...t, deptId }))
-  ).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.id - a.id));
+  // ── سندات الصرف الشخصية (سندات الصرف — "السندات وحساباتها" — المسجَّلة للموظف كـ "مصروفات شخصية") ──
+  const myExpenseVouchers = paymentVouchers
+    .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === staff.name)
+    .map((v: any) => ({ id: v.id, date: v.date, amount: Number(v.amount) || 0, title: v.reason || v.category || "مصروف شخصي", deptId: v.dept || "" }))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.id - a.id));
   const totalPersonalExp = myExpenseVouchers.reduce((s, t) => s + t.amount, 0);
 
   // ── قسيمة الراتب (فترة قابلة للتحديد) ──
@@ -12314,7 +12336,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <DeptDrawerScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} invoices={invoices} setInvoices={setInvoices} perms={deptPerms || undefined} toast={staffToast} />
               )}
               {subScreen === "my-account" && (
-                <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} />
+                <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} paymentVouchers={allPaymentVouchers} />
               )}
               {subScreen === "fin" && (() => {
                 const allowedIds = new Set(allowedDepts.map(d => d.id));
@@ -14792,7 +14814,7 @@ export default function App() {
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
       case "fin-revenue": return <FinRevenueScreen drawers={drawers} debts={debts} customDepts={customDepts} toast={toast} sessions={sessions} receiptVouchers={receiptVouchersGlobal} />;
-      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} />; }
+      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} />; }
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
       case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} />;
@@ -14807,7 +14829,7 @@ export default function App() {
       case "lab-print": return <PrintExportScreen dept="lab" deptLabel="مختبر التحاليل الطبية" sessions={sessions} toast={toast} />;
       case "rehab-print": return <PrintExportScreen dept="rehab" deptLabel="العلاج التأهيلي" sessions={sessions} toast={toast} />;
       case "rad-print": return <PrintExportScreen dept="radiology" deptLabel="الأشعة التشخيصية" sessions={sessions} toast={toast} />;
-      case "staff-management": return <StaffManagementScreen staffList={staffList} setStaffList={setStaffList} drawers={drawers} toast={toast} customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} sessions={sessions} />;
+      case "staff-management": return <StaffManagementScreen staffList={staffList} setStaffList={setStaffList} drawers={drawers} toast={toast} customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} sessions={sessions} employees={employees} setEmployees={setEmployees} />;
       case "dept-management": return <DeptManagementScreen customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} toast={toast} />;
       case "delete-requests": return <PatientDeleteRequestsScreen requests={patientDeleteRequests} onApprove={approveDeleteRequest} onReject={rejectDeleteRequest} isAdmin={loggedUser?.type === "admin"} />;
       case "admin-reminders": { if (loggedUser?.type !== "admin") return <AccessDeniedScreen />; return <AdminRemindersScreen reminders={reminders} setReminders={setReminders} toast={toast} />; }
