@@ -2,7 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { createSession, requireAdmin } from '../middleware/adminAuth.js';
+import { createSession, createStaffSession, requireAdmin } from '../middleware/adminAuth.js';
 const router = Router();
 
 // ─── Insurance Companies ───────────────────────────────────────────────────
