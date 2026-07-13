@@ -296,14 +296,14 @@ router.get('/purchase-requests/:id', async (req, res) => {
 });
 
 router.post('/purchase-requests', requireFinancialAuth, async (req, res) => {
-  const { dept, requested_by, date, total_amount, status, note, items } = req.body;
+  const { dept, requested_by, date, total_amount, paid_amount, status, note, items } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO purchase_requests (dept,requested_by,date,total_amount,status,note)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [dept ?? null, requested_by ?? null, date, total_amount ?? 0, status ?? 'pending', note ?? null]
+      `INSERT INTO purchase_requests (dept,requested_by,date,total_amount,paid_amount,status,note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [dept ?? null, requested_by ?? null, date, total_amount ?? 0, paid_amount ?? 0, status ?? 'pending', note ?? null]
     );
     const pr = rows[0];
     if (items && items.length) {
@@ -330,16 +330,17 @@ router.put('/purchase-requests/:id', requireFinancialAuth, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM purchase_requests WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { dept, requested_by, date, total_amount, status, approved_by, approved_date, rejection_reason, note } = req.body;
+    const { dept, requested_by, date, total_amount, paid_amount, status, approved_by, approved_date, rejection_reason, note } = req.body;
     const { rows } = await pool.query(
       `UPDATE purchase_requests SET dept=$1,requested_by=$2,date=$3,total_amount=$4,
-       status=$5,approved_by=$6,approved_date=$7,rejection_reason=$8,note=$9
-       WHERE id=$10 RETURNING *`,
+       paid_amount=$5,status=$6,approved_by=$7,approved_date=$8,rejection_reason=$9,note=$10
+       WHERE id=$11 RETURNING *`,
       [
         dept             !== undefined ? dept             : c.dept,
         requested_by     !== undefined ? requested_by     : c.requested_by,
         date             !== undefined ? date             : c.date,
         total_amount     !== undefined ? total_amount     : c.total_amount,
+        paid_amount      !== undefined ? paid_amount      : c.paid_amount,
         status           !== undefined ? status           : c.status,
         approved_by      !== undefined ? approved_by      : c.approved_by,
         approved_date    !== undefined ? approved_date    : c.approved_date,
@@ -677,11 +678,6 @@ router.get('/summary', requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-router.post('/reset-all', requireAdmin, async (req, res) => {
-  // Legacy stub — tables referenced here no longer exist.
-  // Use POST /api/admin/execute-delete instead.
-  res.status(410).json({ success: false, message: 'هذا المسار لم يعد مدعوماً — استخدم /api/admin/execute-delete' });
 });
 
 

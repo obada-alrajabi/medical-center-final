@@ -1,0 +1,211 @@
+﻿  const preselected=patientId?mockPatients.find(p=>p.id===patientId)||null:null;
+  const [view,setView]=useState<"register"|"board">("board");
+  const [step,setStep]=useState(preselected?2:0);
+  const [uploadedResults,setUploadedResults]=useState<Record<number,string[]>>({});
+  const [uploadTargetId,setUploadTargetId]=useState<number|null>(null);
+  const fileInputRef=useRef<HTMLInputElement>(null);
+  const [mode,setMode]=useState<"new"|"existing">("existing");
+  const [selPat,setSelPat]=useState<typeof mockPatients[0]|null>(preselected);
+  const [patSearch,setPatSearch]=useState("");
+  const [newPat,setNewPat]=useState({name:"",pid:"",phone:"+970",dob:"",email:"",address:"",blood:"",gender:"male" as "male"|"female",allergies:false,chronic:false,insurance:false});
+  const [payMode,setPayMode]=useState<"cash"|"insurance"|"company">("cash");
+  const [selImgs,setSelImgs]=useState<number[]>([]);
+  const [deviceFilter,setDeviceFilter]=useState("╪د┘┘â┘");
+  const [discount,setDiscount]=useState(""); const [paid,setPaid]=useState("");
+  type RadBoardItem={id:number;patient:string;images:string[];time:string;status:"pending"|"done";reports?:Record<string,{text:string;doctor:string;verdict:string}>};
+  const [board,setBoard]=useState<RadBoardItem[]>([]);
+  useEffect(()=>{api.queues.getAll("radiology").then(rows=>{if(!rows)return;setBoard((rows as any[]).map(r=>({id:r.id,patient:r.patient_name,images:Array.isArray(r.items)?r.items:[],time:r.queue_time??"",status:r.status as "pending"|"done",reports:r.results||undefined})));}).catch(()=>{});},[]);
+  const [reportModal,setReportModal]=useState<RadBoardItem|null>(null);
+  const [imgReports,setImgReports]=useState<Record<string,{text:string;doctor:string;verdict:string}>>({});
+  const openReportModal=(s:RadBoardItem)=>{
+    setReportModal(s);
+    const init:Record<string,{text:string;doctor:string;verdict:string}>={};
+    s.images.forEach(img=>{init[img]=s.reports?.[img]||{text:"",doctor:"",verdict:"╪╖╪ذ┘è╪╣┘è"};});
+    setImgReports(init);
+  };
+  const today=_today();
+  const RAD_FILTER=["╪د┘┘â┘",...RAD_DEVICES];
+  const filteredImgs=_radImgs.filter(t=>deviceFilter==="╪د┘┘â┘"||t.device===deviceFilter);
+  const selImgsData=selImgs.map(id=>_radImgs.find(t=>t.id===id)!).filter(Boolean);
+  const imgTotal=selImgsData.reduce((s,t)=>s+t.price,0);
+  const discAmt=Math.min(parseFloat(discount)||0,imgTotal); const netTotal=imgTotal-discAmt;
+  const paidAmt=parseFloat(paid)||0; const debtAmt=Math.max(0,netTotal-paidAmt); const creditAmt=Math.max(0,paidAmt-netTotal);
+  const patName=selPat?selPat.name:newPat.name; const patId=selPat?selPat.id:(newPat.pid.trim()||generatePatientId());
+  const prevDebt=selPat?debts.filter(d=>d.pid===selPat.id).reduce((s,d)=>s+d.amount,0):0;
+  const totalAllDebts=debts.reduce((s,d)=>s+d.amount,0);
+  const toggleImg=(id:number)=>setSelImgs(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  const reset=()=>{if(!patientId){setStep(0);setSelPat(null);}else{setStep(2);setSelPat(preselected);}setSelImgs([]);setDiscount("");setPaid("");setPayMode("cash");};
+  const handleSave=()=>{
+    const today=_today();const radTime=_nowHHMM();
+    if(!patName.trim()||selImgs.length===0)return;
+    if(mode==="new" && newPat.pid.trim() && mockPatients.find(p=>p.id===newPat.pid.trim())){toast("╪▒┘é┘à ╪د┘┘ç┘ê┘è╪ر ┘à╪│╪ز╪«╪»┘à ┘à╪│╪ذ┘é╪د┘ï ظ¤ ╪د╪«╪ز╪▒ ╪▒┘é┘à ╪ت╪«╪▒ ╪ث┘ê ╪د╪ز╪▒┘â┘ç ┘╪د╪▒╪║╪د┘ï ┘┘╪ز┘ê┘┘è╪» ╪د┘╪ز┘┘é╪د╪خ┘è","error");return;}
+    if(mode==="new" && !mockPatients.find(p=>p.id===patId)){
+      mockPatients.push({id:patId,name:patName,age:30,phone:newPat.phone||"ظ¤",blood:newPat.blood||"A+",insurance:newPat.insurance,dept:"radiology",date:today,debt:0});
+      _syncPatients();
+    }
+    if(paidAmt>0)doDeposit("radiology",paidAmt,`╪»┘╪╣╪ر ┘à╪▒┘è╪╢ ظ¤ ${patName}`,"╪ح┘è╪▒╪د╪» ┘à╪▒┘è╪╢");
+    if(debtAmt>0){const nd:DebtRow={id:Date.now(),patient:patName,pid:patId,dept:"╪د┘╪ث╪┤╪╣╪ر",amount:debtAmt,date:today,days:0,phone:selPat?.phone||newPat.phone||"ظ¤"};setDebts(p=>[nd,...p]);api.finance.debts.create({patient:patName,patient_id:patId,dept:"╪د┘╪ث╪┤╪╣╪ر",amount:debtAmt,date:api.parseDateISO(today),phone:selPat?.phone||newPat.phone||""}).then(r=>{if(r&&(r as any).id)setDebts(p=>p.map(d=>d.id===nd.id?{...d,id:(r as any).id}:d));}).catch(()=>{});}
+    const radImgNames=selImgsData.map(t=>t.name);
+    const radLid=Date.now();
+    setBoard(p=>[{id:radLid,patient:patName,images:radImgNames,time:radTime,status:"pending" as const},...p]);
+    api.queues.create({dept:"radiology",patient_name:patName,items:radImgNames,queue_time:radTime,status:"pending"}).then(r=>{if(r)setBoard(p=>p.map(s=>s.id===radLid?{...s,id:r.id}:s));}).catch(()=>{});
+    toast(`╪ز┘à ╪ز╪│╪ش┘è┘ ${selImgs.length} ╪╡┘ê╪▒╪ر ┘┘ ${patName}${debtAmt>0?" ظ¤ ╪»┘è┘: "+fmt(debtAmt):creditAmt>0?" ظ¤ ╪▒╪╡┘è╪»: "+fmt(creditAmt):" ظ£ô"}`,"success");
+    reset();setView("board");
+  };
+  const deliver=(id:number)=>{setBoard(p=>p.map(s=>s.id===id?{...s,status:"done" as const}:s));api.queues.updateStatus(id,"done");toast("╪ز┘à ╪ز╪│┘┘è┘à ┘╪ز╪د╪خ╪ش ╪د┘╪ث╪┤╪╣╪ر ظ£ô");};
+  const buildRadReportHtml=(s:RadBoardItem,reports:Record<string,{text:string;doctor:string;verdict:string}>)=>{
+    const pt=mockPatients.find(p=>p.name===s.patient);
+    const infoItems:string[]=[];
+    infoItems.push(`<div class="pt-field"><b>╪د┘┘à╪▒┘è╪╢:</b> ${s.patient}</div>`);
+    if(pt)infoItems.push(`<div class="pt-field"><b>╪▒┘é┘à ╪د┘┘à┘┘:</b> ${pt.id}</div>`);
+    if(pt)infoItems.push(`<div class="pt-field"><b>╪د┘╪╣┘à╪▒:</b> ${pt.age} ╪│┘╪ر</div>`);
+    infoItems.push(`<div class="pt-field"><b>╪ز╪د╪▒┘è╪« ╪د┘┘╪ص╪╡:</b> ${today}</div>`);
+    let body=`<div class="pt-info">${infoItems.join("")}</div>`;
+    s.images.forEach(img=>{
+      const r=reports[img]||{text:"",doctor:"",verdict:"ظ¤"};
+      body+=`<div class="tests-title">${img}</div>`;
+      body+=`<p style="font-size:12px;color:#444;margin:4px 0"><b>╪د┘╪╖╪ذ┘è╪ذ ╪د┘┘à┘╪┤╪«┘┘ّ╪╡:</b> ${r.doctor||"ظ¤"}</p>`;
+      body+=`<p style="font-size:12px;color:#444;margin:4px 0"><b>╪د┘┘╪ز┘è╪ش╪ر:</b> ${r.verdict||"ظ¤"}</p>`;
+      body+=`<p style="font-size:12px;color:#444;margin:4px 0"><b>┘ê╪╡┘/╪ز┘é╪▒┘è╪▒ ╪د┘╪╡┘ê╪▒╪ر:</b> ${r.text||"ظ¤"}</p>`;
+    });
+    body+=`<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>╪ز┘ê┘é┘è╪╣ ╪د┘╪╖╪ذ┘è╪ذ ╪د┘┘à┘╪┤╪«┘┘ّ╪╡</div><div class="sig-box"><div class="sig-line"></div>╪ز┘ê┘é┘è╪╣ ╪د┘┘à╪▒┘è╪╢</div><div class="sig-box"><div class="sig-line"></div>╪«╪ز┘à ┘é╪│┘à ╪د┘╪ث╪┤╪╣╪ر</div></div>`;
+    return `<div class="pt-card">${body}</div>`;
+  };
+  const printRadReport=(s:RadBoardItem)=>{
+    printHtml(buildRadReportHtml(s,s.reports||{}),`╪ز┘é╪▒┘è╪▒ ╪ث╪┤╪╣╪ر ╪ز╪┤╪«┘è╪╡┘è╪ر ظ¤ ${s.patient}`);
+  };
+  const saveReportAndDeliver=()=>{
+    if(!reportModal)return;
+    setBoard(p=>p.map(s=>s.id===reportModal.id?{...s,status:"done" as const,reports:{...imgReports}}:s));
+    api.queues.updateStatus(reportModal.id,"done",{...imgReports}).catch(()=>{});
+    toast("╪ز┘à ╪ص┘╪╕ ╪د┘╪ز┘é╪▒┘è╪▒ ┘ê╪ز╪│┘┘è┘à ╪د┘┘╪ز╪د╪خ╪ش ظ£ô","success");
+    setReportModal(null);
+  };
+  const handleUploadClick=(id:number)=>{setUploadTargetId(id);fileInputRef.current?.click();};
+  const handleFileChange=(e:React.ChangeEvent<HTMLInputElement>)=>{
+    const files=Array.from(e.target.files||[]);
+    if(!files.length||uploadTargetId===null)return;
+    const names=files.map(f=>f.name);
+    setUploadedResults(p=>({...p,[uploadTargetId]:[...(p[uploadTargetId]||[]),...names]}));
+    const fd=new FormData();files.forEach(f=>fd.append("files",f));
+    {const _tok=getAdminToken();fetch(`/api/sessions/${uploadTargetId}/files`,{method:"POST",headers:_tok?{Authorization:`Bearer ${_tok}`}:{},body:fd}).catch(()=>{});}
+    toast(`╪ز┘à ╪▒┘╪╣ ${files.length} ┘à┘┘ ┘┘╪ث╪┤╪╣╪ر ظ£ô`,"success");
+    e.target.value="";
+    setUploadTargetId(null);
+  };
+  const handleRemoveFile=(sessionId:number,fileName:string)=>{
+    setUploadedResults(p=>{
+      const updated=(p[sessionId]||[]).filter(f=>f!==fileName);
+      if(updated.length===0){const {[sessionId]:_,...rest}=p;return rest;}
+      return {...p,[sessionId]:updated};
+    });
+  };
+  // steps: 0=choose, 1=patient data, 2=financial details, 3=session images
+  const STEP_LABELS=["╪ذ┘è╪د┘╪د╪ز ╪د┘┘à╪▒┘è╪╢","┘à┘┘ ╪د┘╪ش┘╪│╪ر","╪د┘╪ز┘╪د╪╡┘è┘ ╪د┘┘à╪د┘┘è╪ر"];
+  const stepIdx=step-1; const pendingCount=board.filter(s=>s.status==="pending").length;
+  return(
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          {[{k:"register",l:"╪ز╪│╪ش┘è┘ ╪ش┘╪│╪ر ╪ش╪»┘è╪»╪ر"},{k:"board",l:"┘┘ê╪ص╪ر ╪د┘╪ص╪د┘╪ر"}].map(t=>(
+            <button key={t.k} onClick={()=>setView(t.k as any)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${view===t.k?"bg-[#1B3A6B] text-white shadow-sm":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>
+              {t.k==="register"?<Plus size={14}/>:<Layers size={14}/>}{t.l}
+              {t.k==="board"&&pendingCount>0&&<span className="bg-[#FF8F00] text-white text-xs rounded-full px-1.5 font-bold">{pendingCount}</span>}
+            </button>
+          ))}
+        </div>
+        {view==="register"&&step>0&&(
+          <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl" style={{border:"1px solid #E0E0E0"}}>
+            {STEP_LABELS.map((s,i)=>(
+              <div key={s} className="flex items-center gap-2">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${stepIdx>=i?"bg-[#1B3A6B] text-white":"bg-[#E0E0E0] text-[#999]"}`}>{i+1}</div>
+                <span className={`text-xs ${stepIdx===i?"text-[#1B3A6B] font-bold":stepIdx>i?"text-[#555]":"text-[#999]"}`}>{s}</span>
+                {i<STEP_LABELS.length-1&&<ChevronLeft size={12} className="text-[#CCC] mx-1"/>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {view==="register"&&(
+        <div>
+          {step===0&&(
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 max-w-xl mx-auto mt-6 sm:mt-10">
+              {[{m:"new",Icon:UserPlus,title:"╪ز╪│╪ش┘è┘ ┘à╪▒┘è╪╢ ╪ش╪»┘è╪»",sub:"┘à╪▒┘è╪╢ ┘è╪▓┘ê╪▒ ╪د┘╪ث╪┤╪╣╪ر ┘╪ث┘ê┘ ┘à╪▒╪ر",color:"#1B3A6B",bg:"#EBF3FB"},{m:"existing",Icon:Search,title:"┘à╪▒┘è╪╢ ┘à╪│╪ش┘ ┘à╪│╪ذ┘é╪د┘ï",sub:"╪د╪ذ╪ص╪س ╪ذ╪د┘╪د╪│┘à ╪ث┘ê ╪▒┘é┘à ╪د┘┘à┘┘",color:"#0D7377",bg:"#E6F4F4"}].map(o=>(
+                <button key={o.m} onClick={()=>{setMode(o.m as any);setStep(1);}} className="flex flex-col items-center gap-4 p-6 sm:p-8 rounded-2xl bg-white border-2 border-[#E0E0E0] hover:border-[#1B3A6B] transition-all text-center">
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{backgroundColor:o.bg}}><o.Icon size={32} style={{color:o.color}}/></div>
+                  <div><p className="text-base font-bold text-[#1B3A6B] mb-1">{o.title}</p><p className="text-xs text-[#999]">{o.sub}</p></div>
+                </button>
+              ))}
+            </div>
+          )}
+          {step===1&&mode==="new"&&(
+            <Card title="╪ذ┘è╪د┘╪د╪ز ╪د┘┘à╪▒┘è╪╢ ╪د┘╪ث╪│╪د╪│┘è╪ر">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">╪د┘╪د╪│┘à ╪د┘┘â╪د┘à┘ <span className="text-[#D32F2F]">*</span></label>
+                  <input value={newPat.name} onChange={e=>setNewPat(p=>({...p,name:e.target.value}))} placeholder="╪ث╪»╪«┘ ╪د┘╪د╪│┘à ╪د┘╪▒╪ذ╪د╪╣┘è" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">╪▒┘é┘à ╪د┘┘ç┘ê┘è╪ر <span className="text-[#D32F2F]">*</span></label>
+                  <input value={newPat.pid} onChange={e=>setNewPat(p=>({...p,pid:e.target.value.replace(/\D/g,"").slice(0,9)}))} placeholder="╪▒┘é┘à ╪د┘┘ç┘ê┘è╪ر 9 ╪ث╪▒┘é╪د┘à" maxLength={9} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">╪▒┘é┘à ╪د┘╪ش┘ê╪د┘ <span className="text-[#D32F2F]">*</span></label>
+                  <input value={newPat.phone} onChange={e=>setNewPat(p=>({...p,phone:e.target.value}))} placeholder="+970" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">╪ز╪د╪▒┘è╪« ╪د┘┘à┘è┘╪د╪» <span className="text-[#D32F2F]">*</span></label>
+                  <input type="date" value={newPat.dob} onChange={e=>setNewPat(p=>({...p,dob:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">╪د┘╪ذ╪▒┘è╪» ╪د┘╪ح┘┘â╪ز╪▒┘ê┘┘è</label>
+                  <input type="email" value={newPat.email} onChange={e=>setNewPat(p=>({...p,email:e.target.value}))} placeholder="example@email.com" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">╪د┘╪╣┘┘ê╪د┘</label>
+                  <input value={newPat.address} onChange={e=>setNewPat(p=>({...p,address:e.target.value}))} placeholder="╪د┘┘à╪»┘è┘╪ر╪î ╪د┘╪┤╪د╪▒╪╣..." className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">┘╪╡┘è┘╪ر ╪د┘╪»┘à <span className="text-[#D32F2F]">*</span></label>
+                  <select value={newPat.blood} onChange={e=>setNewPat(p=>({...p,blood:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}>
+                    <option value="">╪د╪«╪ز╪▒ ┘╪╡┘è┘╪ر ╪د┘╪»┘à</option>
+                    {"A+ A- B+ B- O+ O- AB+ AB-".split(" ").map(b=><option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">╪د┘╪ش┘╪│ <span className="text-[#D32F2F]">*</span></label>
+                  <div className="flex gap-6 items-center h-10">
+                    {[{v:"male",l:"╪░┘â╪▒"},{v:"female",l:"╪ث┘╪س┘ë"}].map(g=>(
+                      <label key={g.v} className="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="rad-gender" value={g.v} checked={newPat.gender===g.v} onChange={()=>setNewPat(p=>({...p,gender:g.v as "male"|"female"}))} className="accent-[#1B3A6B]"/>
+                        <span className="text-sm">{g.l}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mt-4 pt-4" style={{borderTop:"1px solid #E0E0E0"}}>
+                {[{key:"allergies",label:"╪ص╪│╪د╪│┘è╪ر / ┘à┘ê╪د┘╪╣ ╪»┘ê╪د╪خ┘è╪ر"},{key:"chronic",label:"╪ث┘à╪▒╪د╪╢ ┘à╪▓┘à┘╪ر"},{key:"insurance",label:"╪ز╪ث┘à┘è┘ ╪╡╪ص┘è"}].map(item=>(
+                  <div key={item.key} className="flex items-center justify-between px-4 py-3 rounded-xl" style={{backgroundColor:"#FAFAFA",border:"1px solid #E0E0E0"}}>
+                    <span className="text-xs font-semibold text-[#555]">{item.label} <span className="text-[#D32F2F]">*</span></span>
+                    <button type="button" onClick={()=>setNewPat(p=>({...p,[item.key]:!(p as any)[item.key]}))}
+                      className="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
+                      style={{backgroundColor:(newPat as any)[item.key]?"#1B3A6B":"#CCC"}}>
+                      <span className="absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all" style={{right:(newPat as any)[item.key]?"2px":"auto",left:(newPat as any)[item.key]?"auto":"2px"}}/>
+                    </button>
+                    <span className="text-xs text-[#999] w-4">{(newPat as any)[item.key]?"┘╪╣┘à":"┘╪د"}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-3 mt-5"><Btn variant="outline" onClick={()=>setStep(0)}>╪▒╪ش┘ê╪╣</Btn><Btn variant="secondary" onClick={()=>setStep(2)} disabled={!newPat.name.trim()||!newPat.blood}>╪د┘╪ز╪د┘┘è: ┘à┘┘ ╪د┘╪ش┘╪│╪ر ظْ</Btn></div>
+            </Card>
+          )}
+          {step===1&&mode==="existing"&&(
+            <Card title="╪ذ╪ص╪س ╪╣┘ ┘à╪▒┘è╪╢ ┘à╪│╪ش┘">
+              <div className="relative mb-3"><Search size={14} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input value={patSearch} onChange={e=>setPatSearch(e.target.value)} placeholder="╪د╪ذ╪ص╪س ╪ذ╪د┘╪د╪│┘à ╪ث┘ê ╪▒┘é┘à ╪د┘┘à┘┘..." className="w-full h-10 pr-9 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/></div>
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {mockPatients.filter(p=>!patSearch.trim()||p.name.includes(patSearch)||p.id.includes(patSearch)).map(p=>(
+                  <button key={p.id} onClick={()=>setSelPat(p)} className={`w-full flex items-center gap-3 p-3 rounded-xl text-right transition-colors ${selPat?.id===p.id?"border-[#1B3A6B] bg-[#EBF3FB]":"border-[#E0E0E0] bg-white hover:border-[#1B3A6B]"}`} style={{border:"1px solid"}}>
+                    <div className="w-10 h-10 rounded-xl bg-[#E6F4F4] flex items-center justify-center text-sm font-bold text-[#0D7377] flex-shrink-0">{p.name.split(" ").slice(0,2).map((w:string)=>w[0]).join("")}</div>
+                    <div className="flex-1 min-w-0"><p className="text-sm font-semibold">{p.name}</p><p className="text-xs text-[#999]">{p.id} ┬╖ {p.blood}</p></div>
+                    {debts.filter(d=>d.pid===p.id).reduce((s,d)=>s+d.amount,0)>0&&<span className="text-xs font-bold text-[#D32F2F]">{fmt(debts.filter(d=>d.pid===p.id).reduce((s,d)=>s+d.amount,0))}</span>}

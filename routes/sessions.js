@@ -1,6 +1,6 @@
 import { Router } from "express";
 import pool from "../db.js";
-import { requireAdmin } from "../middleware/adminAuth.js";
+import { requireAdmin, requireFinancialAuth } from "../middleware/adminAuth.js";
 import { sendSMS } from "../services/smsService.js";
 import multer from "multer";
 import path from "path";
@@ -71,7 +71,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // BUG-06 fix: requireAdmin added — session creation writes to financial ledger
-router.post("/", requireAdmin, async (req, res) => {
+router.post("/", requireFinancialAuth, async (req, res) => {
   const {
     patient_id,
     dept,
@@ -207,7 +207,7 @@ router.post("/", requireAdmin, async (req, res) => {
 });
 
 // BUG-06 fix: requireAdmin added — session edits can change financial fields
-router.put("/:id", requireAdmin, async (req, res) => {
+router.put("/:id", requireFinancialAuth, async (req, res) => {
   try {
     const { rows: curr } = await pool.query(
       "SELECT * FROM sessions WHERE id=$1",
@@ -243,7 +243,7 @@ router.put("/:id", requireAdmin, async (req, res) => {
   }
 });
 
-router.delete("/:id", requireAdmin, async (req, res) => {
+router.delete("/:id", requireFinancialAuth, async (req, res) => {
   try {
     const { rowCount } = await pool.query("DELETE FROM sessions WHERE id=$1", [
       req.params.id,

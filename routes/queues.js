@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { requireAdmin } from '../middleware/adminAuth.js';
+import { requireAdmin, requireFinancialAuth } from '../middleware/adminAuth.js';
 import { sendSMS } from '../services/smsService.js';
 
 const router = Router();
@@ -20,7 +20,7 @@ router.get('/', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/', requireAdmin, async (req, res) => {
+router.post('/', requireFinancialAuth, async (req, res) => {
   try {
     const { dept, patient_name, patient_num, phone, dest_dept, notes, items, queue_time, status } = req.body;
     const { rows } = await pool.query(
@@ -33,7 +33,7 @@ router.post('/', requireAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.patch('/:id', requireAdmin, async (req, res) => {
+router.patch('/:id', requireFinancialAuth, async (req, res) => {
   try {
     const { rows: existingRows } = await pool.query('SELECT * FROM queues WHERE id=$1', [req.params.id]);
     if (!existingRows[0]) return res.status(404).json({ error: 'not found' });
@@ -57,14 +57,14 @@ router.patch('/:id', requireAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/clear-done/:dept', requireAdmin, async (req, res) => {
+router.delete('/clear-done/:dept', requireFinancialAuth, async (req, res) => {
   try {
     await pool.query("DELETE FROM queues WHERE dept=$1 AND status='done'", [req.params.dept]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/:id', requireAdmin, async (req, res) => {
+router.delete('/:id', requireFinancialAuth, async (req, res) => {
   try {
     await pool.query('DELETE FROM queues WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
