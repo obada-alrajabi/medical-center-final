@@ -84,13 +84,9 @@
     "vaul": "1.1.2"
   },
   "devDependencies": {
-    "@esbuild/win32-x64": "^0.25.12",
-    "@rollup/rollup-win32-x64-msvc": "^4.62.2",
-    "@tailwindcss/oxide-win32-x64-msvc": "^4.3.2",
     "@tailwindcss/vite": "4.1.12",
     "@vitejs/plugin-react": "4.7.0",
     "esbuild": "0.25.12",
-    "lightningcss-win32-x64-msvc": "^1.32.0",
     "tailwindcss": "4.1.12",
     "vite": "^6.4.3",
     "xlsx": "^0.18.5"
