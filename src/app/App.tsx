@@ -9894,9 +9894,14 @@ function AdminProfileCard({ adminAccounts, setAdminAccounts, loggedUser, setLogg
   );
 }
 
-function GeneralSettingsScreen({ toast, insurances, setInsurances, adminAccounts = [], setAdminAccounts, sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, loggedUser, setLoggedUser, suppliers: suppliersP = [], setSuppliers: setSuppliersProp }: { toast: (m: string, t?: any) => void; insurances: InsuranceCo[]; setInsurances: React.Dispatch<React.SetStateAction<InsuranceCo[]>>; adminAccounts?: AdminAccount[]; setAdminAccounts?: React.Dispatch<React.SetStateAction<AdminAccount[]>>; sidebarSettings?: SidebarSettings; setSidebarSettings?: React.Dispatch<React.SetStateAction<SidebarSettings>>; loggedUser?: LoggedUser | null; setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>; suppliers?: { id: number; name: string; type: string; phone: string }[]; setSuppliers?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>> }) {
+function GeneralSettingsScreen({ toast, insurances, setInsurances, adminAccounts = [], setAdminAccounts, sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, loggedUser, setLoggedUser, suppliers: suppliersP = [], setSuppliers: setSuppliersProp, restrictedMode = false }: { toast: (m: string, t?: any) => void; insurances: InsuranceCo[]; setInsurances: React.Dispatch<React.SetStateAction<InsuranceCo[]>>; adminAccounts?: AdminAccount[]; setAdminAccounts?: React.Dispatch<React.SetStateAction<AdminAccount[]>>; sidebarSettings?: SidebarSettings; setSidebarSettings?: React.Dispatch<React.SetStateAction<SidebarSettings>>; loggedUser?: LoggedUser | null; setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>; suppliers?: { id: number; name: string; type: string; phone: string }[]; setSuppliers?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>>;
+  // ── restrictedMode: staff member granted "الوصول للإعدادات" — never the real
+  //    admin. Hides "حسابات المدراء" (admin login credentials for the whole
+  //    system) since that must stay exclusive to actual system admins. ──
+  restrictedMode?: boolean;
+}) {
   const [tab, setTab] = useState("insurance");
-  const TABS = [{ k: "insurance", l: "شركات التأمين" }, { k: "suppliers", l: "شركات الموردين" }, { k: "sms", l: "إعدادات SMS" }, { k: "admins", l: "حسابات المدراء" }, { k: "display", l: "إعدادات العرض" }];
+  const TABS = [{ k: "insurance", l: "شركات التأمين" }, { k: "suppliers", l: "شركات الموردين" }, { k: "sms", l: "إعدادات SMS" }, ...(restrictedMode ? [] : [{ k: "admins", l: "حسابات المدراء" }]), { k: "display", l: "إعدادات العرض" }];
 
   // ── شركات التأمين ──
   const [insModal, setInsModal] = useState<InsuranceCo | null | "new">(null);
@@ -10109,7 +10114,7 @@ function GeneralSettingsScreen({ toast, insurances, setInsurances, adminAccounts
         </div>
       )}
 
-      {tab === "admins" && <div className="space-y-5"><AdminProfileCard adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} loggedUser={loggedUser} setLoggedUser={setLoggedUser} toast={toast} /><AdminAccountsPanel adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} toast={toast} /></div>}
+      {tab === "admins" && !restrictedMode && <div className="space-y-5"><AdminProfileCard adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} loggedUser={loggedUser} setLoggedUser={setLoggedUser} toast={toast} /><AdminAccountsPanel adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} toast={toast} /></div>}
       {tab === "display" && <SidebarDisplayPanel sidebarSettings={sidebarSettings} setSidebarSettings={setSidebarSettings} toast={toast} />}
     </div>
   );
@@ -10511,7 +10516,7 @@ const DEPT_PERM_TREE: Record<string, PermSubItem[]> = buildDeptPermTree();
 
 function StaffManagementScreen({
   staffList, setStaffList, drawers, toast, customDepts, setCustomDepts, onAddDeptDrawer, sessions = [],
-  employees = [], setEmployees,
+  employees = [], setEmployees, restrictedMode = false,
 }: {
   staffList: StaffMember[];
   setStaffList: React.Dispatch<React.SetStateAction<StaffMember[]>>;
@@ -10523,6 +10528,11 @@ function StaffManagementScreen({
   sessions?: PatientSession[];
   employees?: Employee[];
   setEmployees?: React.Dispatch<React.SetStateAction<Employee[]>>;
+  // ── restrictedMode: true when a non-admin staff member (granted "إدارة الموظفين"
+  //    permission) is using this screen, NOT the real system admin. Hides the
+  //    ability to grant "مدير كامل" or "إدارة الموظفين" to anyone — a staff manager
+  //    must never be able to escalate themselves or others to admin. ──
+  restrictedMode?: boolean;
 }) {
   const [tab, setTab] = useState<"list" | "add" | "edit" | "perms">("list");
   const [selected, setSelected] = useState<StaffMember | null>(null);
@@ -11022,7 +11032,9 @@ function StaffManagementScreen({
                 { key: "canAccessFinancial", label: "الوصول للنظام المالي" },
                 { key: "canAccessReports", label: "عرض التقارير والكشوفات" },
                 { key: "canAccessSettings", label: "الوصول للإعدادات" },
-                { key: "canManageStaff", label: "إدارة الموظفين والصلاحيات" },
+                // منع تصعيد الصلاحيات: موظف يملك "إدارة الموظفين" (restrictedMode) لا يمكنه
+                // منح هذه الصلاحية لنفسه أو لغيره — فقط المدير الحقيقي يقدر
+                ...(restrictedMode ? [] : [{ key: "canManageStaff" as const, label: "إدارة الموظفين والصلاحيات" }]),
                 { key: "canAttendance", label: "الوصول لقسم دوام الموظفين" },
               ] as { key: keyof StaffMember; label: string }[]).map(({ key, label }) => (
                 <label key={key} className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-[#F5F5F5]">
@@ -11125,20 +11137,23 @@ function StaffManagementScreen({
         </div>
       </div>
 
-      {/* ── Admin Role Toggle ── */}
-      <div className={`rounded-xl p-4 flex items-center gap-4 ${form.isAdminRole ? "bg-[#FFF8E1] border-2 border-[#F9A825]" : "bg-white border-2 border-[#E0E0E0]"}`}>
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${form.isAdminRole ? "bg-[#F9A825]" : "bg-[#F5F5F5]"}`}>
-          <Shield size={22} className={form.isAdminRole ? "text-white" : "text-[#999]"} />
+      {/* ── Admin Role Toggle — only the real system admin may grant this, never
+           a staff member using restrictedMode, to prevent privilege escalation ── */}
+      {!restrictedMode && (
+        <div className={`rounded-xl p-4 flex items-center gap-4 ${form.isAdminRole ? "bg-[#FFF8E1] border-2 border-[#F9A825]" : "bg-white border-2 border-[#E0E0E0]"}`}>
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${form.isAdminRole ? "bg-[#F9A825]" : "bg-[#F5F5F5]"}`}>
+            <Shield size={22} className={form.isAdminRole ? "text-white" : "text-[#999]"} />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-bold text-[#1B3A6B]">منح صلاحيات مدير كاملة</p>
+            <p className="text-xs text-[#777] mt-0.5">عند التفعيل يحصل الموظف على جميع صلاحيات المدير ويدخل النظام بوضع المدير الكامل</p>
+            {form.isAdminRole && <p className="text-[10px] text-[#E65100] font-semibold mt-1">⚠️ هذا الموظف يملك وصولاً كاملاً مثل حساب admin</p>}
+          </div>
+          <div onClick={() => setF("isAdminRole", !form.isAdminRole)} className={`w-12 h-6 rounded-full transition-all relative flex-shrink-0 cursor-pointer ${form.isAdminRole ? "bg-[#F9A825]" : "bg-[#CCC]"}`}>
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${form.isAdminRole ? "right-1" : "left-1"}`} />
+          </div>
         </div>
-        <div className="flex-1">
-          <p className="text-sm font-bold text-[#1B3A6B]">منح صلاحيات مدير كاملة</p>
-          <p className="text-xs text-[#777] mt-0.5">عند التفعيل يحصل الموظف على جميع صلاحيات المدير ويدخل النظام بوضع المدير الكامل</p>
-          {form.isAdminRole && <p className="text-[10px] text-[#E65100] font-semibold mt-1">⚠️ هذا الموظف يملك وصولاً كاملاً مثل حساب admin</p>}
-        </div>
-        <div onClick={() => setF("isAdminRole", !form.isAdminRole)} className={`w-12 h-6 rounded-full transition-all relative flex-shrink-0 cursor-pointer ${form.isAdminRole ? "bg-[#F9A825]" : "bg-[#CCC]"}`}>
-          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${form.isAdminRole ? "right-1" : "left-1"}`} />
-        </div>
-      </div>
+      )}
 
       {/* Accordion dept list */}
       <div className="space-y-2">
@@ -11780,7 +11795,9 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
   );
 }
 
-function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles }: {
+function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles,
+  setStaffList, setCustomDepts, onAddDeptDrawer, setEmployees, setInsurances, adminAccounts = [], setAdminAccounts,
+  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -11833,6 +11850,17 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   checkAndNotify?: (itemName: string, dept: string, deptLabel: string, qty: number, threshold: number) => void;
   allPaymentVouchers?: any[];
   allReceiptVouchers?: any[];
+  setStaffList?: React.Dispatch<React.SetStateAction<StaffMember[]>>;
+  setCustomDepts?: React.Dispatch<React.SetStateAction<Array<{ id: string; name: string; short: string; iconId: string; subItemIds?: string[] }>>>;
+  onAddDeptDrawer?: (deptId: string) => void;
+  setEmployees?: React.Dispatch<React.SetStateAction<Employee[]>>;
+  setInsurances?: React.Dispatch<React.SetStateAction<InsuranceCo[]>>;
+  adminAccounts?: AdminAccount[];
+  setAdminAccounts?: React.Dispatch<React.SetStateAction<AdminAccount[]>>;
+  sidebarSettings?: SidebarSettings;
+  setSidebarSettings?: React.Dispatch<React.SetStateAction<SidebarSettings>>;
+  setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>;
+  setSuppliersRoot?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>>;
 }) {
 
   const customDeptsAsDepts = customDepts.map(d => ({ ...d, Icon: Building2 as React.ElementType }));
@@ -11894,21 +11922,44 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   };
   const navToScreen = (deptId: string, screen: string, extra?: Partial<Route>) => { setActiveDept(deptId); setSubScreen(screen); setRoute({ screen, dept: deptId, ...extra }); if (isMobile) setCollapsed(true); };
 
+  // Sub-item id → StaffPortal screen name. Almost all match 1:1 with the
+  // permission-catalog id used by getDeptSubItems(); a couple of radiology
+  // ids diverge from their screen names historically, so map them explicitly.
+  const DEPT_SUBITEM_ID_TO_SCREEN: Record<string, string> = {
+    "open-patient": "open-patient", "purchase-reqs": "purchase-reqs",
+    "lab-session": "lab-session", "test-catalog": "test-catalog", "lab-queue": "lab-queue", "lab-inventory": "lab-inventory",
+    "rad-results": "rad-session", "rad-catalog": "image-catalog", "rad-queue": "rad-queue",
+    "rehab-session": "rehab-session", "rehab-catalog": "rehab-catalog", "rehab-queue": "rehab-queue",
+    "vouchers": "vouchers", "print-export": "print-export",
+    "dept-profit": "dept-profit", "dept-debts": "dept-debts", "dept-revenue": "dept-revenue", "dept-expenses": "dept-expenses",
+    "attendance": "attendance", "staff-advance": "staff-advance", "surgery-clinic-inv": "surgery-clinic-inv",
+  };
+  const BUILT_IN_DEPT_IDS = new Set(["surgery", "lab", "radiology", "rehab"]);
   const buildSubItems = (deptId: string, perms: DeptPermissions) => {
     const items: Array<{ id: string; label: string; screen: string }> = [];
+    if (BUILT_IN_DEPT_IDS.has(deptId)) {
+      // Same ordered list the admin's permission editor (and admin sidebar) uses
+      // for this department — so the staff sidebar order always matches the
+      // admin's order, filtered down to whatever the staff member is actually
+      // granted.
+      for (const si of getDeptSubItems(deptId, customDepts)) {
+        if (!perms[si.accessKey]) continue;
+        if (si.id === "attendance" && !staff.canAttendance) continue;
+        const screen = DEPT_SUBITEM_ID_TO_SCREEN[si.id];
+        if (!screen) continue;
+        items.push({ id: si.id, label: si.label, screen });
+      }
+      // canDrawerView has no admin-editable slot in the permission catalog yet,
+      // so keep it in its historical position — right after "السندات وحساباتها".
+      if (perms.canDrawerView) {
+        const drawerItem = { id: "dept-drawer", label: `النظام المالي لـ${activeDeptInfo?.name || "القسم"}`, screen: "dept-drawer" };
+        const voucherIdx = items.findIndex(it => it.id === "vouchers");
+        if (voucherIdx >= 0) items.splice(voucherIdx + 1, 0, drawerItem); else items.push(drawerItem);
+      }
+      return items;
+    }
+    // Custom departments: unchanged fallback (not part of this ordering fix).
     if (perms.canOpenPatient) items.push({ id: "open-patient", label: "فتح ملف مريض / تسجيل مريض", screen: "open-patient" });
-
-    if (deptId === "surgery" && perms.canSurgeryClinicInv) items.push({ id: "surgery-clinic-inv", label: "مستلزمات عيادة الجراحة والطوارئ", screen: "surgery-clinic-inv" });
-    if (deptId === "lab" && perms.canLabSession) items.push({ id: "lab-session", label: "طلبات المختبر وتعبئة النتائج", screen: "lab-session" });
-    if (deptId === "lab" && perms.canLabCatalog) items.push({ id: "test-catalog", label: "دليل أسعار الفحوصات المخبرية", screen: "test-catalog" });
-    if (deptId === "lab" && perms.canLabQueue) items.push({ id: "lab-queue", label: "قوائم الحالات", screen: "lab-queue" });
-    if (deptId === "lab" && perms.canLabInventory) items.push({ id: "lab-inventory", label: "مخزون مستلزمات المختبر", screen: "lab-inventory" });
-    if (deptId === "radiology" && perms.canRadSession) items.push({ id: "rad-session", label: "طلبات الأشعة وتعبئة النتائج", screen: "rad-session" });
-    if (deptId === "radiology" && perms.canRadCatalog) items.push({ id: "image-catalog", label: "دليل أسعار صور الأشعة الطبية", screen: "image-catalog" });
-    if (deptId === "radiology" && perms.canRadQueue) items.push({ id: "rad-queue", label: "قوائم الحالات", screen: "rad-queue" });
-    if (deptId === "rehab" && perms.canRehabSession) items.push({ id: "rehab-session", label: "طلبات العلاج التأهيلي وتعبئة النتائج", screen: "rehab-session" });
-    if (deptId === "rehab" && perms.canRehabCatalog) items.push({ id: "rehab-catalog", label: "دليل أسعار خدمات العلاج التأهيلي", screen: "rehab-catalog" });
-    if (deptId === "rehab" && perms.canRehabQueue) items.push({ id: "rehab-queue", label: "قوائم الحالات", screen: "rehab-queue" });
     if (perms.canPurchaseReqs) items.push({ id: "purchase-reqs", label: "طلبات الشراء", screen: "purchase-reqs" });
     if (perms.canVouchers) items.push({ id: "vouchers", label: "السندات وحساباتها", screen: "vouchers" });
     if (perms.canDrawerView) items.push({ id: "dept-drawer", label: `النظام المالي لـ${activeDeptInfo?.name || "القسم"}`, screen: "dept-drawer" });
@@ -12062,6 +12113,66 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <Wallet size={17} />
               </div>
               {(!collapsed || isMobile) && <span className="flex-1 text-right text-[13px] font-semibold">النظام المالي لـ{activeDeptInfo?.name || "القسم"}</span>}
+            </button>
+          )}
+          {(staff.canAccessReports || staff.canAccessSettings || staff.canManageStaff) && (
+            <div style={{ height: 1, margin: "6px 12px", backgroundColor: "rgba(255,255,255,0.08)" }} />
+          )}
+          {staff.canAccessReports && (
+            <button
+              onClick={() => { setActiveDept(""); setSubScreen("reports"); setRoute({ screen: "reports" }); if (isMobile) setCollapsed(true); }}
+              title={collapsed && !isMobile ? "التقارير" : undefined}
+              className="w-full flex items-center gap-3 transition-all"
+              style={{
+                padding: collapsed && !isMobile ? "10px 0" : "8px 14px",
+                justifyContent: collapsed && !isMobile ? "center" : "flex-start",
+                backgroundColor: subScreen === "reports" ? SB_ACC2 : "transparent",
+                borderRight: subScreen === "reports" ? `3px solid ${SB_ACC}` : "3px solid transparent",
+                color: subScreen === "reports" ? "#fff" : "rgba(255,255,255,0.65)",
+              }}>
+              <div className="flex-shrink-0 rounded-lg p-1.5"
+                style={{ backgroundColor: subScreen === "reports" ? `${SB_ACC}30` : "transparent", color: subScreen === "reports" ? SB_ACC : "rgba(255,255,255,0.6)" }}>
+                <FileText size={17} />
+              </div>
+              {(!collapsed || isMobile) && <span className="flex-1 text-right text-[13px] font-semibold">التقارير والكشوفات</span>}
+            </button>
+          )}
+          {staff.canManageStaff && (
+            <button
+              onClick={() => { setActiveDept(""); setSubScreen("staff-mgmt"); setRoute({ screen: "staff-mgmt" }); if (isMobile) setCollapsed(true); }}
+              title={collapsed && !isMobile ? "إدارة الموظفين" : undefined}
+              className="w-full flex items-center gap-3 transition-all"
+              style={{
+                padding: collapsed && !isMobile ? "10px 0" : "8px 14px",
+                justifyContent: collapsed && !isMobile ? "center" : "flex-start",
+                backgroundColor: subScreen === "staff-mgmt" ? SB_ACC2 : "transparent",
+                borderRight: subScreen === "staff-mgmt" ? `3px solid ${SB_ACC}` : "3px solid transparent",
+                color: subScreen === "staff-mgmt" ? "#fff" : "rgba(255,255,255,0.65)",
+              }}>
+              <div className="flex-shrink-0 rounded-lg p-1.5"
+                style={{ backgroundColor: subScreen === "staff-mgmt" ? `${SB_ACC}30` : "transparent", color: subScreen === "staff-mgmt" ? SB_ACC : "rgba(255,255,255,0.6)" }}>
+                <Users size={17} />
+              </div>
+              {(!collapsed || isMobile) && <span className="flex-1 text-right text-[13px] font-semibold">إدارة الموظفين والصلاحيات</span>}
+            </button>
+          )}
+          {staff.canAccessSettings && (
+            <button
+              onClick={() => { setActiveDept(""); setSubScreen("settings"); setRoute({ screen: "settings" }); if (isMobile) setCollapsed(true); }}
+              title={collapsed && !isMobile ? "الإعدادات" : undefined}
+              className="w-full flex items-center gap-3 transition-all"
+              style={{
+                padding: collapsed && !isMobile ? "10px 0" : "8px 14px",
+                justifyContent: collapsed && !isMobile ? "center" : "flex-start",
+                backgroundColor: subScreen === "settings" ? SB_ACC2 : "transparent",
+                borderRight: subScreen === "settings" ? `3px solid ${SB_ACC}` : "3px solid transparent",
+                color: subScreen === "settings" ? "#fff" : "rgba(255,255,255,0.65)",
+              }}>
+              <div className="flex-shrink-0 rounded-lg p-1.5"
+                style={{ backgroundColor: subScreen === "settings" ? `${SB_ACC}30` : "transparent", color: subScreen === "settings" ? SB_ACC : "rgba(255,255,255,0.6)" }}>
+                <Settings size={17} />
+              </div>
+              {(!collapsed || isMobile) && <span className="flex-1 text-right text-[13px] font-semibold">الإعدادات</span>}
             </button>
           )}
           <div style={{ height: 1, margin: "6px 12px", backgroundColor: "rgba(255,255,255,0.08)" }} />
@@ -12337,6 +12448,15 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
               {subScreen === "my-account" && (
                 <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} paymentVouchers={allPaymentVouchers} />
+              )}
+              {subScreen === "reports" && staff.canAccessReports && (
+                <ReportsScreen toast={staffToast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} />
+              )}
+              {subScreen === "staff-mgmt" && staff.canManageStaff && setStaffList && setCustomDepts && onAddDeptDrawer && (
+                <StaffManagementScreen staffList={staffList} setStaffList={setStaffList} drawers={drawers} toast={staffToast} customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} sessions={sessions} employees={employees} setEmployees={setEmployees} restrictedMode />
+              )}
+              {subScreen === "settings" && staff.canAccessSettings && setInsurances && (
+                <GeneralSettingsScreen toast={staffToast} insurances={insurances} setInsurances={setInsurances} adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} sidebarSettings={sidebarSettings} setSidebarSettings={setSidebarSettings} loggedUser={{ type: "staff", staff }} setLoggedUser={setLoggedUser} suppliers={suppliersRoot} setSuppliers={setSuppliersRoot} restrictedMode />
               )}
               {subScreen === "fin" && (() => {
                 const allowedIds = new Set(allowedDepts.map(d => d.id));
@@ -14774,6 +14894,17 @@ export default function App() {
       checkAndNotify={checkAndNotify}
       allPaymentVouchers={paymentVouchersGlobal}
       allReceiptVouchers={receiptVouchersGlobal}
+      setStaffList={setStaffList}
+      setCustomDepts={setCustomDepts}
+      onAddDeptDrawer={onAddDeptDrawer}
+      setEmployees={setEmployees}
+      setInsurances={setInsurances}
+      adminAccounts={adminAccounts}
+      setAdminAccounts={setAdminAccounts}
+      sidebarSettings={sidebarSettings}
+      setSidebarSettings={setSidebarSettings}
+      setLoggedUser={setLoggedUser}
+      setSuppliersRoot={setSuppliersRoot}
     />
   );
   const renderScreen = () => {

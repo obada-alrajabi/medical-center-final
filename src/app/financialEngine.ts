@@ -119,7 +119,9 @@ export function calculateFinancials(
   // Revenue = Patient Payments + Receipt Vouchers
   const revenue = patientPayments + receiptVoucherRev;
 
-  // Expenses = ONLY the amount actually paid toward approved purchase requests
+  // Expenses = amount actually paid toward approved purchase requests
+  //          + personal expense payment vouchers (real cash leaving the drawer,
+  //            counted as an expense on the day it is disbursed — see below)
   const filteredPR = purchaseRequests.filter(r =>
     r.status === "approved" &&
     (departmentId ? r.dept === departmentId : true) &&
@@ -128,7 +130,6 @@ export function calculateFinancials(
   const purchaseExpenses = filteredPR.reduce(
     (sum, r) => sum + (Number(r.paidAmount ?? r.paid_amount) || 0), 0
   );
-  const expenses = purchaseExpenses;
 
   // Personal Expenses = Payment Vouchers
   const filteredPV = paymentVouchers.filter(v =>
@@ -136,12 +137,14 @@ export function calculateFinancials(
   );
   const personalExpenseVouchersAmt = filteredPV.reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
 
-  // Salaries: Original Salaries - Approved Advances - Personal Expenses
-  // Original salaries represent the full disbursed salary transaction amount (which is recorded as net in the drawer)
-  // Wait, if the transaction is 'راتب موظف', the value recorded in the drawer IS the net salary.
-  // The user states: "Salaries = Original Salaries - Approved Advances - Personal Expenses"
-  // If the user records the ORIGINAL salary in the drawer, then the equation applies.
-  // We will sum the drawer transactions for 'راتب موظف' inside the date range.
+  // Personal expense vouchers are a real, immediate cash outflow (a voucher can be
+  // issued any day, independent of when payroll is actually run), so they must
+  // always count as an expense — never be netted only against salaryCost below,
+  // otherwise a day with a voucher but no salary disbursement (grossSalary = 0)
+  // would push salaryCost negative and incorrectly inflate profit.
+  const expenses = purchaseExpenses + personalExpenseVouchersAmt;
+
+  // Salaries: drawer transactions actually recorded as "راتب موظف" disbursements.
   const filteredSalary = drawerTxs.filter(t =>
     t.type === "out" &&
     SALARY_CATS.some(c => (t.category || "").includes(c)) &&
@@ -157,8 +160,11 @@ export function calculateFinancials(
   );
   const approvedAdvancesAmt = filteredAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
 
-  // To perfectly match user's explicit request: Salaries = Original Salary(grossSalary) - Advances - Personal Expenses
-  const salaryCost = grossSalary - approvedAdvancesAmt - personalExpenseVouchersAmt;
+  // Salary Cost = actual disbursed salary, reduced only by advances already paid
+  // out to the same employees — but never below zero. Advances given before any
+  // salary is disbursed in the period must not flip salaryCost negative (which
+  // would otherwise ADD to profit instead of subtracting from it).
+  const salaryCost = Math.max(0, grossSalary - approvedAdvancesAmt);
 
   // Net Profit = Revenue - (Expenses + Salaries)
   const profit = revenue - (expenses + salaryCost);
