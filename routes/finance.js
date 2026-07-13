@@ -679,11 +679,6 @@ router.get('/summary', requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-router.post('/reset-all', requireAdmin, async (req, res) => {
-  // Legacy stub — tables referenced here no longer exist.
-  // Use POST /api/admin/execute-delete instead.
-  res.status(410).json({ success: false, message: 'هذا المسار لم يعد مدعوماً — استخدم /api/admin/execute-delete' });
-});
 
 
 export default router;

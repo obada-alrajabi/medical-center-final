@@ -128,6 +128,14 @@ export const api = {
     files: {
       getAll: (sessionId: number) => get<Array<{ id: number; filename: string; originalname: string; size: number }>>(`/sessions/${sessionId}/files`),
       delete: (sessionId: number, fileId: number) => del<unknown>(`/sessions/${sessionId}/files/${fileId}`),
+      upload: async (sessionId: number, fd: FormData) => {
+        const _tok = getAdminToken();
+        const headers: Record<string, string> = {};
+        if (_tok) headers["Authorization"] = `Bearer ${_tok}`;
+        const res = await fetch(`${BASE}/sessions/${sessionId}/files`, { method: "POST", headers, body: fd });
+        if (!res.ok) throw new Error("Upload failed");
+        return res.json();
+      },
     },
   },
 

@@ -1,0 +1,2047 @@
+{
+  "backend": [
+    {
+      "file": "admin.js",
+      "method": "GET",
+      "path": "/admin/tables"
+    },
+    {
+      "file": "admin.js",
+      "method": "DELETE",
+      "path": "/admin/tables/:table"
+    },
+    {
+      "file": "admin.js",
+      "method": "POST",
+      "path": "/admin/reset-financials"
+    },
+    {
+      "file": "admin.js",
+      "method": "POST",
+      "path": "/admin/execute-delete"
+    },
+    {
+      "file": "admin.js",
+      "method": "DELETE",
+      "path": "/admin/records/:table/:id"
+    },
+    {
+      "file": "backup.js",
+      "method": "GET",
+      "path": "/backup/notifications"
+    },
+    {
+      "file": "backup.js",
+      "method": "DELETE",
+      "path": "/backup/notifications/:id"
+    },
+    {
+      "file": "backup.js",
+      "method": "GET",
+      "path": "/backup/export"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/local"
+    },
+    {
+      "file": "backup.js",
+      "method": "GET",
+      "path": "/backup/local/list"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/local/restore/:filename"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/restore/local/:filename"
+    },
+    {
+      "file": "backup.js",
+      "method": "DELETE",
+      "path": "/backup/local/:filename"
+    },
+    {
+      "file": "backup.js",
+      "method": "GET",
+      "path": "/backup/drives"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/drives"
+    },
+    {
+      "file": "backup.js",
+      "method": "PUT",
+      "path": "/backup/drives/:slot"
+    },
+    {
+      "file": "backup.js",
+      "method": "DELETE",
+      "path": "/backup/drives/:slot"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/drive/all"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/drive/:slot"
+    },
+    {
+      "file": "backup.js",
+      "method": "GET",
+      "path": "/backup/drive/:slot/list"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/restore/drive/:slot"
+    },
+    {
+      "file": "backup.js",
+      "method": "POST",
+      "path": "/backup/restore/zip"
+    },
+    {
+      "file": "broadcast.js",
+      "method": "GET",
+      "path": "/broadcast"
+    },
+    {
+      "file": "broadcast.js",
+      "method": "PUT",
+      "path": "/broadcast"
+    },
+    {
+      "file": "broadcast.js",
+      "method": "DELETE",
+      "path": "/broadcast"
+    },
+    {
+      "file": "departments.js",
+      "method": "GET",
+      "path": "/departments"
+    },
+    {
+      "file": "departments.js",
+      "method": "GET",
+      "path": "/departments/:id"
+    },
+    {
+      "file": "departments.js",
+      "method": "POST",
+      "path": "/departments"
+    },
+    {
+      "file": "departments.js",
+      "method": "PUT",
+      "path": "/departments/:id"
+    },
+    {
+      "file": "departments.js",
+      "method": "DELETE",
+      "path": "/departments/:id"
+    },
+    {
+      "file": "diagnoses.js",
+      "method": "GET",
+      "path": "/diagnoses"
+    },
+    {
+      "file": "diagnoses.js",
+      "method": "POST",
+      "path": "/diagnoses"
+    },
+    {
+      "file": "diagnoses.js",
+      "method": "PUT",
+      "path": "/diagnoses/:id"
+    },
+    {
+      "file": "diagnoses.js",
+      "method": "DELETE",
+      "path": "/diagnoses/:id"
+    },
+    {
+      "file": "drawers.js",
+      "method": "GET",
+      "path": "/drawers"
+    },
+    {
+      "file": "drawers.js",
+      "method": "GET",
+      "path": "/drawers/dept/:dept"
+    },
+    {
+      "file": "drawers.js",
+      "method": "GET",
+      "path": "/drawers/:id"
+    },
+    {
+      "file": "drawers.js",
+      "method": "POST",
+      "path": "/drawers"
+    },
+    {
+      "file": "drawers.js",
+      "method": "PUT",
+      "path": "/drawers/:id"
+    },
+    {
+      "file": "drawers.js",
+      "method": "DELETE",
+      "path": "/drawers/reset"
+    },
+    {
+      "file": "drawers.js",
+      "method": "DELETE",
+      "path": "/drawers/:id"
+    },
+    {
+      "file": "drawers.js",
+      "method": "GET",
+      "path": "/drawers/transactions/all"
+    },
+    {
+      "file": "drawers.js",
+      "method": "GET",
+      "path": "/drawers/transactions/:id"
+    },
+    {
+      "file": "drawers.js",
+      "method": "POST",
+      "path": "/drawers/transactions"
+    },
+    {
+      "file": "drawers.js",
+      "method": "PUT",
+      "path": "/drawers/transactions/:id"
+    },
+    {
+      "file": "drawers.js",
+      "method": "DELETE",
+      "path": "/drawers/transactions/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/invoices"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/invoices/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "POST",
+      "path": "/finance/invoices"
+    },
+    {
+      "file": "finance.js",
+      "method": "PUT",
+      "path": "/finance/invoices/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "DELETE",
+      "path": "/finance/invoices/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/debts"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/debts/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "POST",
+      "path": "/finance/debts"
+    },
+    {
+      "file": "finance.js",
+      "method": "PUT",
+      "path": "/finance/debts/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "DELETE",
+      "path": "/finance/debts/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/external-debts"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/external-debts/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "POST",
+      "path": "/finance/external-debts"
+    },
+    {
+      "file": "finance.js",
+      "method": "PUT",
+      "path": "/finance/external-debts/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "DELETE",
+      "path": "/finance/external-debts/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/purchase-requests"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/purchase-requests/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "POST",
+      "path": "/finance/purchase-requests"
+    },
+    {
+      "file": "finance.js",
+      "method": "PUT",
+      "path": "/finance/purchase-requests/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "DELETE",
+      "path": "/finance/purchase-requests/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/purchase-requests/:request_id/items"
+    },
+    {
+      "file": "finance.js",
+      "method": "POST",
+      "path": "/finance/purchase-requests/:request_id/items"
+    },
+    {
+      "file": "finance.js",
+      "method": "PUT",
+      "path": "/finance/purchase-items/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "DELETE",
+      "path": "/finance/purchase-items/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/receipt-vouchers"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/receipt-vouchers/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "POST",
+      "path": "/finance/receipt-vouchers"
+    },
+    {
+      "file": "finance.js",
+      "method": "PUT",
+      "path": "/finance/receipt-vouchers/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "DELETE",
+      "path": "/finance/receipt-vouchers/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/payment-vouchers"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/payment-vouchers/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "POST",
+      "path": "/finance/payment-vouchers"
+    },
+    {
+      "file": "finance.js",
+      "method": "PUT",
+      "path": "/finance/payment-vouchers/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "DELETE",
+      "path": "/finance/payment-vouchers/:id"
+    },
+    {
+      "file": "finance.js",
+      "method": "GET",
+      "path": "/finance/summary"
+    },
+    {
+      "file": "lab.js",
+      "method": "GET",
+      "path": "/lab/tests"
+    },
+    {
+      "file": "lab.js",
+      "method": "GET",
+      "path": "/lab/tests/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "POST",
+      "path": "/lab/tests"
+    },
+    {
+      "file": "lab.js",
+      "method": "PUT",
+      "path": "/lab/tests/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "DELETE",
+      "path": "/lab/tests/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "GET",
+      "path": "/lab/tests/:test_id/ranges"
+    },
+    {
+      "file": "lab.js",
+      "method": "POST",
+      "path": "/lab/tests/:test_id/ranges"
+    },
+    {
+      "file": "lab.js",
+      "method": "PUT",
+      "path": "/lab/ranges/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "DELETE",
+      "path": "/lab/ranges/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "GET",
+      "path": "/lab/inventory"
+    },
+    {
+      "file": "lab.js",
+      "method": "GET",
+      "path": "/lab/inventory/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "POST",
+      "path": "/lab/inventory"
+    },
+    {
+      "file": "lab.js",
+      "method": "PUT",
+      "path": "/lab/inventory/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "DELETE",
+      "path": "/lab/inventory/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "POST",
+      "path": "/lab/inventory/:inventory_id/tests"
+    },
+    {
+      "file": "lab.js",
+      "method": "DELETE",
+      "path": "/lab/inventory/tests/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "POST",
+      "path": "/lab/inventory/:inventory_id/params"
+    },
+    {
+      "file": "lab.js",
+      "method": "PUT",
+      "path": "/lab/inventory/params/:id"
+    },
+    {
+      "file": "lab.js",
+      "method": "DELETE",
+      "path": "/lab/inventory/params/:id"
+    },
+    {
+      "file": "patients.js",
+      "method": "GET",
+      "path": "/patients"
+    },
+    {
+      "file": "patients.js",
+      "method": "GET",
+      "path": "/patients/:id"
+    },
+    {
+      "file": "patients.js",
+      "method": "POST",
+      "path": "/patients"
+    },
+    {
+      "file": "patients.js",
+      "method": "PUT",
+      "path": "/patients/:id"
+    },
+    {
+      "file": "patients.js",
+      "method": "DELETE",
+      "path": "/patients/cascade/:id"
+    },
+    {
+      "file": "patients.js",
+      "method": "DELETE",
+      "path": "/patients/:id"
+    },
+    {
+      "file": "patients.js",
+      "method": "GET",
+      "path": "/patients/delete-requests/all"
+    },
+    {
+      "file": "patients.js",
+      "method": "GET",
+      "path": "/patients/delete-requests/:id"
+    },
+    {
+      "file": "patients.js",
+      "method": "POST",
+      "path": "/patients/delete-requests"
+    },
+    {
+      "file": "patients.js",
+      "method": "PUT",
+      "path": "/patients/delete-requests/:id"
+    },
+    {
+      "file": "patients.js",
+      "method": "DELETE",
+      "path": "/patients/delete-requests/:id"
+    },
+    {
+      "file": "queues.js",
+      "method": "GET",
+      "path": "/queues"
+    },
+    {
+      "file": "queues.js",
+      "method": "POST",
+      "path": "/queues"
+    },
+    {
+      "file": "queues.js",
+      "method": "PATCH",
+      "path": "/queues/:id"
+    },
+    {
+      "file": "queues.js",
+      "method": "DELETE",
+      "path": "/queues/clear-done/:dept"
+    },
+    {
+      "file": "queues.js",
+      "method": "DELETE",
+      "path": "/queues/:id"
+    },
+    {
+      "file": "radiology.js",
+      "method": "GET",
+      "path": "/radiology"
+    },
+    {
+      "file": "radiology.js",
+      "method": "GET",
+      "path": "/radiology/:id"
+    },
+    {
+      "file": "radiology.js",
+      "method": "POST",
+      "path": "/radiology"
+    },
+    {
+      "file": "radiology.js",
+      "method": "PUT",
+      "path": "/radiology/:id"
+    },
+    {
+      "file": "radiology.js",
+      "method": "DELETE",
+      "path": "/radiology/:id"
+    },
+    {
+      "file": "rehab.js",
+      "method": "GET",
+      "path": "/rehab/services"
+    },
+    {
+      "file": "rehab.js",
+      "method": "POST",
+      "path": "/rehab/services"
+    },
+    {
+      "file": "rehab.js",
+      "method": "PUT",
+      "path": "/rehab/services/:id"
+    },
+    {
+      "file": "rehab.js",
+      "method": "DELETE",
+      "path": "/rehab/services/:id"
+    },
+    {
+      "file": "rehab.js",
+      "method": "GET",
+      "path": "/rehab/plans"
+    },
+    {
+      "file": "rehab.js",
+      "method": "POST",
+      "path": "/rehab/plans"
+    },
+    {
+      "file": "rehab.js",
+      "method": "PUT",
+      "path": "/rehab/plans/:id"
+    },
+    {
+      "file": "rehab.js",
+      "method": "DELETE",
+      "path": "/rehab/plans/:id"
+    },
+    {
+      "file": "rehab.js",
+      "method": "GET",
+      "path": "/rehab/queue"
+    },
+    {
+      "file": "rehab.js",
+      "method": "POST",
+      "path": "/rehab/queue"
+    },
+    {
+      "file": "rehab.js",
+      "method": "PATCH",
+      "path": "/rehab/queue/:id"
+    },
+    {
+      "file": "rehab.js",
+      "method": "DELETE",
+      "path": "/rehab/queue/:id"
+    },
+    {
+      "file": "reminders.js",
+      "method": "GET",
+      "path": "/reminders"
+    },
+    {
+      "file": "reminders.js",
+      "method": "POST",
+      "path": "/reminders"
+    },
+    {
+      "file": "reminders.js",
+      "method": "PUT",
+      "path": "/reminders/:id"
+    },
+    {
+      "file": "reminders.js",
+      "method": "DELETE",
+      "path": "/reminders/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "GET",
+      "path": "/sessions"
+    },
+    {
+      "file": "sessions.js",
+      "method": "GET",
+      "path": "/sessions/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "POST",
+      "path": "/sessions"
+    },
+    {
+      "file": "sessions.js",
+      "method": "PUT",
+      "path": "/sessions/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "DELETE",
+      "path": "/sessions/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "GET",
+      "path": "/sessions/:session_id/diagnoses"
+    },
+    {
+      "file": "sessions.js",
+      "method": "POST",
+      "path": "/sessions/:session_id/diagnoses"
+    },
+    {
+      "file": "sessions.js",
+      "method": "DELETE",
+      "path": "/sessions/:session_id/diagnoses/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "GET",
+      "path": "/sessions/:session_id/medications"
+    },
+    {
+      "file": "sessions.js",
+      "method": "POST",
+      "path": "/sessions/:session_id/medications"
+    },
+    {
+      "file": "sessions.js",
+      "method": "DELETE",
+      "path": "/sessions/:session_id/medications/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "GET",
+      "path": "/sessions/:session_id/lab-refs"
+    },
+    {
+      "file": "sessions.js",
+      "method": "POST",
+      "path": "/sessions/:session_id/lab-refs"
+    },
+    {
+      "file": "sessions.js",
+      "method": "DELETE",
+      "path": "/sessions/:session_id/lab-refs/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "GET",
+      "path": "/sessions/:session_id/rad-refs"
+    },
+    {
+      "file": "sessions.js",
+      "method": "POST",
+      "path": "/sessions/:session_id/rad-refs"
+    },
+    {
+      "file": "sessions.js",
+      "method": "DELETE",
+      "path": "/sessions/:session_id/rad-refs/:id"
+    },
+    {
+      "file": "sessions.js",
+      "method": "GET",
+      "path": "/sessions/:id/files"
+    },
+    {
+      "file": "sessions.js",
+      "method": "POST",
+      "path": "/sessions/:id/files"
+    },
+    {
+      "file": "sessions.js",
+      "method": "DELETE",
+      "path": "/sessions/:id/files/:fileId"
+    },
+    {
+      "file": "settings.js",
+      "method": "GET",
+      "path": "/settings/insurance"
+    },
+    {
+      "file": "settings.js",
+      "method": "GET",
+      "path": "/settings/insurance/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "POST",
+      "path": "/settings/insurance"
+    },
+    {
+      "file": "settings.js",
+      "method": "PUT",
+      "path": "/settings/insurance/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "DELETE",
+      "path": "/settings/insurance/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "GET",
+      "path": "/settings/admins"
+    },
+    {
+      "file": "settings.js",
+      "method": "GET",
+      "path": "/settings/admins/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "POST",
+      "path": "/settings/admins"
+    },
+    {
+      "file": "settings.js",
+      "method": "PUT",
+      "path": "/settings/admins/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "DELETE",
+      "path": "/settings/admins/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "GET",
+      "path": "/settings/sidebar"
+    },
+    {
+      "file": "settings.js",
+      "method": "PUT",
+      "path": "/settings/sidebar"
+    },
+    {
+      "file": "settings.js",
+      "method": "GET",
+      "path": "/settings/suppliers"
+    },
+    {
+      "file": "settings.js",
+      "method": "POST",
+      "path": "/settings/suppliers"
+    },
+    {
+      "file": "settings.js",
+      "method": "PUT",
+      "path": "/settings/suppliers/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "DELETE",
+      "path": "/settings/suppliers/:id"
+    },
+    {
+      "file": "settings.js",
+      "method": "POST",
+      "path": "/settings/auth/login"
+    },
+    {
+      "file": "settings.js",
+      "method": "PATCH",
+      "path": "/settings/admins/:id/credentials"
+    },
+    {
+      "file": "settings.js",
+      "method": "POST",
+      "path": "/settings/auth/staff-login"
+    },
+    {
+      "file": "sms.js",
+      "method": "GET",
+      "path": "/sms/settings"
+    },
+    {
+      "file": "sms.js",
+      "method": "POST",
+      "path": "/sms/settings"
+    },
+    {
+      "file": "sms.js",
+      "method": "POST",
+      "path": "/sms/send"
+    },
+    {
+      "file": "sms.js",
+      "method": "POST",
+      "path": "/sms/test"
+    },
+    {
+      "file": "staff-notices.js",
+      "method": "GET",
+      "path": "/staff-notices/:staff_id"
+    },
+    {
+      "file": "staff-notices.js",
+      "method": "POST",
+      "path": "/staff-notices"
+    },
+    {
+      "file": "staff-notices.js",
+      "method": "DELETE",
+      "path": "/staff-notices/:notice_id"
+    },
+    {
+      "file": "staff-notices.js",
+      "method": "PATCH",
+      "path": "/staff-notices/:notice_id/read"
+    },
+    {
+      "file": "staff-notices.js",
+      "method": "GET",
+      "path": "/staff-notices"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/advance-requests"
+    },
+    {
+      "file": "staff.js",
+      "method": "POST",
+      "path": "/staff/advance-requests"
+    },
+    {
+      "file": "staff.js",
+      "method": "PATCH",
+      "path": "/staff/advance-requests/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "DELETE",
+      "path": "/staff/advance-requests/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "PATCH",
+      "path": "/staff/:id/credentials"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "POST",
+      "path": "/staff"
+    },
+    {
+      "file": "staff.js",
+      "method": "PUT",
+      "path": "/staff/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "DELETE",
+      "path": "/staff/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/:staff_id/permissions"
+    },
+    {
+      "file": "staff.js",
+      "method": "POST",
+      "path": "/staff/:staff_id/permissions"
+    },
+    {
+      "file": "staff.js",
+      "method": "PUT",
+      "path": "/staff/:staff_id/permissions/:dept"
+    },
+    {
+      "file": "staff.js",
+      "method": "DELETE",
+      "path": "/staff/:staff_id/permissions/:dept"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/:staff_id/subitem-permissions"
+    },
+    {
+      "file": "staff.js",
+      "method": "POST",
+      "path": "/staff/:staff_id/subitem-permissions"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/employees/all"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/employees/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "POST",
+      "path": "/staff/employees"
+    },
+    {
+      "file": "staff.js",
+      "method": "PUT",
+      "path": "/staff/employees/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "DELETE",
+      "path": "/staff/employees/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/advances/all"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/advances/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "POST",
+      "path": "/staff/advances"
+    },
+    {
+      "file": "staff.js",
+      "method": "PUT",
+      "path": "/staff/advances/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "DELETE",
+      "path": "/staff/advances/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/attendance/all"
+    },
+    {
+      "file": "staff.js",
+      "method": "GET",
+      "path": "/staff/attendance/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "POST",
+      "path": "/staff/attendance"
+    },
+    {
+      "file": "staff.js",
+      "method": "PUT",
+      "path": "/staff/attendance/:id"
+    },
+    {
+      "file": "staff.js",
+      "method": "DELETE",
+      "path": "/staff/attendance/:id"
+    },
+    {
+      "file": "surgery.js",
+      "method": "GET",
+      "path": "/surgery-inventory"
+    },
+    {
+      "file": "surgery.js",
+      "method": "GET",
+      "path": "/surgery-inventory/:id"
+    },
+    {
+      "file": "surgery.js",
+      "method": "POST",
+      "path": "/surgery-inventory"
+    },
+    {
+      "file": "surgery.js",
+      "method": "PUT",
+      "path": "/surgery-inventory/:id"
+    },
+    {
+      "file": "surgery.js",
+      "method": "DELETE",
+      "path": "/surgery-inventory/:id"
+    },
+    {
+      "file": "server.js",
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/departments"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/drawers"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/sms"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/patients"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/sessions"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/staff"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/finance"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/lab"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/radiology"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/surgery-inventory"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/settings"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/queues"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/diagnoses"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/rehab"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/admin"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/reminders"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/broadcast"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/staff-notices"
+    },
+    {
+      "file": "server.js",
+      "method": "USE",
+      "path": "/backup"
+    }
+  ],
+  "frontend": [
+    {
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "method": "GET",
+      "path": "/drawers"
+    },
+    {
+      "method": "GET",
+      "path": "/drawers/*"
+    },
+    {
+      "method": "GET",
+      "path": "/drawers/dept/*"
+    },
+    {
+      "method": "PUT",
+      "path": "/drawers/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/drawers/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/drawers/reset"
+    },
+    {
+      "method": "POST",
+      "path": "/drawers"
+    },
+    {
+      "method": "POST",
+      "path": "/drawers"
+    },
+    {
+      "method": "GET",
+      "path": "/drawers/transactions/all${dept "
+    },
+    {
+      "method": "GET",
+      "path": "/drawers/transactions/*"
+    },
+    {
+      "method": "POST",
+      "path": "/drawers/transactions"
+    },
+    {
+      "method": "PUT",
+      "path": "/drawers/transactions/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/drawers/transactions/*"
+    },
+    {
+      "method": "GET",
+      "path": "/patients${q "
+    },
+    {
+      "method": "GET",
+      "path": "/patients/*"
+    },
+    {
+      "method": "POST",
+      "path": "/patients"
+    },
+    {
+      "method": "PUT",
+      "path": "/patients/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/patients/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/patients/cascade/*"
+    },
+    {
+      "method": "GET",
+      "path": "/patients/delete-requests/all"
+    },
+    {
+      "method": "GET",
+      "path": "/patients/delete-requests/*"
+    },
+    {
+      "method": "POST",
+      "path": "/patients/delete-requests"
+    },
+    {
+      "method": "PUT",
+      "path": "/patients/delete-requests/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/patients/delete-requests/*"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions${q "
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/*"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions"
+    },
+    {
+      "method": "PUT",
+      "path": "/sessions/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/sessions/*"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/*/diagnoses"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/*/diagnoses"
+    },
+    {
+      "method": "DELETE",
+      "path": "/sessions/*/diagnoses/*"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/*/medications"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/*/medications"
+    },
+    {
+      "method": "DELETE",
+      "path": "/sessions/*/medications/*"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/*/lab-refs"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/*/lab-refs"
+    },
+    {
+      "method": "DELETE",
+      "path": "/sessions/*/lab-refs/*"
+    },
+    {
+      "method": "GET",
+      "path": "/sessions/*/rad-refs"
+    },
+    {
+      "method": "POST",
+      "path": "/sessions/*/rad-refs"
+    },
+    {
+      "method": "DELETE",
+      "path": "/sessions/*/rad-refs/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/sessions/*/files/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/invoices${dept "
+    },
+    {
+      "method": "GET",
+      "path": "/finance/invoices/*"
+    },
+    {
+      "method": "POST",
+      "path": "/finance/invoices"
+    },
+    {
+      "method": "PUT",
+      "path": "/finance/invoices/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/finance/invoices/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/debts${dept "
+    },
+    {
+      "method": "GET",
+      "path": "/finance/debts/*"
+    },
+    {
+      "method": "POST",
+      "path": "/finance/debts"
+    },
+    {
+      "method": "PUT",
+      "path": "/finance/debts/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/finance/debts/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/external-debts"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/external-debts/*"
+    },
+    {
+      "method": "POST",
+      "path": "/finance/external-debts"
+    },
+    {
+      "method": "PUT",
+      "path": "/finance/external-debts/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/finance/external-debts/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/purchase-requests${dept "
+    },
+    {
+      "method": "GET",
+      "path": "/finance/purchase-requests/*"
+    },
+    {
+      "method": "POST",
+      "path": "/finance/purchase-requests"
+    },
+    {
+      "method": "PUT",
+      "path": "/finance/purchase-requests/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/finance/purchase-requests/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/purchase-requests/*/items"
+    },
+    {
+      "method": "POST",
+      "path": "/finance/purchase-requests/*/items"
+    },
+    {
+      "method": "PUT",
+      "path": "/finance/purchase-items/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/finance/purchase-items/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/receipt-vouchers"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/receipt-vouchers/*"
+    },
+    {
+      "method": "POST",
+      "path": "/finance/receipt-vouchers"
+    },
+    {
+      "method": "PUT",
+      "path": "/finance/receipt-vouchers/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/finance/receipt-vouchers/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/payment-vouchers"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/payment-vouchers/*"
+    },
+    {
+      "method": "POST",
+      "path": "/finance/payment-vouchers"
+    },
+    {
+      "method": "PUT",
+      "path": "/finance/payment-vouchers/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/finance/payment-vouchers/*"
+    },
+    {
+      "method": "GET",
+      "path": "/staff"
+    },
+    {
+      "method": "GET",
+      "path": "/staff/*"
+    },
+    {
+      "method": "POST",
+      "path": "/staff"
+    },
+    {
+      "method": "PUT",
+      "path": "/staff/*"
+    },
+    {
+      "method": "PATCH",
+      "path": "/staff/*/credentials"
+    },
+    {
+      "method": "DELETE",
+      "path": "/staff/*"
+    },
+    {
+      "method": "GET",
+      "path": "/staff/*/permissions"
+    },
+    {
+      "method": "POST",
+      "path": "/staff/*/permissions"
+    },
+    {
+      "method": "PUT",
+      "path": "/staff/*/permissions/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/staff/*/permissions/*"
+    },
+    {
+      "method": "GET",
+      "path": "/staff/employees/all${dept "
+    },
+    {
+      "method": "GET",
+      "path": "/staff/employees/*"
+    },
+    {
+      "method": "POST",
+      "path": "/staff/employees"
+    },
+    {
+      "method": "PUT",
+      "path": "/staff/employees/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/staff/employees/*"
+    },
+    {
+      "method": "GET",
+      "path": "/staff/advances/all${dept "
+    },
+    {
+      "method": "GET",
+      "path": "/staff/advances/*"
+    },
+    {
+      "method": "POST",
+      "path": "/staff/advances"
+    },
+    {
+      "method": "PUT",
+      "path": "/staff/advances/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/staff/advances/*"
+    },
+    {
+      "method": "GET",
+      "path": "/staff/attendance/all${dept "
+    },
+    {
+      "method": "GET",
+      "path": "/staff/attendance/*"
+    },
+    {
+      "method": "POST",
+      "path": "/staff/attendance"
+    },
+    {
+      "method": "PUT",
+      "path": "/staff/attendance/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/staff/attendance/*"
+    },
+    {
+      "method": "GET",
+      "path": "/staff/advance-requests"
+    },
+    {
+      "method": "POST",
+      "path": "/staff/advance-requests"
+    },
+    {
+      "method": "PATCH",
+      "path": "/staff/advance-requests/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/staff/advance-requests/*"
+    },
+    {
+      "method": "GET",
+      "path": "/lab/tests"
+    },
+    {
+      "method": "GET",
+      "path": "/lab/tests/*"
+    },
+    {
+      "method": "POST",
+      "path": "/lab/tests"
+    },
+    {
+      "method": "PUT",
+      "path": "/lab/tests/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/lab/tests/*"
+    },
+    {
+      "method": "GET",
+      "path": "/lab/tests/*/ranges"
+    },
+    {
+      "method": "POST",
+      "path": "/lab/tests/*/ranges"
+    },
+    {
+      "method": "PUT",
+      "path": "/lab/ranges/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/lab/ranges/*"
+    },
+    {
+      "method": "GET",
+      "path": "/lab/inventory"
+    },
+    {
+      "method": "GET",
+      "path": "/lab/inventory/*"
+    },
+    {
+      "method": "POST",
+      "path": "/lab/inventory"
+    },
+    {
+      "method": "PUT",
+      "path": "/lab/inventory/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/lab/inventory/*"
+    },
+    {
+      "method": "POST",
+      "path": "/lab/inventory/*/tests"
+    },
+    {
+      "method": "DELETE",
+      "path": "/lab/inventory/tests/*"
+    },
+    {
+      "method": "POST",
+      "path": "/lab/inventory/*/params"
+    },
+    {
+      "method": "PUT",
+      "path": "/lab/inventory/params/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/lab/inventory/params/*"
+    },
+    {
+      "method": "GET",
+      "path": "/radiology"
+    },
+    {
+      "method": "GET",
+      "path": "/radiology/*"
+    },
+    {
+      "method": "POST",
+      "path": "/radiology"
+    },
+    {
+      "method": "PUT",
+      "path": "/radiology/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/radiology/*"
+    },
+    {
+      "method": "GET",
+      "path": "/departments"
+    },
+    {
+      "method": "GET",
+      "path": "/departments/*"
+    },
+    {
+      "method": "POST",
+      "path": "/departments"
+    },
+    {
+      "method": "PUT",
+      "path": "/departments/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/departments/*"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/insurance"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/insurance/*"
+    },
+    {
+      "method": "POST",
+      "path": "/settings/insurance"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/insurance/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/settings/insurance/*"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/admins"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/admins/*"
+    },
+    {
+      "method": "POST",
+      "path": "/settings/admins"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/admins/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/settings/admins/*"
+    },
+    {
+      "method": "PATCH",
+      "path": "/settings/admins/*/credentials"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/sidebar"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/sidebar"
+    },
+    {
+      "method": "POST",
+      "path": "/settings/auth/login"
+    },
+    {
+      "method": "POST",
+      "path": "/settings/auth/staff-login"
+    },
+    {
+      "method": "GET",
+      "path": "/sms/settings"
+    },
+    {
+      "method": "POST",
+      "path": "/sms/settings"
+    },
+    {
+      "method": "POST",
+      "path": "/sms/send"
+    },
+    {
+      "method": "POST",
+      "path": "/sms/test"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnoses${dept "
+    },
+    {
+      "method": "POST",
+      "path": "/diagnoses"
+    },
+    {
+      "method": "PUT",
+      "path": "/diagnoses/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/diagnoses/*"
+    },
+    {
+      "method": "GET",
+      "path": "/queues${dept "
+    },
+    {
+      "method": "POST",
+      "path": "/queues"
+    },
+    {
+      "method": "PATCH",
+      "path": "/queues/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/queues/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/queues/clear-done/*"
+    },
+    {
+      "method": "GET",
+      "path": "/surgery-inventory"
+    },
+    {
+      "method": "GET",
+      "path": "/surgery-inventory/*"
+    },
+    {
+      "method": "POST",
+      "path": "/surgery-inventory"
+    },
+    {
+      "method": "PUT",
+      "path": "/surgery-inventory/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/surgery-inventory/*"
+    },
+    {
+      "method": "GET",
+      "path": "/settings/suppliers"
+    },
+    {
+      "method": "POST",
+      "path": "/settings/suppliers"
+    },
+    {
+      "method": "PUT",
+      "path": "/settings/suppliers/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/settings/suppliers/*"
+    },
+    {
+      "method": "GET",
+      "path": "/rehab/services"
+    },
+    {
+      "method": "POST",
+      "path": "/rehab/services"
+    },
+    {
+      "method": "PUT",
+      "path": "/rehab/services/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/rehab/services/*"
+    },
+    {
+      "method": "GET",
+      "path": "/rehab/plans"
+    },
+    {
+      "method": "POST",
+      "path": "/rehab/plans"
+    },
+    {
+      "method": "PUT",
+      "path": "/rehab/plans/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/rehab/plans/*"
+    },
+    {
+      "method": "GET",
+      "path": "/rehab/queue"
+    },
+    {
+      "method": "POST",
+      "path": "/rehab/queue"
+    },
+    {
+      "method": "PATCH",
+      "path": "/rehab/queue/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/rehab/queue/*"
+    },
+    {
+      "method": "POST",
+      "path": "/backup/local"
+    },
+    {
+      "method": "POST",
+      "path": "/backup/local/restore/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/backup/local/*"
+    },
+    {
+      "method": "POST",
+      "path": "/backup/drives"
+    },
+    {
+      "method": "PUT",
+      "path": "/backup/drives/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/backup/drives/*"
+    },
+    {
+      "method": "POST",
+      "path": "/backup/drive/*"
+    },
+    {
+      "method": "POST",
+      "path": "/backup/restore/drive/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/backup/notifications/*"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/tables"
+    },
+    {
+      "method": "DELETE",
+      "path": "/admin/tables/*"
+    },
+    {
+      "method": "GET",
+      "path": "/reminders"
+    },
+    {
+      "method": "POST",
+      "path": "/reminders"
+    },
+    {
+      "method": "PUT",
+      "path": "/reminders/*"
+    },
+    {
+      "method": "DELETE",
+      "path": "/reminders/*"
+    },
+    {
+      "method": "GET",
+      "path": "/broadcast"
+    },
+    {
+      "method": "PUT",
+      "path": "/broadcast"
+    },
+    {
+      "method": "DELETE",
+      "path": "/broadcast"
+    },
+    {
+      "method": "GET",
+      "path": "/staff-notices"
+    },
+    {
+      "method": "GET",
+      "path": "/staff-notices/*"
+    },
+    {
+      "method": "POST",
+      "path": "/staff-notices"
+    },
+    {
+      "method": "DELETE",
+      "path": "/staff-notices/*"
+    },
+    {
+      "method": "PATCH",
+      "path": "/staff-notices/*/read"
+    },
+    {
+      "method": "DELETE",
+      "path": "/admin/records/*/*"
+    },
+    {
+      "method": "GET",
+      "path": "/finance/summary*"
+    }
+  ]
+}
