@@ -7924,18 +7924,27 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const commission = isFix ? 0 : Math.round(rangeRevenue * ((sm!.percentageValue || 0) / 100));
     const pendingAdvances = employeeAdvances.filter(a => a.empName === e.name && !a.repaid);
     const totalAdvances = pendingAdvances.reduce((s, a) => s + a.amount, 0);
-    const net = Math.max(0, e.salary + commission - e.expenses - totalAdvances);
-    return { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, totalAdvances, net };
+    const rangeExpTxs = Object.values(drawers).flatMap(d => d?.txs || [])
+      .filter(t => t.type === "out" && t.beneficiary === e.name && ["مصروف شخصي", "مصروف شخصي — موظف", "نفقة شخصية للموظف"].some(c => (t.category || "").includes(c)) && inRangeDDMMYYYY(t.date, from, to));
+    const rangeExpenses = rangeExpTxs.reduce((s, t) => s + t.amount, 0);
+    const net = Math.max(0, e.salary + commission - rangeExpenses - totalAdvances);
+    return { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, totalAdvances, rangeExpenses, net };
   };
   const printPayslip = (e: Employee, from: string, to: string) => {
-    const { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, net } = getPayslipData(e, from, to);
+    const { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, rangeExpenses, net } = getPayslipData(e, from, to);
     const periodLabel = from || to ? `${from ? from.split("-").reverse().join("/") : "..."} → ${to ? to.split("-").reverse().join("/") : "..."}` : new Date().toLocaleDateString("ar-EG", { month: "long", year: "numeric" });
     const deptLabel = allDepts.find(d => d.id === e.dept)?.short || e.dept;
     const salaryTypeLabel = isFix ? "راتب ثابت شهري" : sm?.salaryType === "percentage" ? `نسبة ${sm!.percentageValue}% من الإيرادات` : "راتب مختلط";
-    const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${e.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${sm?.jobTitle || e.role || "—"}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptLabel}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody><tr><td>الراتب الأساسي</td><td>${salaryTypeLabel}</td><td class="in">${fmt(e.salary)}</td></tr>${commission > 0 ? `<tr><td>نسبة الإيرادات الفردية</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${sm?.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${e.expenses > 0 ? `<tr><td>خصومات</td><td>خصومات مُسجّلة على الموظف</td><td class="out">−${fmt(e.expenses)}</td></tr>` : ""}${pendingAdvances.map(a => `<tr><td>سلفة (${a.date})</td><td>${a.note || "سلفة موظف"}</td><td class="out">−${fmt(a.amount)}</td></tr>`).join("")}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(net)}</td></tr></tbody></table>${rangeSessions.length > 0 ? `<h2>سجل الجلسات — ${rangeSessions.length} جلسة (إجمالي الإيرادات: ${fmt(rangeRevenue)})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>المبلغ الكلي</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${rangeSessions.slice(0, 30).map(s => `<tr><td>${s.date}</td><td>${s.dept}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : ""}">${s.debt > 0 ? "−" + fmt(s.debt) : "—"}</td></tr>`).join("")}${rangeSessions.length > 30 ? `<tr><td colspan="5" style="text-align:center;color:#666;font-style:italic">... و${rangeSessions.length - 30} جلسة أخرى</td></tr>` : ""}</tbody></table>` : ""}<div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">مسؤول الرواتب</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
+    const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${e.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${sm?.jobTitle || e.role || "—"}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptLabel}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody><tr><td>الراتب الأساسي</td><td>${salaryTypeLabel}</td><td class="in">${fmt(e.salary)}</td></tr>${commission > 0 ? `<tr><td>نسبة الإيرادات الفردية</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${sm?.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${rangeExpenses > 0 ? `<tr><td>خصومات</td><td>مصروفات شخصية مسجَّلة بالفترة</td><td class="out">−${fmt(rangeExpenses)}</td></tr>` : ""}${pendingAdvances.map(a => `<tr><td>سلفة (${a.date})</td><td>${a.note || "سلفة موظف"}</td><td class="out">−${fmt(a.amount)}</td></tr>`).join("")}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(net)}</td></tr></tbody></table>${rangeSessions.length > 0 ? `<h2>سجل الجلسات — ${rangeSessions.length} جلسة (إجمالي الإيرادات: ${fmt(rangeRevenue)})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>المبلغ الكلي</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${rangeSessions.slice(0, 30).map(s => `<tr><td>${s.date}</td><td>${s.dept}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : ""}">${s.debt > 0 ? "−" + fmt(s.debt) : "—"}</td></tr>`).join("")}${rangeSessions.length > 30 ? `<tr><td colspan="5" style="text-align:center;color:#666;font-style:italic">... و${rangeSessions.length - 30} جلسة أخرى</td></tr>` : ""}</tbody></table>` : ""}<div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">مسؤول الرواتب</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
     printHtml(html, `قسيمة راتب — ${e.name} — ${periodLabel}`, from, to);
   };
   const getStaffMember = (name: string) => staffList.find(s => s.name === name);
+  // ── الخصومات الفعلية = سندات "مصروف شخصي" المسجَّلة فعلياً باسم الموظف بكل الصناديق
+  //    (وليس حقل employees.expenses الساكن الذي لا يتحدث تلقائياً عند صرف أي مصروف) ──
+  const PAYROLL_PERSONAL_EXP_CATS = ["مصروف شخصي", "مصروف شخصي — موظف", "نفقة شخصية للموظف"];
+  const getExpenses = (e: Employee) => Object.values(drawers).flatMap(d => d?.txs || [])
+    .filter(t => t.type === "out" && t.beneficiary === e.name && PAYROLL_PERSONAL_EXP_CATS.some(c => (t.category || "").includes(c)))
+    .reduce((s, t) => s + t.amount, 0);
   const getCommission = (e: Employee) => {
     const sm = getStaffMember(e.name);
     if (!sm || sm.salaryType === "fixed") return 0;
@@ -7944,7 +7953,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
   const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => a.empName === e.name && !a.repaid).reduce((s, a) => s + a.amount, 0);
-  const calcNet = (e: Employee) => Math.max(0, e.salary + getCommission(e) - e.expenses - getTotalAdvances(e));
+  const calcNet = (e: Employee) => Math.max(0, e.salary + getCommission(e) - getExpenses(e) - getTotalAdvances(e));
   // If the employee's payroll config lists more than one drawer to deduct from, split the net
   // salary proportionally to how much revenue he actually generated in each of those departments.
   // Falls back to a single-department withdrawal (unchanged legacy behavior) otherwise.
@@ -7985,7 +7994,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     <div className="space-y-5">
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <KPICard title="إجمالي الرواتب الأساسية" value={fmt(totalSalaries)} Icon={Users} color="secondary" />
-        <KPICard title="إجمالي الخصومات" value={fmt(employees.reduce((s, e) => s + e.expenses, 0))} Icon={Receipt} color="warning" />
+        <KPICard title="إجمالي الخصومات" value={fmt(employees.reduce((s, e) => s + getExpenses(e), 0))} Icon={Receipt} color="warning" />
         <KPICard title="إجمالي السلف المعلقة" value={fmt(totalAdvancesAll)} Icon={Wallet} color="danger" />
         <KPICard title="إجمالي الصافي المستحق" value={fmt(employees.reduce((s, e) => s + calcNet(e), 0))} Icon={DollarSign} color="primary" />
       </div>
@@ -7994,7 +8003,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
         <Info size={14} className="text-[#1B3A6B] flex-shrink-0" />
         <p className="text-xs text-[#1B3A6B]">معادلة الراتب الفعلي: <strong>الراتب الأساسي + نسبة الإيرادات الفردية − الخصومات − السلف القائمة = الصافي المستحق</strong></p>
       </div>
-      <Card title="رواتب موظفي يونيو 2026" action={<div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = filteredEmps.map(e => { const comm = getCommission(e); const adv = getTotalAdvances(e); const ps = getPaySplit(e); return [e.name, ps.length > 1 ? ps.length + " أقسام" : (allDepts.find(d => d.id === ps[0]?.dept)?.short || e.dept), e.salary, comm, e.expenses, adv, e.status !== "pending" ? calcNet(e) : 0, e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"]; }); const ws = XLSX.utils.aoa_to_sheet([["الموظف", "القسم", "الأساسي (₪)", "نسبة الإيراد", "الخصومات", "السلف", "الصافي المستحق", "الحالة"], ...rows, [], ["الإجمالي", "", totalSalaries, "", "", "", filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0), ""]]); ws["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "رواتب الموظفين"); XLSX.writeFile(wb, `رواتب_الموظفين_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<h2>رواتب موظفي يونيو 2026</h2><table><thead><tr><th>الموظف</th><th>القسم</th><th>الأساسي (₪)</th><th>نسبة الإيراد</th><th>الخصومات</th><th>السلف</th><th>الصافي المستحق</th><th>الحالة</th></tr></thead><tbody>${filteredEmps.map(e => { const comm = getCommission(e); const adv = getTotalAdvances(e); const ps = getPaySplit(e); return `<tr><td>${e.name}</td><td>${ps.length > 1 ? ps.length + " أقسام" : (allDepts.find(d => d.id === ps[0]?.dept)?.short || e.dept)}</td><td>${fmt(e.salary)}</td><td>${comm > 0 ? "+" + fmt(comm) : "—"}</td><td>${e.expenses > 0 ? "−" + fmt(e.expenses) : "—"}</td><td>${adv > 0 ? "−" + fmt(adv) : "—"}</td><td>${e.status !== "pending" ? fmt(calcNet(e)) : "—"}</td><td>${e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"}${e.paidDate ? " — " + e.paidDate : ""}</td></tr>`; }).join("")}</tbody><tfoot><tr><td colspan="2"><strong>الإجمالي</strong></td><td><strong>${fmt(totalSalaries)}</strong></td><td colspan="3"></td><td><strong>${fmt(filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0))}</strong></td><td></td></tr></tfoot></table>`; printHtml(html, "رواتب الموظفين"); }}><Printer size={14} />طباعة</Btn></div>}>
+      <Card title="رواتب موظفي يونيو 2026" action={<div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = filteredEmps.map(e => { const comm = getCommission(e); const adv = getTotalAdvances(e); const ps = getPaySplit(e); return [e.name, ps.length > 1 ? ps.length + " أقسام" : (allDepts.find(d => d.id === ps[0]?.dept)?.short || e.dept), e.salary, comm, getExpenses(e), adv, e.status !== "pending" ? calcNet(e) : 0, e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"]; }); const ws = XLSX.utils.aoa_to_sheet([["الموظف", "القسم", "الأساسي (₪)", "نسبة الإيراد", "الخصومات", "السلف", "الصافي المستحق", "الحالة"], ...rows, [], ["الإجمالي", "", totalSalaries, "", "", "", filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0), ""]]); ws["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "رواتب الموظفين"); XLSX.writeFile(wb, `رواتب_الموظفين_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<h2>رواتب موظفي يونيو 2026</h2><table><thead><tr><th>الموظف</th><th>القسم</th><th>الأساسي (₪)</th><th>نسبة الإيراد</th><th>الخصومات</th><th>السلف</th><th>الصافي المستحق</th><th>الحالة</th></tr></thead><tbody>${filteredEmps.map(e => { const comm = getCommission(e); const adv = getTotalAdvances(e); const ps = getPaySplit(e); return `<tr><td>${e.name}</td><td>${ps.length > 1 ? ps.length + " أقسام" : (allDepts.find(d => d.id === ps[0]?.dept)?.short || e.dept)}</td><td>${fmt(e.salary)}</td><td>${comm > 0 ? "+" + fmt(comm) : "—"}</td><td>${getExpenses(e) > 0 ? "−" + fmt(getExpenses(e)) : "—"}</td><td>${adv > 0 ? "−" + fmt(adv) : "—"}</td><td>${e.status !== "pending" ? fmt(calcNet(e)) : "—"}</td><td>${e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"}${e.paidDate ? " — " + e.paidDate : ""}</td></tr>`; }).join("")}</tbody><tfoot><tr><td colspan="2"><strong>الإجمالي</strong></td><td><strong>${fmt(totalSalaries)}</strong></td><td colspan="3"></td><td><strong>${fmt(filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0))}</strong></td><td></td></tr></tfoot></table>`; printHtml(html, "رواتب الموظفين"); }}><Printer size={14} />طباعة</Btn></div>}>
         <div className="flex items-center gap-3 p-2.5 rounded-xl mb-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BEDCF5" }}>
           <Calendar size={14} className="text-[#1B3A6B] flex-shrink-0" />
           <span className="text-xs font-semibold text-[#1B3A6B]">تصفية بتاريخ الصرف:</span>
@@ -8017,7 +8026,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
                 <TD><Badge color="info">{deptShort}</Badge></TD>
                 <TD className="font-semibold">{fmt(e.salary)}</TD>
                 <TD className={commission > 0 ? "text-[#388E3C] font-medium" : "text-[#999]"}>{commission > 0 ? `+${fmt(commission)}` : "—"}</TD>
-                <TD className="text-[#FF8F00] font-medium">{e.expenses > 0 ? `−${fmt(e.expenses)}` : "—"}</TD>
+                <TD className="text-[#FF8F00] font-medium">{getExpenses(e) > 0 ? `−${fmt(getExpenses(e))}` : "—"}</TD>
                 <TD className={advances > 0 ? "text-[#D32F2F] font-medium" : "text-[#999]"}>{advances > 0 ? `−${fmt(advances)}` : "—"}</TD>
                 <TD className="font-bold text-[#0D7377]">{e.status !== "pending" ? fmt(calcNet(e)) : <span className="text-[#999]">—</span>}</TD>
                 <TD>{statusBadge(e.status)}{e.paidDate && <span className="text-xs text-[#999] mr-1">{e.paidDate}</span>}</TD>
@@ -8038,7 +8047,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
             <div className="p-3 rounded-lg bg-[#F5F5F5] text-xs space-y-1">
               <p className="flex justify-between"><span>الراتب الأساسي</span><strong>{fmt(confirmModal.salary)}</strong></p>
               {comm > 0 && <p className="flex justify-between text-[#388E3C]"><span>+ نسبة الإيرادات الفردية</span><strong>+{fmt(comm)}</strong></p>}
-              {confirmModal.expenses > 0 && <p className="flex justify-between text-[#FF8F00]"><span>− الخصومات</span><strong>−{fmt(confirmModal.expenses)}</strong></p>}
+              {getExpenses(confirmModal) > 0 && <p className="flex justify-between text-[#FF8F00]"><span>− الخصومات</span><strong>−{fmt(getExpenses(confirmModal))}</strong></p>}
               {adv > 0 && <p className="flex justify-between text-[#D32F2F]"><span>− السلف القائمة</span><strong>−{fmt(adv)}</strong></p>}
               <div className="border-t border-[#E0E0E0] pt-1 flex justify-between font-bold text-[#0D7377]"><span>الصافي المستحق</span><strong>{fmt(calcNet(confirmModal))}</strong></div>
             </div>
@@ -8095,7 +8104,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
                 <div className="flex justify-between items-center p-3"><span className="text-[#555]">الراتب الأساسي</span><strong>{fmt(e.salary)}</strong></div>
                 {commission > 0 && <div className="flex justify-between items-center p-3 text-[#388E3C]"><span>+ نسبة الإيرادات ({sm?.percentageValue}% × {fmt(rangeRevenue)} من {rangeSessions.length} جلسة)</span><strong>+{fmt(commission)}</strong></div>}
                 {!commission && !isFix && <div className="flex justify-between items-center p-3 text-[#999]"><span>+ نسبة الإيرادات ({sm?.percentageValue}% — لا جلسات في الفترة)</span><strong>—</strong></div>}
-                {e.expenses > 0 && <div className="flex justify-between items-center p-3 text-[#FF8F00]"><span>− الخصومات</span><strong>−{fmt(e.expenses)}</strong></div>}
+                {getExpenses(e) > 0 && <div className="flex justify-between items-center p-3 text-[#FF8F00]"><span>− الخصومات</span><strong>−{fmt(getExpenses(e))}</strong></div>}
                 {pendingAdvances.map((a, i) => <div key={i} className="flex justify-between items-center p-3 text-[#D32F2F]"><span>− سلفة بتاريخ {a.date} — {a.note || "سلفة موظف"}</span><strong>−{fmt(a.amount)}</strong></div>)}
                 <div className="flex justify-between items-center p-3 font-bold text-base" style={{ backgroundColor: "#E8F5E9" }}><span className="text-[#388E3C]">الصافي المستحق</span><strong className="text-[#388E3C]">{fmt(net)}</strong></div>
               </div>
@@ -11441,9 +11450,10 @@ function DeptManagementScreen({ customDepts, setCustomDepts, onAddDeptDrawer, to
 
 // ─── MY FINANCIAL ACCOUNT SCREEN (شاشة الحساب المالي الشخصي للموظف) ──────────
 
-function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employees, staffAdvanceRequests, onSubmitStaffAdvanceRequest, toast }: {
+function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employees, staffAdvanceRequests, onSubmitStaffAdvanceRequest, toast, drawers = {}, sessions = [] }: {
   staff: StaffMember; employeeAdvances: EmployeeAdvance[]; attendance: AttendanceRecord[]; employees: Employee[];
   staffAdvanceRequests: StaffAdvanceRequest[]; onSubmitStaffAdvanceRequest: (r: Omit<StaffAdvanceRequest, "id" | "status">) => void; toast: (m: string, t?: any) => void;
+  drawers?: Record<string, DrawerState>; sessions?: PatientSession[];
 }) {
   const salaryLabel: Record<SalaryType, string> = { fixed: "راتب ثابت", percentage: "نسبة من الإيرادات", both: "راتب ثابت + نسبة", daily: "الإيرادات اليومية", shift: "الورديات / الشيفتات" };
   const myAdvances = employeeAdvances.filter(a => a.empName === staff.name);
@@ -11460,6 +11470,35 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   const [advAmount, setAdvAmount] = useState("");
   const [advReason, setAdvReason] = useState("");
   const today = _today();
+
+  // ── سندات الصرف الشخصية (مصروفات شخصية مسجَّلة باسم الموظف من كل الصناديق) ──
+  const PERSONAL_EXP_CATS = ["مصروف شخصي", "مصروف شخصي — موظف", "نفقة شخصية للموظف"];
+  const myExpenseVouchers = Object.entries(drawers).flatMap(([deptId, d]) =>
+    (d?.txs || [])
+      .filter(t => t.type === "out" && t.beneficiary === staff.name && PERSONAL_EXP_CATS.some(c => (t.category || "").includes(c)))
+      .map(t => ({ ...t, deptId }))
+  ).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.id - a.id));
+  const totalPersonalExp = myExpenseVouchers.reduce((s, t) => s + t.amount, 0);
+
+  // ── قسيمة الراتب (فترة قابلة للتحديد) ──
+  const curMonthStartISO = (() => { const d = _jlmNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; })();
+  const [payFrom, setPayFrom] = useState(curMonthStartISO);
+  const [payTo, setPayTo] = useState(_localISO());
+  const isFixSalary = staff.salaryType === "fixed" || staff.salaryType === "both";
+  const isPctSalary = staff.salaryType === "percentage" || staff.salaryType === "both";
+  const pDepts = (staff as any).percentageDepts || [];
+  const rangeSessions = sessions.filter(s => s.doctor === staff.name && (pDepts.length === 0 || pDepts.includes(s.dept)) && inRangeDDMMYYYY(s.date, payFrom, payTo));
+  const rangeRevenue = rangeSessions.reduce((sum, s) => sum + s.paid, 0);
+  const commission = isPctSalary ? Math.round(rangeRevenue * ((staff.percentageValue || 0) / 100)) : 0;
+  const rangeExpenseVouchers = myExpenseVouchers.filter(t => inRangeDDMMYYYY(t.date, payFrom, payTo));
+  const rangePersonalExp = rangeExpenseVouchers.reduce((s, t) => s + t.amount, 0);
+  const netPayslip = Math.max(0, (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission - rangePersonalExp - totalPending);
+  const printMyPayslip = () => {
+    const periodLabel = `${payFrom.split("-").reverse().join("/")} → ${payTo.split("-").reverse().join("/")}`;
+    const salaryTypeLabel = isFixSalary && isPctSalary ? "راتب ثابت + نسبة" : isFixSalary ? "راتب ثابت شهري" : isPctSalary ? `نسبة ${staff.percentageValue}% من الإيرادات` : "—";
+    const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${staff.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${staff.jobTitle || "—"}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody>${isFixSalary ? `<tr><td>الراتب الأساسي</td><td>راتب ثابت</td><td class="in">${fmt(staff.fixedSalary || 0)}</td></tr>` : ""}${commission > 0 ? `<tr><td>نسبة الإيرادات</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${staff.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${rangeExpenseVouchers.map(t => `<tr><td>مصروف شخصي (${t.date})</td><td>${t.title || "—"}</td><td class="out">−${fmt(t.amount)}</td></tr>`).join("")}${totalPending > 0 ? `<tr><td>سلف معلقة</td><td>${pendingAdv.length} سلفة</td><td class="out">−${fmt(totalPending)}</td></tr>` : ""}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(netPayslip)}</td></tr></tbody></table><div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
+    printHtml(html, `قسيمة راتب — ${staff.name} — ${periodLabel}`, payFrom, payTo);
+  };
   const submitAdvanceReq = () => {
     const amt = parseFloat(advAmount) || 0;
     if (amt <= 0) { toast("أدخل مبلغ السلفة", "error"); return; }
@@ -11494,10 +11533,10 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
               <p className="font-bold text-[#388E3C] text-lg">{fmt(staff.shiftAmount || 0)}</p>
             </div>
           )}
-          {myEmployee && myEmployee.expenses > 0 && (
+          {totalPersonalExp > 0 && (
             <div className="p-4 rounded-xl text-center" style={{ backgroundColor: "#FFEBEE", border: "1px solid #FFCDD2" }}>
               <p className="text-xs text-[#555] mb-1">خصومات / مصاريف</p>
-              <p className="font-bold text-[#D32F2F] text-lg">−{fmt(myEmployee.expenses)}</p>
+              <p className="font-bold text-[#D32F2F] text-lg">−{fmt(totalPersonalExp)}</p>
             </div>
           )}
         </div>
@@ -11506,6 +11545,38 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
             <Clock size={14} className="text-[#555] flex-shrink-0" />
             <span className="text-sm text-[#555]">ساعات العمل: <strong>{staff.shiftStart || "—"}</strong> → <strong>{staff.shiftEnd || "—"}</strong></span>
           </div>
+        )}
+      </Card>
+
+      <Card title="قسيمة الراتب" action={<Btn small variant="secondary" onClick={printMyPayslip}><Printer size={14} />طباعة القسيمة</Btn>}>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <span className="text-xs text-[#555]">من</span>
+          <input type="date" value={payFrom} onChange={e => setPayFrom(e.target.value)} className="h-8 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCC" }} />
+          <span className="text-xs text-[#555]">إلى</span>
+          <input type="date" value={payTo} onChange={e => setPayTo(e.target.value)} className="h-8 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCC" }} />
+        </div>
+        <div className="space-y-2">
+          {isFixSalary && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">الراتب الأساسي</span><span className="text-sm font-bold text-[#388E3C]">{fmt(staff.fixedSalary || 0)}</span></div>}
+          {commission > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">نسبة الإيرادات ({rangeSessions.length} جلسة × {staff.percentageValue}%)</span><span className="text-sm font-bold text-[#388E3C]">+{fmt(commission)}</span></div>}
+          {rangePersonalExp > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">مصروفات شخصية بالفترة ({rangeExpenseVouchers.length})</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(rangePersonalExp)}</span></div>}
+          {totalPending > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">سلف معلقة</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(totalPending)}</span></div>}
+          <div className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}><span className="text-sm font-bold text-[#2E7D32]">الصافي المستحق</span><span className="text-lg font-bold text-[#2E7D32]">{fmt(netPayslip)}</span></div>
+        </div>
+      </Card>
+
+      <Card title={`سندات الصرف الشخصية (${myExpenseVouchers.length})`}>
+        {myExpenseVouchers.length === 0 ? <EmptyState msg="لا توجد سندات صرف شخصية مسجَّلة" /> : (
+          <table className="w-full text-sm">
+            <THead cols={["التاريخ", "البيان", "القسم", "المبلغ"]} />
+            <tbody>{myExpenseVouchers.map((t, i) => (
+              <TRow key={t.id} i={i}>
+                <TD className="text-xs text-[#555]">{t.date}</TD>
+                <TD>{t.title || "—"}</TD>
+                <TD className="text-xs text-[#777]">{DEPARTMENTS.find(d => d.id === t.deptId)?.short || t.deptId}</TD>
+                <TD className="font-bold text-[#D32F2F]">−{fmt(t.amount)}</TD>
+              </TRow>
+            ))}</tbody>
+          </table>
         )}
       </Card>
 
@@ -11687,7 +11758,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
   );
 }
 
-function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], setSessionFiles }: {
+function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -11702,6 +11773,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   setDiagnoses: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;
   setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
   setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>;
+  sessionFiles?: Record<number, any[]>;
   setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>;
   purchaseRequests: PurchaseRequest[];
   onSubmitPurchaseRequest: (req: Omit<PurchaseRequest, "id" | "status">) => void;
@@ -12242,7 +12314,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <DeptDrawerScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} invoices={invoices} setInvoices={setInvoices} perms={deptPerms || undefined} toast={staffToast} />
               )}
               {subScreen === "my-account" && (
-                <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} />
+                <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} />
               )}
               {subScreen === "fin" && (() => {
                 const allowedIds = new Set(allowedDepts.map(d => d.id));
@@ -14640,6 +14712,7 @@ export default function App() {
       drawers={drawers} sessions={sessions} debts={debts} invoices={invoices}
       setInvoices={setInvoices} doDeposit={doDeposit} doWithdraw={doWithdraw}
       toast={toast} onLogout={handleLogout}
+      sessionFiles={sessionFiles}
       setSessionFiles={setSessionFiles}
       diagnoses={diagnoses} setDiagnoses={setDiagnoses}
       setSessions={setSessions} setDebts={setDebts}
