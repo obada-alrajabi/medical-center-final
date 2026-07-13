@@ -2064,22 +2064,6 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
             </div>
           );
         })}
-        {(() => {
-          const todayCountRec = sessions.filter(s => s.date.startsWith(_localISO())).length;
-          const capRec = 100;
-          const pctRec = Math.round((todayCountRec / capRec) * 100);
-          const colorRec = pctRec >= 85 ? C.danger : pctRec >= 60 ? C.warning : C.success;
-          return (
-            <div className="bg-white rounded-xl p-4 shadow-sm" style={{ border: "1px solid #E0E0E0" }}>
-              <div className="flex items-center gap-2 mb-2"><ClipboardList size={16} className="text-[#1B3A6B]" /><span className="text-xs font-semibold text-[#1B3A6B]">الاستقبال</span></div>
-              <p className="text-2xl font-bold" style={{ color: colorRec }}>{pctRec}%</p>
-              <p className="text-[10px] text-[#999] mt-0.5">{todayCountRec} / {capRec} مريض اليوم</p>
-              <div className="mt-2 h-1.5 rounded-full bg-[#E0E0E0] overflow-hidden">
-                <div className="h-full rounded-full transition-all" style={{ width: `${pctRec}%`, backgroundColor: colorRec }} />
-              </div>
-            </div>
-          );
-        })()}
       </div>
 
       {/* ── ملخص المؤشرات السبعة — رسم بياني شريطي أفقي ── */}
@@ -2540,7 +2524,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
                   </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-                  {[{ l: "الجلسات", v: String(ps.length), c: "#1B3A6B" }, { l: "إجمالي الفواتير", v: fmt(totalAmt), c: "#555" }, { l: "المدفوع", v: fmt(totalPaid), c: "#388E3C" }, { l: "الديون", v: fmt(liveDebt(p.id)), c: liveDebt(p.id) > 0 ? "#D32F2F" : "#388E3C" }].map(k => (
+                  {[{ l: "الجلسات", v: String(pSess.length), c: "#1B3A6B" }, { l: "إجمالي الفواتير", v: fmt(totalAmt), c: "#555" }, { l: "المدفوع", v: fmt(totalPaid), c: "#388E3C" }, { l: "الديون", v: fmt(liveDebt(p.id)), c: liveDebt(p.id) > 0 ? "#D32F2F" : "#388E3C" }].map(k => (
                     <div key={k.l} className="bg-white rounded-xl p-3 text-center" style={{ border: "1px solid #E0E0E0" }}>
                       <p className="text-xs text-[#999] mb-1">{k.l}</p>
                       <p className="text-sm font-bold" style={{ color: k.c }}>{k.v}</p>
@@ -2609,7 +2593,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
 
 // ─── NEW PATIENT ───────────────────────────────────────────────────────────────
 
-function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [] }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[] }) {
+function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>> }) {
   const isAdmin = !loggedUser || loggedUser.type === "admin";
   const isLab = dept === "lab";
   const isRad = dept === "radiology";
@@ -2788,7 +2772,20 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
         const ns: PatientSession = { id: Date.now(), patientId: effectiveId, dept, doctor: autoDoc || deptInfo.short, date: today, diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()).map(m => ({ name: m.name, dose: m.dose, freq: m.freq, duration: m.duration })), notes: sessionNotesComputed, labRefs: sessionLabR, radRefs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt };
         setSessions(prev => [ns, ...prev]);
         api.sessions.create({ patient_id: effectiveId, dept, doctor: autoDoc || deptInfo.short, date: form.joinDate || _localISO(), diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()), notes: sessionNotesComputed, lab_refs: sessionLabR, rad_refs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt }).then((r: any) => {
-          if (pendingFiles.length > 0 && r && r.id) { const fd = new FormData(); pendingFiles.forEach(f => fd.append("files", f)); api.sessions.files.upload(r.id, fd).catch(() => { }); }
+          if (r && r.id) {
+            setSessions?.(p => p.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
+            if (pendingFiles.length > 0) {
+              const fd = new FormData();
+              pendingFiles.forEach(f => fd.append("files", f));
+              api.sessions.files.upload(r.id, fd).then((resUpload: any) => {
+                if (resUpload && resUpload.files) {
+                  setSessionFiles?.(prev => ({ ...prev, [r.id]: resUpload.files }));
+                }
+              }).catch(() => { });
+            } else {
+              setSessionFiles?.(prev => ({ ...prev, [r.id]: [] }));
+            }
+          }
           if (isLab && sessionLabR.length > 0) {
             api.queues.create({
               dept: "lab",
@@ -3830,7 +3827,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                       <div className="space-y-1">
                         {sessionFiles[s.id].map(f => (
                           <div key={f.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[#BBDEFB] bg-white">
-                            <a href={`/api/uploads/sessions/${f.filename}`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#1565C0] hover:underline flex items-center gap-1.5 truncate">
+                            <a href={`/uploads/sessions/${f.filename}`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#1565C0] hover:underline flex items-center gap-1.5 truncate">
                               <FileText size={12} />{f.originalname} <span className="text-[10px] text-[#999]">({(f.size / 1024).toFixed(1)} KB)</span>
                             </a>
                             <button type="button" onClick={(e) => {
@@ -4114,11 +4111,12 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
 
 // ─── NEW SESSION ────────────────────────────────────────────────────────────────
 
-function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs }: {
+function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs, setSessionFiles }: {
   dept: string; patientId: string; sessions: PatientSession[]; setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
   doDeposit: (dept: string, amount: number, title: string, type: string) => void; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>;
   debts: DebtRow[]; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; diagnoses: DiagnosisEntry[]; setDiagnoses: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;
   loggedUser?: LoggedUser | null; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>;
+  setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>;
 }) {
   const p = mockPatients.find(x => x.id === patientId) || mockPatients[0];
   const deptInfo = DEPARTMENTS.find(d => d.id === dept) || DEPARTMENTS[0];
@@ -4136,6 +4134,7 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   const [labRefs, setLabRefs] = useState<string[]>([]); const [radRefs, setRadRefs] = useState<string[]>([]);
   const [amount, setAmount] = useState(""); const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
   const [saving, setSaving] = useState(false); const [saved, setSaved] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const totalAmt = parseFloat(amount) || 0; const discAmt = Math.min(parseFloat(discount) || 0, totalAmt); const netAmt = totalAmt - discAmt; const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netAmt - paidAmt); const creditAmt = Math.max(0, paidAmt - netAmt);
   const prevDebt = debts.filter(d => d.pid === p.id).reduce((s, d) => s + d.amount, 0);
   const toggleDiag = (n: string) => setSelDiag(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n]);
@@ -4199,7 +4198,22 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
     if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: p.name, pid: p.id, dept: deptInfo.short, amount: debtAmt, date: today, days: 0, phone: p.phone }; setDebts(prev => [nd, ...prev]); api.finance.debts.create({ patient: p.name, patient_id: p.id, dept: deptInfo.short, amount: debtAmt, date: api.parseDateISO(today), phone: p.phone }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
     const ns: PatientSession = { id: Date.now(), patientId: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: today, diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, labRefs, radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt };
     setSessions(prev => [ns, ...prev]);
-    api.sessions.create({ patient_id: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: api.parseDateISO(today), diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, lab_refs: labRefs, rad_refs: radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt });
+    api.sessions.create({ patient_id: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: api.parseDateISO(today), diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, lab_refs: labRefs, rad_refs: radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt }).then((r: any) => {
+      if (r && r.id) {
+        setSessions(prev => prev.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
+        if (pendingFiles.length > 0) {
+          const fd = new FormData();
+          pendingFiles.forEach(f => fd.append("files", f));
+          api.sessions.files.upload(r.id, fd).then((resUpload: any) => {
+            if (resUpload && resUpload.files) {
+              setSessionFiles?.(prev => ({ ...prev, [r.id]: resUpload.files }));
+            }
+          }).catch(() => { });
+        } else {
+          setSessionFiles?.(prev => ({ ...prev, [r.id]: [] }));
+        }
+      }
+    }).catch(() => { });
     setTimeout(() => { setSaving(false); setSaved(true); toast(`تم حفظ الجلسة${debtAmt > 0 ? " — دين مسجَّل: " + fmt(debtAmt) : creditAmt > 0 ? " — رصيد لصالح المريض: " + fmt(creditAmt) : " ✓"}`); }, 600);
   };
   if (saved) return (
@@ -4379,11 +4393,21 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
           </Card>
           {/* Files */}
           <Card title="الملفات المرفقة">
-            <div className="border-2 border-dashed border-[#CCC] rounded-xl p-5 text-center hover:border-[#0D7377] transition-colors cursor-pointer">
+            <div className="border-2 border-dashed border-[#CCC] rounded-xl p-5 text-center hover:border-[#0D7377] transition-colors cursor-pointer" onClick={() => { const inp = document.createElement("input"); inp.type = "file"; inp.multiple = true; inp.accept = "image/*,application/pdf,.doc,.docx"; inp.onchange = (ev) => { const files = Array.from((ev.target as HTMLInputElement).files || []); if (!files.length) return; setPendingFiles(p => [...p, ...files]); toast(`تم إضافة ${files.length} ملفات جاهزة للرفع مع الحفظ`, "success"); }; inp.click(); }}>
               <CloudUpload size={22} className="mx-auto text-[#CCC] mb-2" />
               <p className="text-sm text-[#555]">رفع صور أو ملفات <span className="text-[#0D7377] font-medium">اضغط للاختيار</span></p>
               <p className="text-xs text-[#999] mt-1">PDF، صور، تقارير مختبر</p>
             </div>
+            {pendingFiles.length > 0 && (
+              <div className="space-y-1 mt-2">
+                {pendingFiles.map((f, fi) => (
+                  <div key={fi} className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[#BBDEFB] bg-white">
+                    <span className="text-xs text-[#1565C0] flex items-center gap-1.5 truncate"><FileText size={12} />{f.name} <span className="text-[10px] text-[#999]">({(f.size / 1024).toFixed(1)} KB)</span></span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setPendingFiles(p => p.filter((_, idx) => idx !== fi)); }} className="text-[#D32F2F] hover:text-[#B71C1C]"><X size={14} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
       </div>
@@ -11646,7 +11670,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
   );
 }
 
-function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [] }: {
+function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], setSessionFiles }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -11661,6 +11685,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   setDiagnoses: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;
   setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
   setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>;
+  setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>;
   purchaseRequests: PurchaseRequest[];
   onSubmitPurchaseRequest: (req: Omit<PurchaseRequest, "id" | "status">) => void;
   onApprovePurchaseRequest: (id: number) => void;
@@ -12163,10 +12188,10 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} />
               )}
               {subScreen === "new-patient" && activeDept && (
-                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} />
+                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} />
               )}
               {subScreen === "new-session" && activeDept && (
-                <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} />
+                <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} />
               )}
               {subScreen === "patient-file" && activeDept && (
                 <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} />
@@ -14635,14 +14660,15 @@ export default function App() {
       checkAndNotify={checkAndNotify}
       allPaymentVouchers={paymentVouchersGlobal}
       allReceiptVouchers={receiptVouchersGlobal}
+      setSessionFiles={setSessionFiles}
     />
   );
   const renderScreen = () => {
     switch (route.screen) {
       case "dashboard": return <DashboardScreen drawers={drawers} debts={debts} invoices={invoices} purchaseRequests={purchaseRequests} onNavigate={setRoute} customDepts={customDepts} sessions={sessions} deptCapacity={sidebarSettings.deptCapacity} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} externalDebts={externalDebts} />;
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} />;
-      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} />;
-      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} />;
+      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} />;
+      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} />;
       case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" />;
