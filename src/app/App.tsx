@@ -4777,21 +4777,39 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
               <button onClick={() => setLastSaved(null)} className="text-[#555] hover:text-[#1B3A6B] flex-shrink-0"><X size={16} /></button>
             </div>
           )}
-          <Card title={`الفحوصات المطلوبة وقيد الإنجاز (${board.filter(s => s.status === "pending").length})`}>
-            {board.filter(s => s.status === "pending").length === 0 ? <EmptyState msg="لا توجد فحوصات قيد الإنجاز حالياً" /> : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{board.filter(s => s.status === "pending").map(s => (
-                <div key={s.id} className="rounded-xl transition-all hover:shadow-md" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
-                  <div className="p-4 flex flex-col justify-between h-full min-h-[140px]">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2"><FileText size={15} className="text-[#FF8F00]" /><p className="text-sm font-bold text-[#333]">{s.patient}</p>{s.labType === "external" && <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: "#FFF8E1", color: "#E65100", border: "1px solid #FFE082" }}>خارجي 🔗</span>}</div>
-                      <div className="flex flex-wrap gap-1 mb-3">{s.tests.map(t => <Badge key={t} color="warning">{t}</Badge>)}</div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <Card title={`قيد الإنجاز (${board.filter(s => s.status === "pending").length})`}>
+              {board.filter(s => s.status === "pending").length === 0 ? <EmptyState msg="لا توجد فحوصات قيد الإنجاز حالياً" /> : (
+                <div className="space-y-3">{board.filter(s => s.status === "pending").map(s => (
+                  <div key={s.id} className="rounded-xl transition-all hover:shadow-md" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
+                    <div className="p-4 flex flex-col justify-between h-full min-h-[140px]">
+                      <div>
+                        <div className="flex items-center gap-2 mb-2"><FileText size={15} className="text-[#FF8F00]" /><p className="text-sm font-bold text-[#333]">{s.patient}</p>{s.labType === "external" && <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: "#FFF8E1", color: "#E65100", border: "1px solid #FFE082" }}>خارجي 🔗</span>}</div>
+                        <div className="flex flex-wrap gap-1 mb-3">{s.tests.map(t => <Badge key={t} color="warning">{t}</Badge>)}</div>
+                      </div>
+                      <div className="flex items-center justify-between mt-auto pt-2 border-t border-[#FFF3E0]"><span className="text-xs text-[#999] flex items-center gap-1"><Clock size={11} />{s.time}</span><Btn small variant="secondary" onClick={() => openResults(s)}>إدخال النتائج</Btn></div>
                     </div>
-                    <div className="flex items-center justify-between mt-auto pt-2 border-t border-[#FFF3E0]"><span className="text-xs text-[#999] flex items-center gap-1"><Clock size={11} />{s.time}</span><Btn small variant="secondary" onClick={() => openResults(s)}>إدخال النتائج</Btn></div>
                   </div>
-                </div>
-              ))}</div>
-            )}
-          </Card>
+                ))}</div>
+              )}
+            </Card>
+            <Card title={`مكتمل (${board.filter(s => s.status === "done").length})`}>
+              {board.filter(s => s.status === "done").length === 0 ? <EmptyState msg="لا توجد فحوصات مكتملة" /> : (
+                <div className="space-y-2">{board.filter(s => s.status === "done").map(s => (
+                  <div key={s.id} className="p-3 rounded-xl" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2"><p className="text-sm font-semibold">{s.patient}</p>{s.labType === "external" && <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: "#FFF8E1", color: "#E65100", border: "1px solid #FFE082" }}>خارجي 🔗</span>}</div>
+                        <div className="flex gap-1 mt-1 flex-wrap">{s.tests.map(t => <Badge key={t} color="success">{t}</Badge>)}</div>
+                        <span className="text-xs text-[#999] flex items-center gap-1 mt-1"><Clock size={11} />{s.time}</span>
+                      </div>
+                      <Btn small variant="ghost" onClick={() => printLabReport(s.patient, s.results)}><Printer size={14} /></Btn>
+                    </div>
+                  </div>
+                ))}</div>
+              )}
+            </Card>
+          </div>
         </div>
       )}
       {view === "inventory" && setInventory && computeKitStatus && <InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} />}
