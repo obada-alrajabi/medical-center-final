@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { useState, useEffect, useRef, Fragment, useMemo, useCallback } from "react";
 import { calculateFinancials } from "./financialEngine";
 import { calcNetProfit } from "../utils/finance";
@@ -887,7 +887,7 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
       : `${metaRow}`);
   const topMargin = withHeader ? top : Math.max(top, 45);
   const pdfBar = pdfMode ? `<div class="pdf-bar"><span>📄 ${title}</span><button onclick="window.print()" class="pdf-btn">🖨️ حفظ كـ PDF / طباعة</button></div>` : "";
-  
+
   const marginCss = effectiveLh
     ? `@page{size:${paperSize} ${orientation};margin:0} .content{padding:${topMargin}mm ${right}mm ${bottom}mm ${left}mm}`
     : `@page{size:${paperSize} ${orientation};margin:${topMargin}mm ${right}mm ${bottom}mm ${left}mm} .content{padding:16px 20px}`;
@@ -14622,6 +14622,7 @@ export default function App() {
       drawers={drawers} sessions={sessions} debts={debts} invoices={invoices}
       setInvoices={setInvoices} doDeposit={doDeposit} doWithdraw={doWithdraw}
       toast={toast} onLogout={handleLogout}
+      setSessionFiles={setSessionFiles}
       diagnoses={diagnoses} setDiagnoses={setDiagnoses}
       setSessions={setSessions} setDebts={setDebts}
       purchaseRequests={purchaseRequests}
@@ -14660,7 +14661,6 @@ export default function App() {
       checkAndNotify={checkAndNotify}
       allPaymentVouchers={paymentVouchersGlobal}
       allReceiptVouchers={receiptVouchersGlobal}
-      setSessionFiles={setSessionFiles}
     />
   );
   const renderScreen = () => {
