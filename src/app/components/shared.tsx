@@ -11,13 +11,14 @@ import type { ToastItem } from "../types";
 
 // ─── BADGE ────────────────────────────────────────────────────────────────────
 
-export function Badge({ color, children }: { color:"success"|"warning"|"danger"|"info"|"neutral"; children: React.ReactNode }) {
+export function Badge({ color, children }: { color:"success"|"warning"|"danger"|"info"|"neutral"|"secondary"; children: React.ReactNode }) {
   const s = {
     success: "bg-[#E8F5E9] text-[#388E3C]",
     warning: "bg-[#FFF8E1] text-[#FF8F00]",
     danger:  "bg-[#FFEBEE] text-[#D32F2F]",
     info:    "bg-[#E3F2FD] text-[#1565C0]",
     neutral: "bg-[#F5F5F5] text-[#555555]",
+    secondary: "bg-[#E6F4F4] text-[#0D7377]",
   };
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold ${s[color]}`}>
@@ -65,9 +66,9 @@ export function KPICard({ title, value, sub, Icon, color = "primary", trend }: {
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
 
-export function Modal({ open, onClose, title, children, footer, wide }: {
+export function Modal({ open, onClose, title, children, footer, wide, danger, className }: {
   open: boolean; onClose: () => void; title: string;
-  children: React.ReactNode; footer?: React.ReactNode; wide?: boolean;
+  children: React.ReactNode; footer?: React.ReactNode; wide?: boolean; danger?: boolean; className?: string;
 }) {
   if (!open) return null;
   return createPortal(
@@ -173,10 +174,11 @@ export function InputField({ label, required, type = "text", placeholder, value,
 
 // ─── BUTTON ───────────────────────────────────────────────────────────────────
 
-export function Btn({ variant = "primary", onClick, children, small, full, disabled, loading }: {
+export function Btn({ variant = "primary", onClick, children, small, full, disabled, loading, className, style }: {
   variant?: "primary"|"secondary"|"outline"|"outline-white"|"danger"|"success"|"ghost";
-  onClick?: () => void; children: React.ReactNode;
+  onClick?: (e?: any) => void; children: React.ReactNode;
   small?: boolean; full?: boolean; disabled?: boolean; loading?: boolean;
+  className?: string; style?: React.CSSProperties;
 }) {
   const s = {
     primary:       "bg-[#1B3A6B] text-white hover:bg-[#142d55]",
@@ -190,8 +192,9 @@ export function Btn({ variant = "primary", onClick, children, small, full, disab
   return (
     <button
       onClick={onClick}
+      style={style}
       disabled={disabled || loading}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-150 ${small ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"} ${s[variant]} ${(variant === "outline" || variant === "outline-white") ? "border" : ""} ${full ? "w-full" : ""} ${disabled || loading ? "opacity-50 cursor-not-allowed" : ""}`}>
+      className={`inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-150 ${small ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"} ${s[variant]} ${(variant === "outline" || variant === "outline-white") ? "border" : ""} ${full ? "w-full" : ""} ${disabled || loading ? "opacity-50 cursor-not-allowed" : ""} ${className || ""}`}>
       {loading ? <><RefreshCw size={small ? 12 : 14} className="animate-spin"/>جارٍ...</> : children}
     </button>
   );

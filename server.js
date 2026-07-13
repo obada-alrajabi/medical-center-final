@@ -37,7 +37,7 @@ import cron from "node-cron";
 import { runLocalBackup } from "./services/backupService.js";
 
 const app = express();
-const PORT = process.env.API_PORT || 3001;
+const PORT = process.env.PORT || process.env.API_PORT || 3001;
 
 app.use(
   cors({
@@ -576,8 +576,15 @@ app.use((err, _req, res, _next) => {
   console.error("[Server Error]", err);
   res.status(500).json({ error: err.message || "Internal server error" });
 });
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ API Server running on port ${PORT}`);
-  console.log(`   GET http://localhost:${PORT}/api/health`);
-  seedAll().catch((e) => console.error("[seed] error:", e.message));
-});
+if (typeof PORT === 'string' && (PORT.startsWith('/') || PORT.startsWith('\\\\'))) {
+  app.listen(PORT, () => {
+    console.log(`✅ API Server running on socket ${PORT}`);
+    seedAll().catch((e) => console.error("[seed] error:", e.message));
+  });
+} else {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ API Server running on port ${PORT}`);
+    console.log(`   GET http://localhost:${PORT}/api/health`);
+    seedAll().catch((e) => console.error("[seed] error:", e.message));
+  });
+}

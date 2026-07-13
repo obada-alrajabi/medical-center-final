@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import { useState, useEffect, useRef, Fragment, useMemo, useCallback } from "react";
 import { calculateFinancials } from "./financialEngine";
 import { calcNetProfit } from "../utils/finance";
@@ -26,7 +26,7 @@ import {
   Pill, Pencil, ClipboardList, ListOrdered, UserCheck, Hourglass,
   ScanLine, Upload, CalendarCheck,
   ArrowUpRight, ArrowDownLeft, Info, Image as ImageIcon,
-  EyeOff, Lock, ArrowRight, ShieldCheck, Megaphone, StickyNote, Send
+  EyeOff, Lock, ArrowRight, ShieldCheck, Megaphone, StickyNote, Send, Activity
 } from "lucide-react";
 
 
@@ -1019,7 +1019,7 @@ function PersonalExpenseModal({ open, onClose, dept, balance, onConfirm }: { ope
   };
   return (
     <Modal open={open} onClose={onClose} title={`مصروف شخصي — ${deptInfo?.short || dept}`}
-      footer={<><Btn variant="warning" loading={loading} onClick={doConfirm} disabled={!valid}><Receipt size={16} />تسجيل المصروف</Btn><Btn variant="outline" onClick={onClose}>إلغاء</Btn></>}>
+      footer={<><Btn variant="secondary" loading={loading} onClick={doConfirm} disabled={!valid}><Receipt size={16} />تسجيل المصروف</Btn><Btn variant="outline" onClick={onClose}>إلغاء</Btn></>}>
       <div className="space-y-4">
         <div className="p-3 rounded-xl text-sm" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
           <p className="text-[#FF8F00] font-semibold text-xs mb-1">☕ مصروف شخصي</p>
@@ -1117,7 +1117,7 @@ function PurchaseRequestModal({ open, onClose, dept, onSubmit, requestedBy }: { 
     setLoading(true);
     const cleanItems = items.filter(it => it.name.trim());
     setTimeout(() => {
-      onSubmit({ dept, requestedBy, date: _today(), items: cleanItems, totalAmount: total, note });
+      onSubmit({ dept, requestedBy, date: _today(), items: cleanItems, totalAmount: total, note, paidAmount: 0 });
       setLoading(false); setItems([blankItem()]); setNote(""); onClose();
     }, 600);
   };
@@ -2531,7 +2531,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
                   </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-                  {[{ l: "الجلسات", v: String(visibleSessionsCount), c: "#1B3A6B" }, { l: "إجمالي الفواتير", v: fmt(totalAmt), c: "#555" }, { l: "المدفوع", v: fmt(totalPaid), c: "#388E3C" }, { l: "الديون", v: fmt(liveDebt(p.id)), c: liveDebt(p.id) > 0 ? "#D32F2F" : "#388E3C" }].map(k => (
+                  {[{ l: "الجلسات", v: String(ps.length), c: "#1B3A6B" }, { l: "إجمالي الفواتير", v: fmt(totalAmt), c: "#555" }, { l: "المدفوع", v: fmt(totalPaid), c: "#388E3C" }, { l: "الديون", v: fmt(liveDebt(p.id)), c: liveDebt(p.id) > 0 ? "#D32F2F" : "#388E3C" }].map(k => (
                     <div key={k.l} className="bg-white rounded-xl p-3 text-center" style={{ border: "1px solid #E0E0E0" }}>
                       <p className="text-xs text-[#999] mb-1">{k.l}</p>
                       <p className="text-sm font-bold" style={{ color: k.c }}>{k.v}</p>
@@ -6728,7 +6728,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                   <div className="text-left ml-2">
                     <p className="font-bold text-[#1B3A6B]">{fmt(req.totalAmount)}</p>
                   </div>
-                  <Btn small variant="ghost" onClick={e => { e.stopPropagation(); printSingle(req); }}><Printer size={12} />PDF</Btn>
+                  <Btn small variant="ghost" onClick={(e: any) => { e.stopPropagation(); printSingle(req); }}><Printer size={12} />PDF</Btn>
                   <ChevronDown size={15} className={`text-[#999] transition-transform flex-shrink-0 ${isExp ? "rotate-180" : ""}`} />
                 </div>
               </div>
@@ -6963,7 +6963,7 @@ function FinExpensesScreen({ drawers, purchaseRequests = [], employeeAdvances = 
         <DateRangePicker from={dateFrom} to={dateTo} onFrom={setDateFrom} onTo={setDateTo} onClear={() => { setDateFrom(""); setDateTo(""); }} />
         <div className="flex gap-2 mr-auto">
           <Btn small variant="ghost" onClick={() => { const rows = outTxs.map(t => [t.date || "", t.title, t.category || "", t.amount]); const ws = XLSX.utils.aoa_to_sheet([["التاريخ", "البيان", "التصنيف", "المبلغ"], ...rows, [], ["", "رواتب", "", salariesTotal], ["", "سلف موظفين", "", advancesTotal], ["", "مشتريات", "", purchasesTxTotal], ["", "سندات صرف", "", paymentVoucherTotal], ["", "مصروف شخصي/عمومي", "", personalTotal], ["", "أخرى", "", otherExpenses], ["", "الإجمالي", "", rangeOut]]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "المصروفات"); XLSX.writeFile(wb, `تقرير_المصروفات_${periodLabel}.xlsx`); }}><Download size={14} />تصدير</Btn>
-          <Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">إجمالي التكاليف</div><div class="kpi-v out">${fmt(rangeOut)}</div></div></div><h2>تصنيف المصروفات — ${periodLabel}</h2><table><thead><tr><th>البند</th><th>المبلغ</th></tr></thead><tbody>${[["رواتب موظفين", salariesTotal], ["سلف موظفين", advancesTotal], ["مشتريات", purchasesTxTotal], ["سندات صرف", paymentVoucherTotal], ["مصروف شخصي/عمومي", personalTotal], ["أخرى", otherExpenses]].filter(r => r[1] > 0).map(r => `<tr><td>${r[0]}</td><td class="out">${fmt(r[1])}</td></tr>`).join("")}<tr style="font-weight:bold"><td>الإجمالي</td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table><h2>تفاصيل المعاملات</h2><table><thead><tr><th>التاريخ</th><th>البيان</th><th>التصنيف</th><th>المبلغ</th></tr></thead><tbody>${outTxs.map(t => `<tr><td>${t.date || ""}</td><td>${t.title}</td><td>${t.category || ""}</td><td class="out">${fmt(t.amount)}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `تقرير المصروفات — ${periodLabel}`, dateFrom, dateTo); }}><Printer size={14} />طباعة</Btn>
+          <Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">إجمالي التكاليف</div><div class="kpi-v out">${fmt(rangeOut)}</div></div></div><h2>تصنيف المصروفات — ${periodLabel}</h2><table><thead><tr><th>البند</th><th>المبلغ</th></tr></thead><tbody>${[["رواتب موظفين", salariesTotal], ["سلف موظفين", advancesTotal], ["مشتريات", purchasesTxTotal], ["سندات صرف", paymentVoucherTotal], ["مصروف شخصي/عمومي", personalTotal], ["أخرى", otherExpenses]].filter(r => Number(r[1]) > 0).map(r => `<tr><td>${r[0]}</td><td class="out">${fmt(Number(r[1]))}</td></tr>`).join("")}<tr style="font-weight:bold"><td>الإجمالي</td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table><h2>تفاصيل المعاملات</h2><table><thead><tr><th>التاريخ</th><th>البيان</th><th>التصنيف</th><th>المبلغ</th></tr></thead><tbody>${outTxs.map(t => `<tr><td>${t.date || ""}</td><td>${t.title}</td><td>${t.category || ""}</td><td class="out">${fmt(t.amount)}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `تقرير المصروفات — ${periodLabel}`, dateFrom, dateTo); }}><Printer size={14} />طباعة</Btn>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -7268,7 +7268,7 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const openPvEdit = (v: PV) => { setPvEmpSearch(v.paid_to_type === "staff" ? v.paid_to_name : ""); setPvSupSearch(v.paid_to_type === "supplier" ? v.paid_to_name : ""); setPvModal({ open: true, mode: "edit", id: v.id, f: { date: v.date, amount: String(v.amount), paid_to_type: v.paid_to_type, paid_to_id: v.paid_to_id || "", paid_to_name: v.paid_to_name, reason: v.reason, dept: v.dept || "", category: v.category || "", notes: v.notes || "", approved_by: v.approved_by || "" } }); };
   const savePv = async () => {
     if (!pvModal.f.amount || !pvModal.f.reason.trim()) { fireToast("أكمل الحقول الإلزامية: المبلغ، السبب", "error"); return; }
-    const empName = loggedUser?.staff?.name || loggedUser?.username || "الموظف";
+    const empName = (loggedUser?.type === "staff" ? loggedUser.staff.name || loggedUser.staff.username : loggedUser?.adminName) || "الموظف";
     try {
       const body = { ...pvModal.f, amount: parseFloat(pvModal.f.amount) || 0, paid_to_type: "staff", paid_to_name: empName, category: "مصروفات شخصية" };
       if (pvModal.mode === "add") { const r = await api.finance.paymentVouchers.create(body); if (r) setPaymentVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]); if (doWithdraw && body.dept) doWithdraw(body.dept, body.amount, body.reason, "سند صرف", (body as any).paid_to_name); fireToast("تم إنشاء سند الصرف ✓", "success"); }
@@ -7626,7 +7626,7 @@ function EmployeeAdvancesScreen({ employeeAdvances, setEmployeeAdvances, drawers
     if (!form.empName.trim() || amt <= 0) { toast("اسم الموظف والمبلغ إلزاميان", "error"); return; }
     const drawer = drawers[form.dept];
     if (!drawer || drawer.balance < amt) { toast("⚠️ رصيد الصندوق غير كافٍ لهذه السلفة", "warning"); return; }
-    const newAdv: EmployeeAdvance = { id: Date.now(), empName: form.empName.trim(), dept: form.dept, amount: amt, date: form.date || today, note: form.note, repaid: false };
+    const newAdv: EmployeeAdvance = { id: Date.now(), empName: form.empName.trim(), dept: form.dept, amount: amt, date: form.date || _today(), note: form.note, repaid: false };
     setEmployeeAdvances(p => [newAdv, ...p]);
     doWithdraw(form.dept, amt, `سلفة — ${form.empName.trim()}`, "سلف موظفين", form.empName.trim());
     api.staff.advances.create({ emp_name: form.empName.trim(), dept: form.dept, amount: amt, date: form.date || today, note: form.note || "", repaid: false }).then(r => { if (r) setEmployeeAdvances(p => p.map(a => a.id === newAdv.id ? { ...a, id: (r as any).id } : a)); }).catch(() => { });
@@ -8926,7 +8926,7 @@ function BackupScreen({ toast }: { toast: (m: string, t?: any) => void }) {
     setBackingUpAll(true);
     try {
       const res = await api.backup.drives.backupAll();
-      const failedOnes = res.results.filter(r => !r.success);
+      const failedOnes = res?.results?.filter((r: any) => !r.success) || [];
       if (failedOnes.length === 0) toast("✅ تم نسخ جميع حسابات Google Drive المفعّلة", "success");
       else toast(`فشل النسخ على ${failedOnes.length} حساب`, "warning");
       loadDrives(); loadNotifs();
@@ -9386,7 +9386,7 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
               <select value={p2Company} onChange={e => setP2Company(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل الشركات</option>{companies.map(c => <option key={c}>{c}</option>)}</select>
               <select value={p2Status} onChange={e => setP2Status(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="all">كل الفواتير</option><option value="paid">مسددة فقط</option><option value="unpaid">غير مسددة</option></select>
-              <div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const p2Invs = invoices.filter(inv => (!p2Company || inv.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && inv.status === "paid") || (p2Status === "unpaid" && inv.status !== "paid"))); const rows = p2Invs.map(inv => [inv.company, inv.dept, inv.description || "", fmt(inv.amount), fmt(inv.paid), fmt(inv.remaining), inv.status === "paid" ? "مسدد" : "غير مسدد", inv.date]); const ws = XLSX.utils.aoa_to_sheet([["الشركة", "القسم", "الوصف", "المبلغ", "المدفوع", "المتبقي", "الحالة", "التاريخ"], ...rows]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "فواتير الشركات"); XLSX.writeFile(wb, `فواتير_${p2Company || "الشركات"}.xlsx`); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const p2Invs = invoices.filter(inv => (!p2Company || inv.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && inv.status === "paid") || (p2Status === "unpaid" && inv.status !== "paid"))); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي</div><div class="kpi-v">${fmt(p2Invs.reduce((s, i) => s + i.amount, 0))}</div></div><div class="kpi-box"><div class="kpi-l">مسدَّد</div><div class="kpi-v in">${fmt(p2Invs.reduce((s, i) => s + i.paid, 0))}</div></div><div class="kpi-box"><div class="kpi-l">متبقي</div><div class="kpi-v out">${fmt(p2Invs.reduce((s, i) => s + i.remaining, 0))}</div></div></div><h2>فواتير الشركات${p2Company ? " — " + p2Company : ""}</h2><table><thead><tr><th>الشركة</th><th>القسم</th><th>المبلغ</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${p2Invs.map(i => `<tr><td>${i.company}</td><td>${i.dept}</td><td>${fmt(i.amount)}</td><td class="in">${fmt(i.paid)}</td><td class="${i.remaining > 0 ? "out" : "in"}">${fmt(i.remaining)}</td><td>${i.status === "paid" ? "مسدد ✓" : "غير مسدد"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `كشف فواتير الشركات${p2Company ? " — " + p2Company : ""}`, fromDate, toDate); }}><Printer size={14} />PDF</Btn></div>
+              <div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const p2Invs = invoices.filter(inv => (!p2Company || inv.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && inv.status === "paid") || (p2Status === "unpaid" && inv.status !== "paid"))); const rows = p2Invs.map(inv => [inv.company, inv.dept, "", fmt(inv.total), fmt(inv.paid), fmt(inv.remaining), inv.status === "paid" ? "مسدد" : "غير مسدد", inv.date]); const ws = XLSX.utils.aoa_to_sheet([["الشركة", "القسم", "الوصف", "المبلغ", "المدفوع", "المتبقي", "الحالة", "التاريخ"], ...rows]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "فواتير الشركات"); XLSX.writeFile(wb, `فواتير_${p2Company || "الشركات"}.xlsx`); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const p2Invs = invoices.filter(inv => (!p2Company || inv.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && inv.status === "paid") || (p2Status === "unpaid" && inv.status !== "paid"))); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي</div><div class="kpi-v">${fmt(p2Invs.reduce((s, i) => s + i.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">مسدَّد</div><div class="kpi-v in">${fmt(p2Invs.reduce((s, i) => s + i.paid, 0))}</div></div><div class="kpi-box"><div class="kpi-l">متبقي</div><div class="kpi-v out">${fmt(p2Invs.reduce((s, i) => s + i.remaining, 0))}</div></div></div><h2>فواتير الشركات${p2Company ? " — " + p2Company : ""}</h2><table><thead><tr><th>الشركة</th><th>القسم</th><th>المبلغ</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${p2Invs.map(i => `<tr><td>${i.company}</td><td>${i.dept}</td><td>${fmt(i.total)}</td><td class="in">${fmt(i.paid)}</td><td class="${i.remaining > 0 ? "out" : "in"}">${fmt(i.remaining)}</td><td>${i.status === "paid" ? "مسدد ✓" : "غير مسدد"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `كشف فواتير الشركات${p2Company ? " — " + p2Company : ""}`, fromDate, toDate); }}><Printer size={14} />PDF</Btn></div>
             </div>
           </Card>
           {p2Company && <div className="p-5 rounded-2xl text-white" style={{ background: "linear-gradient(135deg,#0D7377,#0a5c60)" }}>
@@ -11644,8 +11644,8 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   debts: DebtRow[];
   invoices: Invoice[];
   setInvoices: React.Dispatch<React.SetStateAction<Invoice[]>>;
-  doDeposit: (dept: string, amount: number, title: string, cat: string) => void;
-  doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void;
+  doDeposit: (dept: string, amount: number, title: string, cat?: string) => void;
+  doWithdraw: (dept: string, amount: number, title: string, cat?: string, ben?: string) => void;
   toast: (m: string, t?: ToastItem["type"]) => void;
   onLogout: () => void;
   diagnoses: DiagnosisEntry[];
@@ -11848,7 +11848,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                     if (collapsed && !isMobile) { setCollapsed(false); setExpanded(p => ({ ...p, [d.id]: true })); }
                     else { setExpanded(p => ({ ...p, [d.id]: !p[d.id] })); if (subItems.length > 0) { navToScreen(d.id, subItems[0].screen); } else { navToDept(d.id); } }
                   }}
-                  title={collapsed && !isMobile ? d.label : undefined}
+                  title={collapsed && !isMobile ? (d as any).label || d.name : undefined}
                   className="w-full flex items-center gap-3 transition-all"
                   style={{
                     padding: collapsed && !isMobile ? "10px 0" : "8px 14px",
@@ -11974,7 +11974,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
           <div className="flex items-center gap-2 flex-shrink-0">
             {/* Staff notification bell — inventory alerts + admin notices */}
             {(() => {
-              const deptNotifs = (notifications || []).filter(n => n.dept === staff.dept);
+              const deptNotifs = (notifications || []).filter(n => n.dept === staff.primaryDept);
               const totalCnt = deptNotifs.length + unreadNotices.length;
               const urgent = deptNotifs.filter(n => n.qty === 0 || n.qty <= Math.floor(n.threshold * 0.4)).length + (unreadNotices.length > 0 ? 1 : 0);
               return (
@@ -12201,13 +12201,13 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 const staffPRs = purchaseRequests.filter(r => allowedIds.has(r.dept || ""));
                 const staffRVs = allReceiptVouchers.filter(v => allowedIds.has(v.dept || ""));
                 const staffPVs = allPaymentVouchers.filter(v => allowedIds.has(v.dept || ""));
-                return <FinancialSummaryScreen drawers={staffDrawers} loggedUser={{ type: "staff", staff }} employees={employees} insurances={insurances} customDepts={staffCustomDepts} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={staffSessions} purchaseRequests={staffPRs} allPaymentVouchers={staffPVs} allReceiptVouchers={staffRVs} employeeAdvances={employeeAdvances} deptIdsFilter={[...allowedIds]} />;
+                return <FinancialSummaryScreen drawers={staffDrawers} loggedUser={{ type: "staff", staff }} employees={employees} insurances={insurances} customDepts={staffCustomDepts as any} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={staffSessions} purchaseRequests={staffPRs} allPaymentVouchers={staffPVs} allReceiptVouchers={staffRVs} employeeAdvances={employeeAdvances} deptIdsFilter={[...allowedIds]} />;
               })()}
               {subScreen === "print-export" && activeDept && (
                 <DeptPrintExportScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} sessions={sessions} invoices={invoices} toast={staffToast} />
               )}
               {subScreen === "attendance" && activeDept && (
-                <AttendanceScreen dept={activeDept} attendance={attendance} setAttendance={setAttendance} loggedUser={{ type: "staff", staff }} staffList={staffList} toast={staffToast} customDepts={customDepts} perms={deptPerms || undefined} />
+                <AttendanceScreen dept={activeDept} attendance={attendance} setAttendance={setAttendance!} loggedUser={{ type: "staff", staff }} staffList={staffList} toast={staffToast} customDepts={customDepts} perms={deptPerms || undefined} />
               )}
               {subScreen === "staff-advance" && activeDept && (
                 <StaffAdvanceRequestScreen
@@ -12236,7 +12236,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
               {subScreen === "dept-debts" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
-                return <DebtManagementScreen debts={debts.filter(d => d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts} />;
+                return <DebtManagementScreen debts={debts.filter(d => d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} />;
               })()}
               {subScreen === "dept-revenue" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
@@ -12337,7 +12337,7 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
   const filtSups = suppliers.filter(s => !pvSupSearch || s.name.includes(pvSupSearch)).slice(0, 8);
   const savePv = async () => {
     if (!pvModal.f.amount || !pvModal.f.reason.trim()) { toast("أكمل الحقول الإلزامية: المبلغ، السبب", "error"); return; }
-    const empName = loggedUser?.staff?.name || loggedUser?.username || "الموظف";
+    const empName = (loggedUser?.type === "staff" ? loggedUser.staff.name || loggedUser.staff.username : loggedUser?.adminName) || "الموظف";
     try {
       const amt = parseFloat(pvModal.f.amount) || 0;
       const r = await api.finance.paymentVouchers.create({ ...pvModal.f, amount: amt, dept, paid_to_type: "staff", paid_to_name: empName, category: "مصروفات شخصية" });
@@ -13071,7 +13071,7 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
               <div className="flex gap-2">
                 <input type="time" value={form.checkIn} onChange={e => setForm(p => ({ ...p, checkIn: e.target.value }))}
                   className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
-                <button onClick={() => setForm(p => ({ ...p, checkIn: getNow() }))}
+                <button onClick={() => setForm(p => ({ ...p, checkIn: _nowDT().time }))}
                   className="h-10 px-3 rounded-lg text-xs font-bold bg-[#0D7377] text-white whitespace-nowrap hover:bg-[#0a5c60] transition-colors flex items-center gap-1">
                   <Clock size={12} />دخول الآن
                 </button>
@@ -13083,7 +13083,7 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
               <div className="flex gap-2">
                 <input type="time" value={form.checkOut} onChange={e => setForm(p => ({ ...p, checkOut: e.target.value }))}
                   className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
-                <button onClick={() => setForm(p => ({ ...p, checkOut: getNow() }))}
+                <button onClick={() => setForm(p => ({ ...p, checkOut: _nowDT().time }))}
                   className="h-10 px-3 rounded-lg text-xs font-bold bg-[#D32F2F] text-white whitespace-nowrap hover:bg-[#b52424] transition-colors flex items-center gap-1">
                   <LogOut size={12} />خروج الآن
                 </button>
@@ -13959,7 +13959,7 @@ function PrintExportScreen({ dept, deptLabel, sessions = [], toast }: { dept: st
                 لا توجد جلسات مطابقة للفلتر
               </div>
             ) : (
-              <div className="divide-y" style={{ divideColor: "#F0F0F0" }}>
+              <div className="divide-y divide-[#F0F0F0]">
                 {deptSessions.map(s => {
                   const pt = mockPatients.find(p => p.id === s.patientId);
                   const name = pt?.name || s.patientId;
@@ -14347,10 +14347,10 @@ export default function App() {
         setEmployees((dbEmployees as any[]).map((e: any) => ({ id: e.id, name: e.name, dept: e.dept || "", role: e.role || "", salary: Number(e.salary) || 0, expenses: Number(e.expenses) || 0, status: e.status || "pending", paidDate: e.paid_date || "" })));
       }
       if (dbAdvances && (dbAdvances as any[]).length > 0) {
-        setStaffAdvanceRequests((dbAdvances as any[]).map((r: any) => ({ id: r.id, staffId: String(r.staff_id || ""), staffName: r.staff_name || "", dept: r.dept || "", amount: Number(r.amount) || 0, date: r.date || "", reason: r.reason || "", status: r.status || "pending", reviewedBy: r.reviewed_by || "", reviewDate: r.review_date || "", rejectionReason: r.rejection_reason || "" })));
+        setStaffAdvanceRequests((dbAdvances as any[]).map((r: any) => ({ id: r.id, staffId: Number(r.staff_id) || 0, staffName: r.staff_name || "", dept: r.dept || "", amount: Number(r.amount) || 0, date: r.date || "", reason: r.reason || "", status: r.status || "pending", reviewedBy: r.reviewed_by || "", reviewDate: r.review_date || "", rejectionReason: r.rejection_reason || "" })));
       }
       if (dbExternalDebts && (dbExternalDebts as any[]).length > 0) {
-        setExternalDebts((dbExternalDebts as any[]).map((d: any) => ({ id: d.id, direction: d.direction || "owed_to_us", party: d.party || "", amount: Number(d.amount) || 0, date: d.date || "", note: d.note || "", status: d.status || "pending", settledDate: d.settled_date || "" })));
+        setExternalDebts((dbExternalDebts as any[]).map((d: any) => ({ id: d.id, dir: d.direction === "owed_by_us" ? "received" : "given", party: d.party || "", amount: Number(d.amount) || 0, date: d.date || "", note: d.note || "", status: d.status || "pending", settledDate: d.settled_date || "" })));
       }
       if (dbInsurances && (dbInsurances as any[]).length > 0) {
         setInsurances((dbInsurances as any[]).map((ins: any) => ({ id: ins.id, name: ins.name || "", phone: ins.phone || "", discountClinic: Number(ins.discount_clinic) || 0, discountLab: Number(ins.discount_lab) || 0, discountRad: Number(ins.discount_rad) || 0 })));
@@ -14463,7 +14463,7 @@ export default function App() {
     const req = patientDeleteRequests.find(r => r.id === id);
     if (!req) return;
     const today = _today();
-    const reviewedBy = loggedUser?.name || "المدير";
+    const reviewedBy = (loggedUser?.type === "admin" ? loggedUser.adminName : loggedUser?.staff?.name) || "المدير";
     setPatientDeleteRequests(p => p.map(r => r.id === id ? { ...r, status: "approved" as const, reviewedBy, reviewDate: today } : r));
     setDeletedPatientIds(p => [...p, req.patientId]);
     api.patients.deleteRequests.update(id, { status: "approved", reviewed_by: reviewedBy, review_date: today }).catch(() => { });
@@ -14471,7 +14471,7 @@ export default function App() {
   };
   const rejectDeleteRequest = (id: number, reason: string) => {
     const today = _today();
-    const reviewedBy = loggedUser?.name || "المدير";
+    const reviewedBy = (loggedUser?.type === "admin" ? loggedUser.adminName : loggedUser?.staff?.name) || "المدير";
     setPatientDeleteRequests(p => p.map(r => r.id === id ? { ...r, status: "rejected" as const, rejectionReason: reason, reviewedBy, reviewDate: today } : r));
     api.patients.deleteRequests.update(id, { status: "rejected", rejection_reason: reason, reviewed_by: reviewedBy, review_date: today }).catch(() => { });
     toast("تم رفض طلب الحذف", "info");
@@ -14482,19 +14482,19 @@ export default function App() {
   const toast = fireToast;
   const drawersRef = useRef(initialDrawers as Record<string, DrawerState>);
   useEffect(() => { drawersRef.current = drawers; }, [drawers]);
-  const doWithdraw = (dept: string, amount: number, title: string, cat: string, ben?: string) => {
+  const doWithdraw = (dept: string, amount: number, title: string, cat?: string, ben?: string) => {
     const currentBal = drawersRef.current[dept]?.balance ?? 0;
     if (!drawersRef.current[dept] || currentBal < amount) return;
     const _dt = _nowDT();
-    setDrawers(d => { if (!d[dept] || d[dept].balance < amount) return d; const bal = d[dept].balance - amount; const tx: DrawerTx = { id: Date.now(), type: "out", title, category: cat, beneficiary: ben, amount, balance: bal, time: _dt.time, date: _dt.date }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
+    setDrawers(d => { if (!d[dept] || d[dept].balance < amount) return d; const bal = d[dept].balance - amount; const tx: DrawerTx = { id: Date.now(), type: "out", title, category: cat || "", beneficiary: ben, amount, balance: bal, time: _dt.time, date: _dt.date }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
     // Server ledger computes the authoritative balance; no client balance sent.
-    api.drawers.transactions.create({ dept, type: "out", title, category: cat, beneficiary: ben, amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time });
+    api.drawers.transactions.create({ dept, type: "out", title, category: cat || "", beneficiary: ben, amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time });
   };
-  const doDeposit = (dept: string, amount: number, title: string, cat: string) => {
+  const doDeposit = (dept: string, amount: number, title: string, cat?: string) => {
     const _dt = _nowDT();
-    setDrawers(d => { const cur = d[dept]?.balance ?? 0; const bal = cur + amount; const tx: DrawerTx = { id: Date.now(), type: "in", title, category: cat, amount, balance: bal, time: _dt.time, date: _dt.date, auto: false }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
+    setDrawers(d => { const cur = d[dept]?.balance ?? 0; const bal = cur + amount; const tx: DrawerTx = { id: Date.now(), type: "in", title, category: cat || "", amount, balance: bal, time: _dt.time, date: _dt.date, auto: false }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
     // Server ledger computes the authoritative balance; no client balance sent.
-    api.drawers.transactions.create({ dept, type: "in", title, category: cat, amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time, is_opening_balance: cat === "رصيد افتتاحي" });
+    api.drawers.transactions.create({ dept, type: "in", title, category: cat || "", amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time, is_opening_balance: cat === "رصيد افتتاحي" });
   };
   const doAdjustBalance = (dept: string, newBalance: number, reason: string) => {
     const cur = drawersRef.current[dept]?.balance ?? 0;
