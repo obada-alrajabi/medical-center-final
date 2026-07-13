@@ -1,78 +1,56 @@
-/**
- * adminAuth middleware — validates Bearer token issued at admin login.
- * Tokens are stored in the shared in-memory Map exported from server.js.
- * On server restart tokens are cleared; the admin must re-login.
- */
+import pool from '../db.js';
 
-// BUG-12 fix: 8-hour token TTL — stolen tokens expire automatically
 const TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
 
-// Module-level token store (shared across routes via import)
-export const adminTokens = new Map(); // token → { username, createdAt }
+export async function createSession(token, username, role = 'admin') {
+  await pool.query(
+    `INSERT INTO admin_sessions (token, username, role, expires_at)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '8 hours')
+     ON CONFLICT (token)
+     DO UPDATE SET expires_at = NOW() + INTERVAL '8 hours'`,
+    [token, username, role]
+  );
+}
 
-/**
- * Express middleware: requires a valid admin Bearer token.
- * Sends 401 if missing, 403 if invalid/expired.
- */
-export function requireAdmin(req, res, next) {
+export async function requireAdmin(req, res, next) {
   const auth = req.headers['authorization'] || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+
   if (!token) {
     return res.status(401).json({ error: 'مطلوب تسجيل الدخول كمدير' });
   }
-  const session = adminTokens.get(token);
-  if (!session) {
-    return res.status(403).json({ error: 'جلسة منتهية أو غير صالحة — سجّل الدخول مجدداً' });
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM admin_sessions 
+       WHERE token = $1 
+       AND expires_at > NOW()`,
+      [token]
+    );
+
+    if (!rows.length) {
+      return res.status(403).json({ error: 'جلسة منتهية أو غير صالحة — سجّل الدخول مجدداً' });
+    }
+
+    req.adminSession = rows[0];
+    next();
+
+  } catch (err) {
+    console.error('Auth error:', err);
+    res.status(500).json({ error: 'خطأ في التحقق من الجلسة' });
   }
-  if (Date.now() - session.createdAt > TOKEN_TTL_MS) {
-    adminTokens.delete(token);
-    return res.status(403).json({ error: 'انتهت صلاحية الجلسة — سجّل الدخول مجدداً' });
-  }
-  req.adminSession = session;
-  next();
 }
 
-// Staff session token store — issued at staff login (see routes/settings.js).
-// token → { staffId, username, createdAt }
-export const staffTokens = new Map();
 
-/**
- * requireFinancialAuth — gate for money-moving endpoints.
- *
- * A financial write is allowed for ANY authenticated actor: an admin OR a
- * logged-in staff member. This closes the "anonymous internet user can move
- * money" hole (the core threat) while preserving the staff workflows that
- * legitimately create deposits, withdrawals, vouchers and purchase requests.
- * Fine-grained capability (which staff may do what) remains enforced by the
- * per-department permission UI; this middleware only proves identity.
- *
- * Admin-only maintenance (deleting ledgered records, resets, staff/settings
- * management) must keep using requireAdmin instead.
- */
-export function requireFinancialAuth(req, res, next) {
-  const auth = req.headers['authorization'] || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (!token) {
-    return res.status(401).json({ error: 'مطلوب تسجيل الدخول لإجراء عملية مالية' });
-  }
-  const admin = adminTokens.get(token);
-  if (admin) {
-    if (Date.now() - admin.createdAt > TOKEN_TTL_MS) {
-      adminTokens.delete(token);
-      return res.status(403).json({ error: 'انتهت صلاحية الجلسة — سجّل الدخول مجدداً' });
-    }
-    req.financialActor = { kind: 'admin', username: admin.username };
-    req.adminSession = admin;
-    return next();
-  }
-  const staff = staffTokens.get(token);
-  if (staff) {
-    if (Date.now() - staff.createdAt > TOKEN_TTL_MS) {
-      staffTokens.delete(token);
-      return res.status(403).json({ error: 'انتهت صلاحية الجلسة — سجّل الدخول مجدداً' });
-    }
-    req.financialActor = { kind: 'staff', username: staff.username, staffId: staff.staffId };
-    return next();
-  }
-  return res.status(403).json({ error: 'جلسة منتهية أو غير صالحة — سجّل الدخول مجدداً' });
+export async function requireFinancialAuth(req, res, next) {
+  return requireAdmin(req, res, next);
+}
+
+export async function createStaffSession(token, username, staffId) {
+  await pool.query(
+    `INSERT INTO admin_sessions (token, username, role, expires_at)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '8 hours')
+     ON CONFLICT (token) DO UPDATE SET expires_at = NOW() + INTERVAL '8 hours'`,
+    [token, username, `staff:${staffId}`]
+  );
 }

@@ -2,8 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { adminTokens, staffTokens, requireAdmin } from '../middleware/adminAuth.js';
-
+import { createSession, requireAdmin } from '../middleware/adminAuth.js';
 const router = Router();
 
 // ─── Insurance Companies ───────────────────────────────────────────────────
@@ -256,7 +255,7 @@ router.post('/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
     }
     const token = crypto.randomBytes(32).toString('hex');
-    adminTokens.set(token, { username: account.username, createdAt: Date.now() });
+    await createSession(token, account.username, 'admin');
     res.json({ id: account.id, username: account.username, display_name: account.display_name, token });
   } catch (err) {
     console.error('[Auth/login] error:', err);
@@ -315,7 +314,7 @@ router.post('/auth/staff-login', async (req, res) => {
     // Issue a staff session token so staff financial writes are authenticated
     // (required by requireFinancialAuth on money-moving routes).
     const token = crypto.randomBytes(32).toString('hex');
-    staffTokens.set(token, { staffId: member.id, username: member.username, createdAt: Date.now() });
+    await createStaffSession(token, member.username, member.id);
     const { password_hash, ...safe } = member;
     res.json({ ...safe, token });
   } catch (err) {
