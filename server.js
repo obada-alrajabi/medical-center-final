@@ -78,9 +78,9 @@ app.post("/git-webhook", express.raw({ type: "*/*" }), (req, res) => {
     return res.status(401).json({ error: "Invalid webhook signature" });
   }
   res.status(200).send("OK");
-  exec("cd /home/mjcczxsn/medical-center && git pull", (err, stdout) => {
-    if (err) console.error("[webhook] git pull error:", err);
-    else console.log("[webhook] git pull success:", stdout);
+  exec("cd /home/mjcczxsn/medical-center && git pull && npm run build", (err, stdout) => {
+    if (err) console.error("[webhook] git pull & build error:", err);
+    else console.log("[webhook] git pull & build success:", stdout);
   });
 });
 

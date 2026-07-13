@@ -3744,7 +3744,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
             <Btn small variant="outline-white" onClick={() => onNavigate({ screen: "open-patient", dept })}><ChevronRight size={13} />رجوع</Btn>
             <Btn small variant="outline-white" onClick={() => { setEditForm({ ...p }); setEditModal(true); }}><Pencil size={13} />تعديل البيانات</Btn>
             {liveDebt > 0 && doDeposit && <Btn small variant="danger" onClick={() => setDebtModal(true)}><DollarSign size={13} />سداد دين</Btn>}
-            <Btn small variant="secondary" onClick={() => onNavigate({ screen: "new-session", dept, patientId: p.id })}><Plus size={13} />جلسة جديدة</Btn>
+            <Btn small variant="secondary" onClick={() => onNavigate(dept === "lab" ? { screen: "lab-session", dept, patientId: p.id } : dept === "radiology" ? { screen: "rad-session", dept, patientId: p.id } : { screen: "new-session", dept, patientId: p.id })}><Plus size={13} />جلسة جديدة</Btn>
             {isAdmin ? (
               <>
                 <Btn small variant="outline-white" onClick={() => { const parts = p.date.split("/"); const iso = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : p.date; setAdminDateVal(iso); setAdminDateModal(true); }}><Calendar size={13} />تعديل التاريخ</Btn>
@@ -4434,7 +4434,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
   labTests?: LabTest[];
 }) {
   const preselected = patientId ? mockPatients.find(p => p.id === patientId) || null : null;
-  const [view, setView] = useState<"register" | "board">("board");
+  const [view, setView] = useState<"register" | "board">(preselected ? "register" : "board");
   const [lastSaved, setLastSaved] = useState<{ name: string; tests: number; debtAmt: number } | null>(null);
   const [step, setStep] = useState(preselected ? 2 : 0);
   const [mode, setMode] = useState<"new" | "existing">("existing");
@@ -4885,7 +4885,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   radImages?: RadImage[];
 }) {
   const preselected = patientId ? mockPatients.find(p => p.id === patientId) || null : null;
-  const [view, setView] = useState<"register" | "board">("board");
+  const [view, setView] = useState<"register" | "board">(preselected ? "register" : "board");
   const [step, setStep] = useState(preselected ? 2 : 0);
   const [uploadedResults, setUploadedResults] = useState<Record<number, string[]>>({});
   const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
