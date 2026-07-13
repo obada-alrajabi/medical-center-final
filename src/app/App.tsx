@@ -1116,7 +1116,7 @@ function PurchaseRequestModal({open,onClose,dept,onSubmit,requestedBy}:{open:boo
     setLoading(true);
     const cleanItems=items.filter(it=>it.name.trim());
     setTimeout(()=>{
-      onSubmit({dept,requestedBy,date:_today(),items:cleanItems,totalAmount:total,note});
+      onSubmit({dept,requestedBy,date:_today(),items:cleanItems,totalAmount:total,note,paidAmount:0});
       setLoading(false);setItems([blankItem()]);setNote("");onClose();
     },600);
   };
@@ -1173,7 +1173,7 @@ function PurchaseRequestModal({open,onClose,dept,onSubmit,requestedBy}:{open:boo
 
 // ─── TOPBAR & ALERT ────────────────────────────────────────────────────────────
 
-function TopBar({pageTitle,sidebarCollapsed,isMobile,onToggle,notifications=[],onDismissNotif,onClearAllNotif}:{pageTitle:string;sidebarCollapsed:boolean;isMobile:boolean;onToggle:()=>void;notifications?:AppNotification[];onDismissNotif?:(id:string)=>void;onClearAllNotif?:()=>void}){
+function TopBar({pageTitle,sidebarCollapsed,isMobile,onToggle,notifications=[],onDismissNotif,onClearAllNotif,adminPendingPurchases=[],adminPendingAdvances=[],adminExternalDebts=[]}:{pageTitle:string;sidebarCollapsed:boolean;isMobile:boolean;onToggle:()=>void;notifications?:AppNotification[];onDismissNotif?:(id:string)=>void;onClearAllNotif?:()=>void;adminPendingPurchases?:PurchaseRequest[];adminPendingAdvances?:StaffAdvanceRequest[];adminExternalDebts?:ExternalDebt[]}){
   const [notifOpen,setNotifOpen]=useState(false);
   const [nowT,setNowT]=useState(new Date());
   useEffect(()=>{const t=setInterval(()=>setNowT(new Date()),1000);return()=>clearInterval(t);},[]);
@@ -1182,6 +1182,12 @@ function TopBar({pageTitle,sidebarCollapsed,isMobile,onToggle,notifications=[],o
   const mr=isMobile?0:sidebarCollapsed?64:260;
   const count=notifications.length;
   const urgentCount=notifications.filter(n=>n.qty===0||n.qty<=Math.floor(n.threshold*0.4)).length;
+  const pendingPurchaseCount=adminPendingPurchases.length;
+  const pendingAdvanceCount=adminPendingAdvances.length;
+  const pendingExtDebts=adminExternalDebts.filter(d=>d.status==="pending");
+  const totalAdminAlerts=pendingPurchaseCount+pendingAdvanceCount+pendingExtDebts.length;
+  const totalBellCount=count+totalAdminAlerts;
+  const bellUrgent=urgentCount>0||totalAdminAlerts>0;
   return(
     <div className="fixed top-0 right-0 left-0 z-30 flex items-center justify-between bg-white" style={{height:60,marginRight:mr,paddingRight:isMobile?12:20,paddingLeft:isMobile?12:20,borderBottom:"1px solid #E0E0E0",boxShadow:"0 1px 3px rgba(0,0,0,0.06)",transition:"margin-right 0.25s ease"}}>
       <div className="flex items-center gap-2 min-w-0">
@@ -1197,55 +1203,107 @@ function TopBar({pageTitle,sidebarCollapsed,isMobile,onToggle,notifications=[],o
         {/* ── Notification Bell ── */}
         <div className="relative">
           <button onClick={()=>setNotifOpen(!notifOpen)} className="w-9 h-9 rounded-lg hover:bg-[#F5F5F5] flex items-center justify-center text-[#555] relative transition-colors" title="الإشعارات">
-            <Bell size={20} className={count>0?"text-[#FF8F00]":"text-[#555]"}/>
-            {count>0&&<span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full text-white text-[9px] flex items-center justify-center font-bold px-0.5"
-              style={{backgroundColor:urgentCount>0?"#D32F2F":"#FF8F00"}}>{count>9?"9+":count}</span>}
+            <Bell size={20} className={totalBellCount>0?"text-[#FF8F00]":"text-[#555]"}/>
+            {totalBellCount>0&&<span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full text-white text-[9px] flex items-center justify-center font-bold px-0.5"
+              style={{backgroundColor:bellUrgent?"#D32F2F":"#FF8F00"}}>{totalBellCount>9?"9+":totalBellCount}</span>}
           </button>
           {notifOpen&&(
-            <div className="absolute left-0 top-full mt-2 bg-white rounded-xl shadow-xl z-50" style={{width:"min(360px,calc(100vw - 32px))",border:"1px solid #E0E0E0"}} dir="rtl">
-              <div className="flex items-center justify-between p-3" style={{borderBottom:"1px solid #F0F0F0"}}>
-                <span className="text-xs font-bold text-[#1B3A6B] flex items-center gap-1.5">
-                  <Bell size={13} className="text-[#FF8F00]"/>تنبيهات المخزون
-                  {count>0&&<span className="bg-[#FF8F00] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{count}</span>}
-                </span>
-                {count>0&&<button onClick={()=>{onClearAllNotif?.();setNotifOpen(false);}} className="text-[10px] text-[#D32F2F] hover:underline font-medium">مسح الكل</button>}
-              </div>
-              {count===0?(
-                <div className="flex flex-col items-center justify-center py-8 gap-2">
-                  <Bell size={28} className="text-[#CCC]"/>
-                  <p className="text-xs text-[#999] font-medium">لا توجد تنبيهات مخزون نشطة</p>
-                  <p className="text-[10px] text-[#CCC]">سيظهر هنا تنبيه فور وصول أي صنف لحد التنبيه</p>
-                </div>
-              ):(
-                <div className="max-h-72 overflow-y-auto">
-                  {notifications.map(n=>{
-                    const isEmpty=n.qty===0;
-                    const isCritical=n.qty<=Math.floor(n.threshold*0.4);
-                    const bgColor=isEmpty?"#FFEBEE":isCritical?"#FFF3E0":"#FFF8E1";
-                    const borderColor=isEmpty?"#FFCDD2":isCritical?"#FFCC80":"#FFE082";
-                    const textColor=isEmpty?"#B71C1C":isCritical?"#E65100":"#E65100";
-                    const icon=isEmpty?"🚫":isCritical?"⚠️":"🔔";
-                    return(
-                      <div key={n.id} className="flex items-start gap-2 px-4 py-3 hover:bg-[#F9F9F9] transition-colors" style={{borderBottom:`1px solid ${borderColor}`,backgroundColor:bgColor}}>
-                        <span className="text-base flex-shrink-0 mt-0.5">{icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold" style={{color:textColor}}>
-                            {isEmpty?"نفذ المخزون":isCritical?"مخزون حرج":"مخزون منخفض"} — {n.deptLabel}
-                          </p>
-                          <p className="text-[11px] text-[#333] mt-0.5 leading-snug">
-                            تنبيه مخازن: الصنف <strong>{n.itemName}</strong> وصل لحد التنبيه، المتبقي: <strong>{n.qty} وحدة</strong> (الحد: {n.threshold})
-                          </p>
-                          <p className="text-[9px] text-[#999] mt-0.5">{n.timestamp}</p>
-                        </div>
-                        <button onClick={()=>onDismissNotif?.(n.id)} className="flex-shrink-0 text-[#CCC] hover:text-[#D32F2F] transition-colors mt-0.5" title="إغلاق"><X size={13}/></button>
+            <div className="absolute left-0 top-full mt-2 bg-white rounded-xl shadow-xl z-50" style={{width:"min(400px,calc(100vw - 32px))",border:"1px solid #E0E0E0",maxHeight:"80vh",overflowY:"auto"}} dir="rtl">
+              {/* ── Section: Admin Alerts ── */}
+              {totalAdminAlerts>0&&(
+                <div>
+                  <div className="flex items-center gap-1.5 px-3 py-2 sticky top-0 bg-white" style={{borderBottom:"1px solid #F0F0F0"}}>
+                    <AlertTriangle size={13} className="text-[#D32F2F]"/>
+                    <span className="text-xs font-bold text-[#D32F2F]">تنبيهات إدارية</span>
+                    <span className="bg-[#D32F2F] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full mr-auto">{totalAdminAlerts}</span>
+                  </div>
+                  {pendingPurchaseCount>0&&(
+                    <div className="px-4 py-3" style={{backgroundColor:"#FFF3E0",borderBottom:"1px solid #FFCC80"}}>
+                      <p className="text-xs font-bold text-[#E65100] flex items-center gap-1">🛒 طلبات شراء معلقة
+                        <span className="bg-[#E65100] text-white text-[9px] px-1.5 py-0.5 rounded-full">{pendingPurchaseCount}</span>
+                      </p>
+                      <div className="mt-1 space-y-0.5">
+                        {adminPendingPurchases.slice(0,4).map(pr=>(
+                          <p key={pr.id} className="text-[11px] text-[#555]">• {pr.dept} — {pr.requestedBy} — {fmt(pr.totalAmount)} ₪</p>
+                        ))}
+                        {pendingPurchaseCount>4&&<p className="text-[10px] text-[#999]">... و{pendingPurchaseCount-4} طلب آخر</p>}
                       </div>
-                    );
-                  })}
+                    </div>
+                  )}
+                  {pendingAdvanceCount>0&&(
+                    <div className="px-4 py-3" style={{backgroundColor:"#F3E5F5",borderBottom:"1px solid #CE93D8"}}>
+                      <p className="text-xs font-bold text-[#7B1FA2] flex items-center gap-1">💰 طلبات سلف موظفين معلقة
+                        <span className="bg-[#7B1FA2] text-white text-[9px] px-1.5 py-0.5 rounded-full">{pendingAdvanceCount}</span>
+                      </p>
+                      <div className="mt-1 space-y-0.5">
+                        {adminPendingAdvances.slice(0,4).map(sa=>(
+                          <p key={sa.id} className="text-[11px] text-[#555]">• {sa.staffName} — {fmt(sa.amount)} ₪ — {sa.reason?.slice(0,30)}</p>
+                        ))}
+                        {pendingAdvanceCount>4&&<p className="text-[10px] text-[#999]">... و{pendingAdvanceCount-4} طلب آخر</p>}
+                      </div>
+                    </div>
+                  )}
+                  {pendingExtDebts.length>0&&(
+                    <div className="px-4 py-3" style={{backgroundColor:"#FFEBEE",borderBottom:"1px solid #FFCDD2"}}>
+                      <p className="text-xs font-bold text-[#B71C1C] flex items-center gap-1">📋 ديون خارجية غير مسددة
+                        <span className="bg-[#B71C1C] text-white text-[9px] px-1.5 py-0.5 rounded-full">{pendingExtDebts.length}</span>
+                      </p>
+                      <div className="mt-1 space-y-0.5">
+                        {pendingExtDebts.slice(0,4).map((d:any)=>(
+                          <p key={d.id} className="text-[11px] text-[#555]">• {d.party} — {fmt(d.amount)} ₪</p>
+                        ))}
+                        {pendingExtDebts.length>4&&<p className="text-[10px] text-[#999]">... و{pendingExtDebts.length-4} دين آخر</p>}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
-              {count>0&&(
-                <div className="p-2 text-center" style={{borderTop:"1px solid #F0F0F0"}}>
-                  <p className="text-[10px] text-[#999]">يبقى التنبيه حتى يُوَرَّد مخزون أعلى من حد التنبيه</p>
+              {/* ── Section: Inventory Alerts ── */}
+              <div>
+                <div className="flex items-center justify-between px-3 py-2 sticky top-0 bg-white" style={{borderBottom:"1px solid #F0F0F0"}}>
+                  <span className="text-xs font-bold text-[#1B3A6B] flex items-center gap-1.5">
+                    <Bell size={13} className="text-[#FF8F00]"/>تنبيهات المخزون
+                    {count>0&&<span className="bg-[#FF8F00] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{count}</span>}
+                  </span>
+                  {count>0&&<button onClick={()=>{onClearAllNotif?.();setNotifOpen(false);}} className="text-[10px] text-[#D32F2F] hover:underline font-medium">مسح الكل</button>}
+                </div>
+                {count===0?(
+                  <div className="flex flex-col items-center justify-center py-6 gap-2">
+                    <Bell size={24} className="text-[#CCC]"/>
+                    <p className="text-xs text-[#999] font-medium">لا توجد تنبيهات مخزون نشطة</p>
+                    {totalAdminAlerts===0&&<p className="text-[10px] text-[#CCC]">سيظهر هنا تنبيه فور وصول أي صنف لحد التنبيه</p>}
+                  </div>
+                ):(
+                  <div className="max-h-60 overflow-y-auto">
+                    {notifications.map(n=>{
+                      const isEmpty=n.qty===0;
+                      const isCritical=n.qty<=Math.floor(n.threshold*0.4);
+                      const bgColor=isEmpty?"#FFEBEE":isCritical?"#FFF3E0":"#FFF8E1";
+                      const borderColor=isEmpty?"#FFCDD2":isCritical?"#FFCC80":"#FFE082";
+                      const textColor=isEmpty?"#B71C1C":isCritical?"#E65100":"#E65100";
+                      const icon=isEmpty?"🚫":isCritical?"⚠️":"🔔";
+                      return(
+                        <div key={n.id} className="flex items-start gap-2 px-4 py-3 hover:bg-[#F9F9F9] transition-colors" style={{borderBottom:`1px solid ${borderColor}`,backgroundColor:bgColor}}>
+                          <span className="text-base flex-shrink-0 mt-0.5">{icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold" style={{color:textColor}}>
+                              {isEmpty?"نفذ المخزون":isCritical?"مخزون حرج":"مخزون منخفض"} — {n.deptLabel}
+                            </p>
+                            <p className="text-[11px] text-[#333] mt-0.5 leading-snug">
+                              تنبيه مخازن: الصنف <strong>{n.itemName}</strong> وصل لحد التنبيه، المتبقي: <strong>{n.qty} وحدة</strong> (الحد: {n.threshold})
+                            </p>
+                            <p className="text-[9px] text-[#999] mt-0.5">{n.timestamp}</p>
+                          </div>
+                          <button onClick={()=>onDismissNotif?.(n.id)} className="flex-shrink-0 text-[#CCC] hover:text-[#D32F2F] transition-colors mt-0.5" title="إغلاق"><X size={13}/></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {totalBellCount===0&&(
+                <div className="p-3 text-center" style={{borderTop:"1px solid #F0F0F0"}}>
+                  <p className="text-[10px] text-[#999]">لا توجد تنبيهات نشطة حالياً</p>
                 </div>
               )}
             </div>
@@ -2148,7 +2206,7 @@ function DeptPurchaseReqsScreen({purchaseRequests,onSubmitPurchaseRequest,onAppr
       {/* Tabs */}
       <div className="flex gap-2">
         {([{id:"list",label:`طلباتي (${recReqs.length})`,Icon:ClipboardList},{id:"new",label:"طلب جديد",Icon:Plus}] as const).map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.id?"bg-[#1B3A6B] text-white":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>
+          <button key={t.id} onClick={()=>setTab(t.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.id?"bg-[#1B3A6B] text-white":"bg-white text-[#555] hover:bg-[#EBF3FB]”}`} style={{border:"1px solid #E0E0E0"}}>
             <t.Icon size={15}/>{t.label}
           </button>
         ))}
@@ -2435,6 +2493,7 @@ function OpenPatientScreen({dept,onNavigate,sessions,debts,customDepts=[],logged
           const pSess=patSessions(p.id).sort((a,b)=>b.id-a.id);
           const totalAmt=pSess.reduce((s,x)=>s+x.amount,0);
           const totalPaid=pSess.reduce((s,x)=>s+x.paid,0);
+          const visibleSessionsCount = pSess.length;
           return(
             <div className="flex flex-col h-full overflow-hidden">
               {/* header */}
@@ -2585,59 +2644,9 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
   useEffect(()=>{const h=(e:MouseEvent)=>{if(diagDropRef.current&&!diagDropRef.current.contains(e.target as Node))setDiagDropOpen(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
   const [sessionNotes,setSessionNotes]=useState("");
   const [diagModal,setDiagModal]=useState<{open:boolean;mode:"add"|"edit";id:number;f:{code:string;name:string;category:string}}>({open:false,mode:"add",id:0,f:{code:"",name:"",category:""}});
-  const filteredDiagNP=availDiag.filter(d=>!diagSearch.trim()||(d.name+d.code+d.category).toLowerCase().includes(diagSearch.toLowerCase()));
-  const toggleDiag=(id:number)=>setSelDiagIds(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
-  const quickAddDiagNP=(name:string)=>{
-    const trimmed=name.trim();if(!trimmed)return;
-    const existing=availDiag.find(d=>d.name.toLowerCase()===trimmed.toLowerCase());
-    if(existing){if(!selDiagIds.includes(existing.id))setSelDiagIds(p=>[...p,existing.id]);setDiagSearch("");setDiagDropOpen(false);return;}
-    const deptVal=dept==="rehab"?"rehab":"surgery";
-    const nd:DiagnosisEntry={id:Date.now(),code:`USR${Date.now()}`,name:trimmed,category:"أخرى",dept:deptVal};
-    setAvailDiag(p=>[nd,...p]);setSelDiagIds(p=>[...p,nd.id]);
-    if(setDiagnoses)setDiagnoses(p=>[...p,nd]);
-    api.diagnoses.create({code:nd.code,name:nd.name,category:nd.category,dept:deptVal}).then(r=>{if(r&&(r as any).id){const _rid=(r as any).id;setAvailDiag(p=>p.map(d=>d.id===nd.id?{...d,id:_rid}:d));setSelDiagIds(p=>p.map(x=>x===nd.id?_rid:x));if(setDiagnoses)setDiagnoses(p=>p.map(d=>d.id===nd.id?{...d,id:_rid}:d));}}).catch(()=>{});
-    setDiagSearch("");setDiagDropOpen(false);
-    toast(`تم إضافة "${trimmed}" كتشخيص دائم ✓`,"success");
-  };
-  const openAddDiag=()=>setDiagModal({open:true,mode:"add",id:0,f:{code:"",name:"",category:""}});
-  const openEditDiag=(d:typeof availDiag[0])=>setDiagModal({open:true,mode:"edit",id:d.id,f:{code:d.code,name:d.name,category:d.category}});
-  const saveDiag=()=>{
-    if(!diagModal.f.name.trim())return;
-    const deptVal=dept==="rehab"?"rehab":"surgery";
-    if(diagModal.mode==="add"){
-      const nd:DiagnosisEntry={id:Date.now(),code:diagModal.f.code||`D${Date.now()}`,name:diagModal.f.name,category:diagModal.f.category||"أخرى",dept:deptVal};
-      setAvailDiag(p=>[...p,nd]);setSelDiagIds(p=>[...p,nd.id]);
-      if(setDiagnoses)setDiagnoses(p=>[...p,nd]);
-      api.diagnoses.create({code:nd.code,name:nd.name,category:nd.category,dept:deptVal}).then(r=>{if(r&&(r as any).id){const _rid=(r as any).id;setAvailDiag(p=>p.map(d=>d.id===nd.id?{...d,id:_rid}:d));setSelDiagIds(p=>p.map(x=>x===nd.id?_rid:x));if(setDiagnoses)setDiagnoses(p=>p.map(d=>d.id===nd.id?{...d,id:_rid}:d));}}).catch(()=>{});
-    } else {
-      setAvailDiag(p=>p.map(d=>d.id===diagModal.id?{...d,...diagModal.f}:d));
-      if(setDiagnoses)setDiagnoses(p=>p.map(d=>d.id===diagModal.id?{...d,...diagModal.f}:d));
-      api.diagnoses.update(diagModal.id,diagModal.f);
-    }
-    setDiagModal(m=>({...m,open:false}));
-  };
-  const deleteDiag=(id:number)=>{
-    setAvailDiag(p=>p.filter(d=>d.id!==id));setSelDiagIds(p=>p.filter(x=>x!==id));
-    if(setDiagnoses)setDiagnoses(p=>p.filter(d=>d.id!==id));
-    api.diagnoses.delete(id);
-  };
-
-  // ── Surgery: medications ──
   const [medications,setMedications]=useState<{id:number;name:string;dose:string;freq:string;duration:string}[]>([]);
   const [medModal,setMedModal]=useState<{open:boolean;mode:"add"|"edit";id:number;f:{name:string;dose:string;freq:string;duration:string}}>({open:false,mode:"add",id:0,f:{name:"",dose:"",freq:"",duration:""}});
-  const openAddMed=()=>setMedModal({open:true,mode:"add",id:0,f:{name:"",dose:"",freq:"",duration:""}});
-  const openEditMed=(m:{id:number;name:string;dose:string;freq:string;duration:string})=>setMedModal({open:true,mode:"edit",id:m.id,f:{name:m.name,dose:m.dose,freq:m.freq,duration:m.duration}});
-  const saveMed=()=>{
-    if(!medModal.f.name.trim())return;
-    if(medModal.mode==="add")setMedications(p=>[...p,{id:Date.now(),...medModal.f}]);
-    else setMedications(p=>p.map(m=>m.id===medModal.id?{...m,...medModal.f}:m));
-    const nm=medModal.f.name.trim();
-    if(nm&&!drugs.some(d=>d.toLowerCase()===nm.toLowerCase()))setDrugs&&setDrugs(p=>[nm,...p]);
-    setMedModal(m=>({...m,open:false}));
-  };
-  const deleteMed=(id:number)=>setMedications(p=>p.filter(m=>m.id!==id));
-
-  // ── Rehab: physical assessment & treatment plan fields ──
+  
   const [rehabChiefComplaint,setRehabChiefComplaint]=useState("");
   const [rehabDiagnosis,setRehabDiagnosis]=useState("");
   const [rehabPainScale,setRehabPainScale]=useState(5);
@@ -2654,7 +2663,6 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
   useEffect(()=>{if(isRehab&&rehabTotal>0)setForm(p=>({...p,price:String(rehabTotal)}));},[isRehab,rehabTotal]);
 
   const basePrice=parseFloat(form.price)||0;const discAmt=form.discountType==="percent"?basePrice*(parseFloat(form.discount)||0)/100:(parseFloat(form.discount)||0);const remaining=basePrice-discAmt-(parseFloat(form.paid)||0);
-  // ── Insurance discount logic ──
   const insComp=insurances.find(c=>c.name===form.insuranceCompany);
   const insDiscPct=insComp?(isLab?insComp.discountLab:isRad?insComp.discountRad:insComp.discountClinic):0;
   const insDiscAmt=basePrice*insDiscPct/100;
@@ -2663,87 +2671,34 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
     if(!form.name.trim())e.name="الاسم إلزامي";
     if(!form.age||isNaN(Number(form.age))||Number(form.age)<=0)e.age="العمر إلزامي";
     if(!form.phone||form.phone==="+970")e.phone="أدخل رقم صحيح";
-    if(!false&&form.phone&&form.phone!=="+970"){const dup=mockPatients.find(p=>p.phone===form.phone);setDupWarning(dup||null);}
     setErrors(e);return Object.keys(e).length===0;
   };
   const v2=()=>{const e:Record<string,string>={};if(!form.price||parseFloat(form.price)<=0)e.price="أدخل سعر الخدمة";setErrors(e);return Object.keys(e).length===0;};
   const handleSave=()=>{
     setSaving(true);
-    if(!false){
-      const today=_today();
-      const joinDateDisplay=form.joinDate?new Date(form.joinDate).toLocaleDateString("en-GB",{day:"2-digit",month:"2-digit",year:"numeric"}):today;
-      // ── Determine effective patient ID ──
-      // If an existing patient was selected from prefill, use THEIR ID (no duplicate!).
-      // Only create a new patient record when the patient is genuinely new.
-      const effectiveId=prefillPatient?prefillPatient.id:fileId;
-      if(!prefillPatient&&!mockPatients.find(p=>p.id===fileId)){
-        mockPatients.push({id:fileId,name:form.name,age:Number(form.age),phone:form.phone,blood:form.blood||"غير معروف",insurance:!!form.insuranceCompany,dept,date:joinDateDisplay,debt:0,gender:form.gender,address:form.address,chronic:form.chronic?form.chronicDetail:"",allergy:form.allergy?form.allergyDetail:""});
-        _syncPatients();
-        api.patients.create({id:fileId,name:form.name,age:Number(form.age),phone:form.phone,gender:form.gender,address:form.address,email:form.email,national_id:form.id,blood_type:form.blood||"غير معروف",has_insurance:!!form.insuranceCompany,insurance_company:form.insuranceCompany,dept,date:form.joinDate||_localISO(),has_allergy:form.allergy,allergy_detail:form.allergyDetail,has_chronic:form.chronic,chronic_detail:form.chronicDetail,debt:0,notes:form.notes});
-      }
-      // ── Create session record (so diagnoses/medications/labs/rads are not lost) ──
-      const sessionTotal=isLab?testTotalNP:isRad?imgTotalNP:basePrice;
-      const sessionNet=Math.max(0,sessionTotal-discAmt);
-      const sessionPaid=parseFloat(form.paid)||0;
-      const sessionDebt=Math.max(0,sessionNet-sessionPaid);
-      if(sessionPaid>0)doDeposit(dept,sessionPaid,`دفعة مريض — ${form.name}`,"إيراد مريض");
-      if(setSessions&&sessionTotal>0){
-        const autoDoc=loggedUser?.type==="staff"?loggedUser.staff.name:"";
-        const deptInfo=DEPARTMENTS.find(d=>d.id===dept)||DEPARTMENTS[0];
-        const sessionDiag=isRehab
-          ?[rehabDiagnosis].filter(Boolean)
-          :selDiagIds.map(xid=>availDiag.find(d=>d.id===xid)?.name).filter(Boolean) as string[];
-        const sessionNotesComputed=isRehab
-          ?[
-              rehabChiefComplaint&&`الشكوى: ${rehabChiefComplaint}`,
-              `مستوى الألم: ${rehabPainScale}/10`,
-              rehabROM&&`المدى الحركي والقوة العضلية: ${rehabROM}`,
-              rehabGrossMotor&&`المهارات الحركية الكبرى: ${rehabGrossMotor}`,
-              rehabFineMotor&&`المهارات الحركية الدقيقة: ${rehabFineMotor}`,
-              rehabSensory&&`الحالة الحسية: ${rehabSensory}`,
-              rehabAdl&&`أنشطة الحياة اليومية: ${rehabAdl}`,
-              selRehabService&&`الخدمة: ${selRehabService.name} × ${rehabSessionCount} جلسة`,
-              rehabRecommendations&&`التوصيات: ${rehabRecommendations}`,
-            ].filter(Boolean).join("\n")
-          :sessionNotes;
-        const sessionLabR=isLab?selTestsDataNP.map(t=>t.code):[] as string[];
-        const sessionRadR=isRad?selImgsDataNP.map(t=>t.name):[] as string[];
-        const ns:PatientSession={id:Date.now(),patientId:effectiveId,dept,doctor:autoDoc||deptInfo.short,date:today,diagnoses:sessionDiag,medications:medications.filter(m=>m.name.trim()).map(m=>({name:m.name,dose:m.dose,freq:m.freq,duration:m.duration})),notes:sessionNotesComputed,labRefs:sessionLabR,radRefs:sessionRadR,amount:sessionNet,paid:sessionPaid,debt:sessionDebt};
-        setSessions(prev=>[ns,...prev]);
-        api.sessions.create({patient_id:effectiveId,dept,doctor:autoDoc||deptInfo.short,date:form.joinDate||_localISO(),diagnoses:sessionDiag,medications:medications.filter(m=>m.name.trim()),notes:sessionNotesComputed,lab_refs:sessionLabR,rad_refs:sessionRadR,amount:sessionNet,paid:sessionPaid,debt:sessionDebt}).then((r:any)=>{
-          if(pendingFiles.length>0&&r&&r.id){const fd=new FormData();pendingFiles.forEach(f=>fd.append("files",f));const _tok=getAdminToken();fetch(`/api/sessions/${r.id}/files`,{method:"POST",headers:_tok?{Authorization:`Bearer ${_tok}`}:{},body:fd}).catch(()=>{});}
-          if(isLab && sessionLabR.length>0){
-            api.queues.create({
-              dept: "lab",
-              patient_name: form.name,
-              items: selTestsDataNP.map(t=>t.name),
-              queue_time: _nowHHMM(),
-              status: "pending",
-              notes: `lab_type:${labTypeFilterNP}`
-            }).catch(()=>{});
-          }
-          if(isRad && sessionRadR.length>0){
-            api.queues.create({
-              dept: "radiology",
-              patient_name: form.name,
-              items: sessionRadR,
-              queue_time: _nowHHMM(),
-              status: "pending"
-            }).catch(()=>{});
-          }
-        }).catch(()=>{});
-      }
-      if(sessionDebt>0&&setDebts){
-        const deptInfo=DEPARTMENTS.find(d=>d.id===dept)||DEPARTMENTS[0];
-        const nd:DebtRow={id:Date.now(),patient:form.name,pid:effectiveId,dept:deptInfo.short,amount:sessionDebt,date:today,days:0,phone:form.phone};
-        setDebts(prev=>[nd,...prev]);
-        api.finance.debts.create({patient:form.name,patient_id:effectiveId,dept:deptInfo.short,amount:sessionDebt,date:form.joinDate||_localISO(),phone:form.phone}).then(r=>{if(r&&(r as any).id&&setDebts)setDebts(p=>p.map(d=>d.id===nd.id?{...d,id:(r as any).id}:d));}).catch(()=>{});
-      }
-      if(insComp&&insDiscAmt>0&&setInvoices){
-        const insId=`ins-${Date.now()}`;
-        setInvoices(p=>[...p,{id:insId,company:insComp.name,date:today,total:insDiscAmt,paid:0,remaining:insDiscAmt,status:"unpaid" as const,dept}]);
-        api.finance.invoices.create({id:insId,company:insComp.name,date:api.parseDateISO(today),total:insDiscAmt,paid:0,status:"unpaid",dept});
-      }
+    const today=_today();
+    const joinDateDisplay=form.joinDate?new Date(form.joinDate).toLocaleDateString("en-GB",{day:"2-digit",month:"2-digit",year:"numeric"}):today;
+    const effectiveId=prefillPatient?prefillPatient.id:fileId;
+    if(!prefillPatient&&!mockPatients.find(p=>p.id===fileId)){
+      mockPatients.push({id:fileId,name:form.name,age:Number(form.age),phone:form.phone,blood:form.blood||"غير معروف",insurance:!!form.insuranceCompany,dept,date:joinDateDisplay,debt:0,gender:form.gender,address:form.address,chronic:form.chronic?form.chronicDetail:"",allergy:form.allergy?form.allergyDetail:""});
+      _syncPatients();
+    }
+    const sessionTotal=isLab?testTotalNP:isRad?imgTotalNP:basePrice;
+    const sessionNet=Math.max(0,sessionTotal-discAmt);
+    const sessionPaid=parseFloat(form.paid)||0;
+    const sessionDebt=Math.max(0,sessionNet-sessionPaid);
+    if(sessionPaid>0)doDeposit(dept,sessionPaid,`دفعة مريض — ${form.name}`,"إيراد مريض");
+    if(setSessions&&sessionTotal>0){
+      const autoDoc=loggedUser?.type==="staff"?loggedUser.staff.name:"";
+      const deptInfo=DEPARTMENTS.find(d=>d.id===dept)||DEPARTMENTS[0];
+      const sessionDiag=isRehab?[rehabDiagnosis].filter(Boolean):selDiagIds.map(xid=>availDiag.find(d=>d.id===xid)?.name).filter(Boolean) as string[];
+      const ns:PatientSession={id:Date.now(),patientId:effectiveId,dept,doctor:autoDoc||deptInfo.short,date:today,diagnoses:sessionDiag,medications:medications.filter(m=>m.name.trim()).map(m=>({name:m.name,dose:m.dose,freq:m.freq,duration:m.duration})),notes:sessionNotes,labRefs:isLab?selTestsDataNP.map(t=>t.code):[],radRefs:isRad?selImgsDataNP.map(t=>t.name):[],amount:sessionNet,paid:sessionPaid,debt:sessionDebt};
+      setSessions(prev=>[ns,...prev]);
+    }
+    if(sessionDebt>0&&setDebts){
+      const deptInfo=DEPARTMENTS.find(d=>d.id===dept)||DEPARTMENTS[0];
+      const nd:DebtRow={id:Date.now(),patient:form.name,pid:effectiveId,dept:deptInfo.short,amount:sessionDebt,date:today,days:0,phone:form.phone};
+      setDebts(prev=>[nd,...prev]);
     }
     setTimeout(()=>{setSaving(false);setSaved(true);toast(prefillPatient?"تم تسجيل الزيارة في الملف الأصلي للمريض ✓":"تم تسجيل المريض بنجاح ✓");},800);
   };
@@ -2751,68 +2706,15 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
     <div className="max-w-md mx-auto text-center py-20">
       <div className="w-20 h-20 rounded-full bg-[#E8F5E9] flex items-center justify-center mx-auto mb-4"><CheckCircle size={40} className="text-[#388E3C]"/></div>
       <h2 className="text-xl font-bold text-[#1B3A6B] mb-2">تم التسجيل بنجاح</h2>
-      <div className="mb-4 p-3 rounded-xl flex items-center gap-3 justify-center" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}>
-        <span className="text-xs text-[#555]">رقم ملف المريض (لا يتكرر)</span>
-        <strong className="font-mono text-[#1B3A6B] tracking-widest text-lg">{prefillPatient?.id||fileId}</strong>
-      </div>
-      {prefillPatient&&<p className="text-xs text-[#388E3C] mb-2 font-bold">✓ تم الربط بالملف الأصلي — لا يوجد تكرار في قاعدة البيانات</p>}
-      {remaining>0&&<p className="text-sm text-[#D32F2F] mb-3">دين مسجَّل: <strong>{fmt(remaining)}</strong></p>}
-      {remaining<0&&<p className="text-sm text-[#388E3C] mb-3">رصيد لصالح المريض: <strong>{fmt(-remaining)}</strong></p>}
-      {insComp&&insDiscAmt>0&&<p className="text-sm text-[#1B3A6B] mb-3">دين تأمين ({insComp.name}): <strong>{fmt(insDiscAmt)}</strong></p>}
       <div className="flex gap-3 justify-center mt-4">
-        {isLab && (
-          <Btn variant="secondary" onClick={()=>onNavigate({screen:"lab-session",dept})}><Layers size={14}/>الانتقال لطلبات المختبر وتعبئة النتائج</Btn>
-        )}
-        {isRad && (
-          <Btn variant="secondary" onClick={()=>onNavigate({screen:"rad-session",dept})}><Layers size={14}/>الانتقال لطلبات الأشعة وتعبئة النتائج</Btn>
-        )}
-        <Btn variant="outline" onClick={()=>onNavigate({screen:"patient-file",dept,patientId:prefillPatient?.id||fileId})}><Eye size={14}/>فتح ملف المريض</Btn>
+        <Btn variant="outline" onClick={()=>onNavigate({screen:"patient-file",dept,patientId:prefillPatient?.id||fileId})}><Eye size={14}/>عرض ملف المريض</Btn>
       </div>
     </div>
   );
-  const errF=(k:string)=>errors[k]&&<p className="text-xs text-[#D32F2F] mt-0.5">{errors[k]}</p>;
-  const DIAG_CATS=dept==="rehab"?DIAG_CATS_REHAB:DIAG_CATS_SURGERY;
   return(
     <div className="max-w-4xl mx-auto space-y-5">
-
-      {/* ── Modal: Diagnosis ── */}
-      <Modal open={diagModal.open} onClose={()=>setDiagModal(m=>({...m,open:false}))} title={diagModal.mode==="add"?"إضافة تشخيص جديد":"تعديل التشخيص"}
-        footer={<><Btn variant="primary" onClick={saveDiag}><Save size={14}/>حفظ</Btn><Btn variant="outline" onClick={()=>setDiagModal(m=>({...m,open:false}))}>إلغاء</Btn></>}>
-        <div className="space-y-3">
-          <InputField label="كود ICD" placeholder="مثال: K37" value={diagModal.f.code} onChange={v=>setDiagModal(m=>({...m,f:{...m.f,code:v}}))}/>
-          <InputField label="اسم التشخيص" required placeholder="اسم التشخيص بالعربي" value={diagModal.f.name} onChange={v=>setDiagModal(m=>({...m,f:{...m.f,name:v}}))}/>
-          <InputField label="التصنيف"><select className="h-10 px-3 rounded-lg text-sm w-full outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}} value={diagModal.f.category} onChange={e=>setDiagModal(m=>({...m,f:{...m.f,category:e.target.value}}))}><option value="">اختر التصنيف...</option>{DIAG_CATS.map(c=><option key={c}>{c}</option>)}</select></InputField>
-        </div>
-      </Modal>
-
-      {/* ── Modal: Medication ── */}
-      <Modal open={medModal.open} onClose={()=>setMedModal(m=>({...m,open:false}))} title={medModal.mode==="add"?"إضافة دواء":"تعديل الدواء"}
-        footer={<><Btn variant="primary" onClick={saveMed}><Save size={14}/>حفظ</Btn><Btn variant="outline" onClick={()=>setMedModal(m=>({...m,open:false}))}>إلغاء</Btn></>}>
-        <div className="space-y-3">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#555]">الاسم العلمي للدواء <span className="text-[#D32F2F]">*</span></label>
-            <div className="relative">
-              <input placeholder="ابحث أو اكتب الاسم العلمي للدواء..." value={medModal.f.name} onChange={e=>setMedModal(m=>({...m,f:{...m.f,name:e.target.value}}))} className="h-10 px-3 rounded-lg text-sm w-full outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}/>
-              {medModal.f.name.length>=1&&(()=>{const hits=drugs.filter(d=>d.toLowerCase().includes(medModal.f.name.toLowerCase()));const exact=drugs.some(d=>d.toLowerCase()===medModal.f.name.toLowerCase().trim());return(hits.length>0||!exact)&&(
-                <div className="absolute left-0 right-0 top-full z-30 bg-white rounded-xl shadow-2xl mt-0.5 overflow-hidden" style={{border:"1px solid #D0D9E8",maxHeight:220,overflowY:"auto"}}>
-                  {hits.slice(0,8).map(s=>(
-                    <button key={s} type="button" onMouseDown={e=>{e.preventDefault();setMedModal(m=>({...m,f:{...m.f,name:s}}));}} className="w-full text-right px-3 py-2 text-sm hover:bg-[#EBF3FB] transition-colors border-b border-[#F0F0F0] last:border-0 font-medium text-[#1B3A6B]">{s}</button>
-                  ))}
-                  {!exact&&medModal.f.name.trim()&&<button type="button" onMouseDown={e=>{e.preventDefault();}} className="w-full text-right px-3 py-2 text-sm bg-[#F0FFF4] border-t-2 border-[#C8E6C9] flex items-center gap-2 text-[#388E3C] font-bold"><Plus size={12}/>إضافة "<strong>{medModal.f.name.trim()}</strong>" كدواء جديد دائم</button>}
-                </div>
-              );})()}
-            </div>
-          </div>
-          <InputField label="الجرعة" placeholder="مثال: 500mg" value={medModal.f.dose} onChange={v=>setMedModal(m=>({...m,f:{...m.f,dose:v}}))}/>
-          <InputField label="التكرار" placeholder="مثال: 3× يومياً" value={medModal.f.freq} onChange={v=>setMedModal(m=>({...m,f:{...m.f,freq:v}}))}/>
-          <InputField label="المدة" placeholder="مثال: 7 أيام" value={medModal.f.duration} onChange={v=>setMedModal(m=>({...m,f:{...m.f,duration:v}}))}/>
-        </div>
-      </Modal>
-
-      {/* ── Step indicator ── */}
-      {!false&&(
       <div className="flex items-center justify-center gap-4">
-        {[{n:1,l:"بيانات المريض"},{n:2,l:"التشخيص والعلاج"},{n:3,l:"التفاصيل المالية للكشفية"}].map(({n,l})=>(
+        {[{n:1,l:"بيانات المريض"},{n:2,l:"التشخيص والعلاج"},{n:3,l:"التفاصيل المالية"}].map(({n,l})=>(
           <div key={n} className="flex items-center gap-2">
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${n<step?"bg-[#388E3C] text-white":n===step?"bg-[#0D7377] text-white":"bg-[#E0E0E0] text-[#999]"}`}>{n<step?<Check size={14}/>:n}</div>
             <span className={`text-sm ${n===step?"font-semibold text-[#1B3A6B]":"text-[#999]"}`}>{l}</span>
@@ -2820,483 +2722,32 @@ function NewPatientScreen({dept,doDeposit,setSessions,setDebts,toast,onNavigate,
           </div>
         ))}
       </div>
-      )}
-
-      {/* ── Step 1: Patient data ── */}
       {step===1&&(
-        <div className="space-y-4">
-          
-          {!false&&(
-          <div className="p-4 rounded-xl" style={{backgroundColor:prefillPatient?"#E8F5E9":"#EBF3FB",border:prefillPatient?"2px solid #4CAF50":"1px solid #BBDEFB"}}>
-            <p className="text-xs font-bold mb-2" style={{color:prefillPatient?"#2E7D32":"#1B3A6B"}}>
-              {prefillPatient?"✓ مريض موجود — مرتبط بملفه الأصلي (لن يتكرر في قاعدة البيانات)":"🔍 بحث في السجلات — هل المريض مسجَّل مسبقاً؟"}
-            </p>
-            {prefillPatient?(
-              <div className="flex items-center gap-3 p-2.5 rounded-lg bg-white" style={{border:"1px solid #A5D6A7"}}>
-                <div className="w-9 h-9 rounded-full bg-[#388E3C] text-white flex items-center justify-center text-sm font-bold flex-shrink-0">{prefillPatient.name[0]}</div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-[#1A1A1A]">{prefillPatient.name}</p>
-                  <p className="text-xs text-[#388E3C]">رقم الملف الأصلي: <strong className="font-mono">{prefillPatient.id}</strong> · {prefillPatient.phone}</p>
-                  <p className="text-xs text-[#555] mt-0.5">ستُربط هذه الزيارة بالملف الأصلي — لا يتم إنشاء ملف مكرر.</p>
-                </div>
-                <button type="button" onClick={()=>{setPrefillPatient(null);setForm(prev=>({...prev,name:"",age:"",id:"",phone:"+970",blood:"",gender:"ذكر",address:"",allergy:false,allergyDetail:"",chronic:false,chronicDetail:""}));}} className="text-xs text-[#999] hover:text-[#D32F2F] transition-colors px-2 py-1 rounded border border-[#DDD] hover:border-[#FFCDD2]" title="إلغاء الربط وفتح مريض جديد">✕ إلغاء</button>
-              </div>
-            ):(
-              <>
-                <div className="relative">
-                  <Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/>
-                  <input value={prefillSearch} onChange={e=>setPrefillSearch(e.target.value)} placeholder="ابحث بالاسم أو رقم الهوية أو الجوال..." className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #BBDEFB",backgroundColor:"white"}}/>
-                </div>
-                {prefillSearch.trim()&&(()=>{
-                  const matches=mockPatients.filter(p=>p.name.includes(prefillSearch)||p.id.includes(prefillSearch)||p.phone.includes(prefillSearch));
-                  return matches.length>0?(
-                    <div className="mt-2 space-y-1">
-                      {matches.slice(0,5).map(p=>(
-                        <button key={p.id} onClick={()=>{
-                          setForm(prev=>({...prev,name:p.name,age:p.age?String(p.age):"",id:p.id||"",phone:p.phone,gender:(p as any).gender||"ذكر",blood:p.blood||"",address:(p as any).address||"",allergy:!!((p as any).allergy?.trim()),allergyDetail:(p as any).allergy||"",chronic:!!((p as any).chronic?.trim()),chronicDetail:(p as any).chronic||"",insuranceCompany:""}));
-                          setPrefillPatient(p as PatientRecord);
-                          setPrefillSearch("");
-                          setDupWarning(null);
-                          toast(`✓ تم ربط الملف بالمريض الموجود: ${p.name} (رقم: ${p.id})`,"success");
-                        }} className="w-full flex items-center gap-3 p-2.5 rounded-lg bg-white hover:bg-[#F0FFF4] text-right transition-colors" style={{border:"1px solid #BBDEFB"}}>
-                          <div className="w-8 h-8 rounded-full bg-[#1B3A6B] text-white flex items-center justify-center text-xs font-bold flex-shrink-0">{p.name[0]}</div>
-                          <div className="flex-1 min-w-0"><p className="text-sm font-semibold">{p.name}</p><p className="text-xs text-[#999]">{p.id} · {p.phone}</p></div>
-                          <span className="text-xs text-[#388E3C] font-bold px-2 py-0.5 rounded-full" style={{backgroundColor:"#E8F5E9"}}>ربط الملف</span>
-                        </button>
-                      ))}
-                    </div>
-                  ):<p className="text-xs text-[#999] mt-2 text-center">لا يوجد مريض مطابق — يمكن المتابعة لتسجيل مريض جديد</p>;
-                })()}
-              </>
-            )}
-          </div>
-          )}
-          {/* ── Duplicate warning ── */}
-          {dupWarning&&(
-            <div className="p-4 rounded-xl flex items-start gap-3" style={{backgroundColor:"#FFF8E1",border:"2px solid #FFB300"}}>
-              <AlertCircle size={18} className="text-[#FF8F00] flex-shrink-0 mt-0.5"/>
-              <div className="flex-1">
-                <p className="text-sm font-bold text-[#E65100]">⚠️ المريض مسجَّل مسبقاً في النظام</p>
-                <p className="text-xs text-[#795548] mt-1">الاسم: <strong>{dupWarning.name}</strong> · رقم الملف: <strong className="font-mono">{dupWarning.id}</strong> · الجوال: {dupWarning.phone}</p>
-                <p className="text-xs text-[#795548] mt-0.5">لا يجب فتح ملف جديد — افتح جلسة جديدة داخل الملف الأصلي بدلاً من ذلك.</p>
-                <div className="flex gap-2 mt-2">
-                  <Btn small variant="secondary" onClick={()=>onNavigate({screen:"open-patient",dept})}><Eye size={13}/>فتح الملف الأصلي</Btn>
-                  <Btn small variant="outline" onClick={()=>setDupWarning(null)}>تجاهل التحذير والمتابعة</Btn>
-                </div>
-              </div>
-            </div>
-          )}
-          <Card title="بيانات المريض — Patient Data">
-            {/* ── File ID (read-only, unique) ── */}
-            {!false&&(
-              <div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}>
-                <div className="w-8 h-8 rounded-lg bg-[#1B3A6B] flex items-center justify-center flex-shrink-0"><FileText size={14} className="text-white"/></div>
-                <div className="flex-1">
-                  <p className="text-xs text-[#555]">رقم ملف المريض (يتولّد تلقائياً · لا يمكن تعديله)</p>
-                  <p className="font-mono font-bold text-[#1B3A6B] text-lg tracking-widest mt-0.5">{fileId}</p>
-                </div>
-                <span className="text-[10px] px-2 py-1 rounded-full font-bold" style={{backgroundColor:"#1B3A6B",color:"white"}}>فريد</span>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-4">
-              <div><InputField label="الاسم الكامل" required placeholder="أدخل الاسم الرباعي" value={form.name} onChange={v=>set("name",v)}/>{errF("name")}</div>
-              <div><InputField label="العمر بالسنوات" required type="number" placeholder="مثال: 35" value={form.age} onChange={v=>set("age",v)}/>{errF("age")}</div>
-              <InputField label="رقم الهوية الوطنية" placeholder="اختياري" value={form.id} onChange={v=>set("id",v)}/>
-              <div><InputField label="رقم الجوال" required placeholder="+970..." value={form.phone} onChange={v=>set("phone",v)}/>{errF("phone")}</div>
-              <InputField label="البريد الإلكتروني" placeholder="اختياري" value={form.email} onChange={v=>set("email",v)}/>
-              <InputField label="العنوان" placeholder="اختياري" value={form.address} onChange={v=>set("address",v)}/>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">
-                  تاريخ التسجيل
-                  {isAdmin
-                    ? <span className="text-[#0D7377] font-normal text-[10px] mr-1">(صلاحية المدير — قابل للتعديل)</span>
-                    : <span className="text-[#888] font-normal text-[10px] mr-1">(تاريخ اليوم — للقراءة فقط)</span>
-                  }
-                </label>
-                <input
-                  type="date"
-                  value={form.joinDate}
-                  onChange={e=>isAdmin&&set("joinDate",e.target.value)}
-                  readOnly={!isAdmin}
-                  className="h-10 px-3 rounded-lg text-sm outline-none"
-                  style={{
-                    border:"1px solid #CCCCCC",
-                    backgroundColor:isAdmin?"#FAFAFA":"#F5F5F5",
-                    direction:"ltr",
-                    textAlign:"right",
-                    cursor:isAdmin?"pointer":"not-allowed",
-                    color:isAdmin?"#1A1A1A":"#888",
-                    pointerEvents:isAdmin?"auto":"none",
-                  }}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">الجنس</label>
-                <select value={form.gender} onChange={e=>set("gender",e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}>
-                  <option value="ذكر">ذكر (Male)</option>
-                  <option value="أنثى">أنثى (Female)</option>
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">فصيلة الدم <span className="text-[#888] font-normal">(اختياري)</span></label>
-                <select value={form.blood} onChange={e=>set("blood",e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}>
-                  <option value="">— اختر —</option>
-                  {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(b=><option key={b}>{b}</option>)}
-                  <option value="غير معروف">غير معروف (Unknown)</option>
-                </select>
-              </div>
-              {[{k:"allergy",l:"الحساسية / موانع دوائية",dk:"allergyDetail"},{k:"chronic",l:"الأمراض المزمنة",dk:"chronicDetail"}].map(({k,l,dk})=>(
-                <div key={k} className="flex flex-col gap-2">
-                  <label className="text-xs font-semibold text-[#555]">{l}</label>
-                  <div className="flex gap-2">
-                    <button onClick={()=>set(k,false)} className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-colors ${!(form as any)[k]?"bg-[#388E3C] text-white border-[#388E3C]":"bg-white text-[#555] border-[#E0E0E0] hover:bg-[#F5F5F5]"}`}>● لا</button>
-                    <button onClick={()=>set(k,true)} className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-colors ${(form as any)[k]?"bg-[#D32F2F] text-white border-[#D32F2F]":"bg-white text-[#555] border-[#E0E0E0] hover:bg-[#F5F5F5]"}`}>● نعم</button>
-                  </div>
-                  {(form as any)[k]&&<input placeholder="اذكر التفاصيل..." value={(form as any)[dk]} onChange={e=>set(dk,e.target.value)} className="h-9 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #FFCDD2",backgroundColor:"#FFF8F8"}}/>}
-                </div>
-              ))}
-              <div className="col-span-2 flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">التأمين الصحي <span className="text-[#888] font-normal">(اختياري)</span></label>
-                <select value={form.insuranceCompany} onChange={e=>{
-                  const coName=e.target.value;
-                  const co=insurances.find(c=>c.name===coName);
-                  const pct=co?(isLab?co.discountLab:isRad?co.discountRad:co.discountClinic):0;
-                  setForm(p=>({...p,insuranceCompany:coName,discount:pct>0?String(pct):"",discountType:pct>0?"percent":"amount"}));
-                  if(errors.insuranceCompany)setErrors(p=>({...p,insuranceCompany:""}));
-                }} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}>
-                  <option value="">— بدون تأمين —</option>
-                  {insurances.map(c=><option key={c.id} value={c.name}>{c.name}{c.discountClinic>0||c.discountLab>0||c.discountRad>0?` (خصم ${isLab?c.discountLab:isRad?c.discountRad:c.discountClinic}%)`:"" }</option>)}
-                </select>
-                {insComp&&insDiscPct>0&&<p className="text-xs text-[#0D7377] mt-0.5 flex items-center gap-1"><Shield size={11}/>خصم تأمين {insDiscPct}% سيُطبَّق تلقائياً في التفاصيل المالية</p>}
-              </div>
-            </div>
-            <div className="flex justify-start mt-6">
-              {false
-                ?<Btn variant="success" loading={saving} onClick={()=>{if(v1())handleSave();}}><Save size={16}/>حفظ بيانات المريض</Btn>
-                :<Btn variant="secondary" onClick={()=>{if(v1())setStep(2)}}>التالي <ChevronRight size={16}/></Btn>
-              }
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* ── Step 2: Session file — LAB variant ── */}
-      {step===2&&isLab&&(
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 md:gap-5">
-          <div className="md:col-span-3">
-            <Card title="اختيار الفحوصات المطلوبة">
-              <div className="flex gap-2 mb-4 bg-[#F5F5F5] p-1 rounded-lg">
-                <button type="button" onClick={()=>setLabTypeFilterNP("internal")} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${labTypeFilterNP==="internal"?"bg-[#1B3A6B] text-white shadow-sm":"text-[#555] hover:bg-white"}`}>🔬 المختبر الداخلي</button>
-                <button type="button" onClick={()=>setLabTypeFilterNP("external")} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all ${labTypeFilterNP==="external"?"bg-[#FF8F00] text-white shadow-sm":"text-[#555] hover:bg-white"}`}>🔗 مختبر خارجي L2L</button>
-              </div>
-              <div className="flex gap-1.5 mb-3 flex-wrap">{(["الكل",...LAB_CATS]).map(c=><button key={c} onClick={()=>setCatFilter(c)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${catFilter===c?"bg-[#0D7377] text-white":"bg-[#F5F5F5] text-[#555] hover:bg-[#E6F4F4]"}`}>{c}</button>)}</div>
-              <div className="relative mb-3"><Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input value={testSearch} onChange={e=>setTestSearch(e.target.value)} placeholder="ابحث عن فحص..." className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #E0E0E0",backgroundColor:"#FAFAFA"}}/></div>
-              <div className="space-y-1.5 overflow-y-auto" style={{maxHeight:360}}>
-                {filteredTestsNP.map(t=>(
-                  <label key={t.id} onClick={()=>toggleTestNP(t.id)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${selTests.includes(t.id)?"bg-[#E6F4F4] border-[#0D7377]":"bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#0D7377]"}`} style={{border:"1px solid"}}>
-                    <input type="checkbox" readOnly checked={selTests.includes(t.id)} className="accent-[#0D7377] flex-shrink-0"/>
-                    <div className="flex-1 min-w-0"><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-[#999]">{t.code} · {t.cat} · {t.time}</p></div>
-                    <div className="text-left flex-shrink-0"><p className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</p>{t.kitQty>0&&t.kitQty<=t.kitThreshold&&<p className="text-xs text-[#FF8F00]">⚠️ مخزون منخفض</p>}</div>
-                  </label>
-                ))}
-              </div>
-            </Card>
-          </div>
-          <div className="md:col-span-2">
-            <div className="sticky top-4 space-y-3">
-              <Card title="الفحوصات المحددة">
-                {selTests.length===0?<p className="text-sm text-[#999] text-center py-4">لم يُحدَّد فحص بعد</p>:(
-                  <div className="space-y-2">
-                    {selTestsDataNP.map(t=>(
-                      <div key={t.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{backgroundColor:"#E6F4F4",border:"1px solid #B2DFDB"}}>
-                        <button onClick={()=>toggleTestNP(t.id)} className="text-[#D32F2F] hover:text-[#B71C1C] ml-1"><X size={12}/></button>
-                        <span className="text-sm flex-1 text-right mx-2">{t.name}</span>
-                        <span className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</span>
-                      </div>
-                    ))}
-                    <div className="pt-2 border-t border-[#E0E0E0] flex justify-between text-sm font-bold"><span>الإجمالي:</span><span className="text-[#0D7377]">{fmt(testTotalNP)}</span></div>
-                  </div>
-                )}
-              </Card>
-              <div className="flex gap-2"><Btn variant="outline" onClick={()=>setStep(1)}>رجوع</Btn><Btn variant="secondary" full onClick={()=>{setForm(p=>({...p,price:String(testTotalNP)}));setStep(3);}} disabled={selTests.length===0}>التالي: التفاصيل المالية →</Btn></div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 2: Session file — Radiology variant ── */}
-      {step===2&&isRad&&(
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 md:gap-5">
-          <div className="md:col-span-3">
-            <Card title="اختيار الصور المطلوبة">
-              <div className="flex gap-1.5 mb-3 flex-wrap">{(["الكل",...RAD_DEVICES]).map(c=><button key={c} onClick={()=>setDeviceFilterNP(c)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${deviceFilterNP===c?"bg-[#1B3A6B] text-white":"bg-[#F5F5F5] text-[#555] hover:bg-[#EBF3FB]"}`}>{c}</button>)}</div>
-              <div className="space-y-1.5 overflow-y-auto" style={{maxHeight:400}}>
-                {filteredImgsNP.map(t=>(
-                  <div key={t.id} onClick={()=>toggleImgNP(t.id)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${selImgsNP.includes(t.id)?"bg-[#EBF3FB] border-[#1B3A6B]":"bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#1B3A6B]"}`} style={{border:"1px solid"}}>
-                    <input type="checkbox" readOnly checked={selImgsNP.includes(t.id)} onClick={e=>e.stopPropagation()} className="accent-[#1B3A6B] flex-shrink-0"/>
-                    <div className="flex-1 min-w-0"><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-[#999]">{t.device} · {t.timeVal}{t.timeUnit?" "+t.timeUnit:""}</p></div>
-                    <span className="text-sm font-bold text-[#1B3A6B] flex-shrink-0">{fmt(t.price)}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
-          <div className="md:col-span-2">
-            <div className="sticky top-4 space-y-3">
-              <Card title="الصور المختارة">
-                {selImgsNP.length===0?<p className="text-sm text-[#999] text-center py-4">لم تُحدَّد صورة بعد</p>:(
-                  <div className="space-y-2">
-                    {selImgsDataNP.map(t=>(
-                      <div key={t.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}>
-                        <button onClick={()=>toggleImgNP(t.id)} className="text-[#D32F2F] ml-1"><X size={12}/></button>
-                        <span className="text-sm flex-1 text-right mx-2">{t.name}</span>
-                        <span className="text-sm font-bold text-[#1B3A6B]">{fmt(t.price)}</span>
-                      </div>
-                    ))}
-                    <div className="pt-2 border-t border-[#E0E0E0] flex justify-between text-sm font-bold"><span>الإجمالي:</span><span className="text-[#1B3A6B]">{fmt(imgTotalNP)}</span></div>
-                  </div>
-                )}
-              </Card>
-              <div className="flex gap-2"><Btn variant="outline" onClick={()=>setStep(1)}>رجوع</Btn><Btn variant="secondary" full onClick={()=>{setForm(p=>({...p,price:String(imgTotalNP)}));setStep(3);}} disabled={selImgsNP.length===0}>التالي: التفاصيل المالية →</Btn></div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 2: التقييم والخطة التأهيلية — Rehab variant ── */}
-      {step===2&&isRehab&&(
-        <div className="space-y-4">
-          <Card title="التقييم الفيزيائي والحركي">
-            <div className="space-y-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">الشكوى الرئيسية <span className="text-[#D32F2F]">*</span></label>
-                <textarea rows={2} value={rehabChiefComplaint} onChange={e=>setRehabChiefComplaint(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}} placeholder="اكتب الشكوى الحركية الرئيسية (مثال: ألم في أسفل الظهر يزداد عند الجلوس لفترات طويلة)..."/>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">التشخيص التأهيلي / الفيزيائي <span className="text-[#D32F2F]">*</span></label>
-                <input value={rehabDiagnosis} onChange={e=>setRehabDiagnosis(e.target.value)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}} placeholder="مثال: ديسك رقبي، تأهيل ما بعد كسر، شلل عصب وجهي..."/>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">مستوى الألم <span className="text-[#999] font-normal">(Pain Scale: {rehabPainScale}/10)</span></label>
-                <div className="flex items-center gap-3">
-                  <input type="range" min={1} max={10} value={rehabPainScale} onChange={e=>setRehabPainScale(Number(e.target.value))} className="flex-1 accent-[#1B3A6B]"/>
-                  <span className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${rehabPainScale<=3?"bg-[#388E3C]":rehabPainScale<=6?"bg-[#F57C00]":"bg-[#D32F2F]"}`}>{rehabPainScale}</span>
-                </div>
-                <div className="flex justify-between text-xs text-[#999]"><span>بدون ألم (1)</span><span>ألم متوسط (5)</span><span>ألم شديد (10)</span></div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">المدى الحركي والقوة العضلية <span className="text-[#999] font-normal">(ROM & Muscle Strength)</span></label>
-                <textarea rows={2} value={rehabROM} onChange={e=>setRehabROM(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}} placeholder="مثال: ثني الركبة 90°، قوة عضلية 3/5، محدودية حركة الكتف عند الرفع..."/>
-              </div>
-              {/* ── Rehabilitation Evaluation Metrics ── */}
-              <div className="pt-2 pb-1 border-t border-[#E0E0E0]">
-                <p className="text-xs font-bold text-[#7B1FA2] mb-3">📋 تقييم المهارات الحركية والحسية (Rehabilitation Evaluation)</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-[#555]">المهارات الحركية الكبرى <span className="text-[#999] font-normal">(Gross Motor Skills)</span></label>
-                    <textarea rows={3} value={rehabGrossMotor} onChange={e=>setRehabGrossMotor(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CE93D8",backgroundColor:"#FCF5FF"}} placeholder="مثال: المشي مستقل، الجلوس والوقوف بمساعدة جزئية، التوازن جيد..."/>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-[#555]">المهارات الحركية الدقيقة ووظائف اليد <span className="text-[#999] font-normal">(Fine Motor Skills / Hand Function)</span></label>
-                    <textarea rows={3} value={rehabFineMotor} onChange={e=>setRehabFineMotor(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CE93D8",backgroundColor:"#FCF5FF"}} placeholder="مثال: الإمساك بالأشياء الصغيرة، التنسيق بين اليد والعين..."/>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-[#555]">الحالة الحسية <span className="text-[#999] font-normal">(Sensory Condition)</span></label>
-                    <textarea rows={3} value={rehabSensory} onChange={e=>setRehabSensory(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CE93D8",backgroundColor:"#FCF5FF"}} placeholder="مثال: إحساس طبيعي، خدر في الأطراف، فرط حساسية للمس..."/>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-[#555]">أنشطة الحياة اليومية <span className="text-[#999] font-normal">(ADL's — Activities of Daily Living)</span></label>
-                    <textarea rows={3} value={rehabAdl} onChange={e=>setRehabAdl(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CE93D8",backgroundColor:"#FCF5FF"}} placeholder="مثال: الاستحمام بمساعدة، الأكل بشكل مستقل، اللباس بصعوبة..."/>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Card>
-          <Card title="الخطة العلاجية والجلسات">
-            <div className="space-y-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">الخدمة / نوع التأهيل <span className="text-[#D32F2F]">*</span></label>
-                <select value={rehabServiceId??""} onChange={e=>setRehabServiceId(e.target.value?Number(e.target.value):null)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}>
-                  <option value="">— اختر نوع الخدمة التأهيلية —</option>
-                  {rehabServices.length===0&&<option disabled>لا توجد خدمات — أضفها من دليل التأهيل</option>}
-                  {rehabServices.map(s=><option key={s.id} value={s.id}>{s.name} — {fmt(s.price)} / جلسة</option>)}
-                </select>
-                {selRehabService&&<p className="text-xs text-[#388E3C] p-2 bg-[#E8F5E9] rounded-lg">سعر الجلسة: <strong>{fmt(selRehabService.price)}</strong> — الفئة: {selRehabService.cat}</p>}
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">عدد الجلسات المقررة <span className="text-[#D32F2F]">*</span></label>
-                <div className="flex items-center gap-3">
-                  <button type="button" onClick={()=>setRehabSessionCount(c=>Math.max(1,c-1))} className="w-10 h-10 rounded-lg bg-[#F5F5F5] flex items-center justify-center text-[#555] hover:bg-[#E0E0E0] transition-colors font-bold text-lg flex-shrink-0">−</button>
-                  <input type="number" min={1} max={100} value={rehabSessionCount} onChange={e=>setRehabSessionCount(Math.max(1,parseInt(e.target.value)||1))} className="flex-1 h-10 px-3 rounded-lg text-sm text-center outline-none font-bold" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}/>
-                  <button type="button" onClick={()=>setRehabSessionCount(c=>Math.min(100,c+1))} className="w-10 h-10 rounded-lg bg-[#F5F5F5] flex items-center justify-center text-[#555] hover:bg-[#E0E0E0] transition-colors font-bold text-lg flex-shrink-0">+</button>
-                </div>
-              </div>
-              {selRehabService&&rehabSessionCount>0&&(
-                <div className="p-3 rounded-xl flex items-center gap-3" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}>
-                  <Dumbbell size={16} className="text-[#1B3A6B]"/>
-                  <span className="text-sm text-[#1B3A6B]">إجمالي تكلفة الخطة: <strong>{fmt(rehabTotal)}</strong> ({rehabSessionCount} جلسة × {fmt(selRehabService.price)} / جلسة)</span>
-                </div>
-              )}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-[#555]">ملاحظات وتوصيات الخطة العلاجية</label>
-                <textarea rows={3} value={rehabRecommendations} onChange={e=>setRehabRecommendations(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}} placeholder="مثال: تمارين منزلية يومية، تجنب رفع الأوزان الثقيلة، الراحة التامة بين الجلسات..."/>
-              </div>
-            </div>
-          </Card>
-          <div className="flex justify-between">
-            <Btn variant="outline" onClick={()=>setStep(1)}><ChevronDown className="rotate-90" size={16}/>رجوع</Btn>
-            <Btn variant="secondary" onClick={()=>{if(!rehabDiagnosis.trim()){toast("أدخل التشخيص التأهيلي","error");return;}if(!rehabServiceId){toast("اختر نوع الخدمة التأهيلية","error");return;}setStep(3);}}>التالي: التفاصيل المالية <ChevronRight size={16}/></Btn>
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 2: Session file — Surgery/Other variant ── */}
-      {step===2&&!isLab&&!isRad&&!isRehab&&(
-        <div className="space-y-4">
-          {/* Diagnoses */}
-          <Card title="التشخيصات" action={<Btn variant="secondary" onClick={openAddDiag}><Plus size={14}/>تشخيص (ICD)</Btn>}>
-            {/* Autocomplete search */}
-            <div className="relative mb-3" ref={diagDropRef}>
-              <Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999] z-10 pointer-events-none"/>
-              <input value={diagSearch}
-                onChange={e=>{setDiagSearch(e.target.value);setDiagDropOpen(true);}}
-                onFocus={()=>setDiagDropOpen(true)}
-                onKeyDown={e=>{if(e.key==="Enter"&&diagSearch.trim()){quickAddDiagNP(diagSearch);e.preventDefault();}if(e.key==="Escape")setDiagDropOpen(false);}}
-                placeholder="ابحث أو اكتب تشخيصاً واضغط Enter للإضافة الدائمة..."
-                className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none"
-                style={{border:`1px solid ${diagDropOpen&&diagSearch?"#1B3A6B":"#E0E0E0"}`,backgroundColor:"#FAFAFA"}}/>
-              {diagDropOpen&&diagSearch.trim().length>=1&&(
-                <div className="absolute left-0 right-0 top-full z-50 bg-white rounded-xl shadow-2xl mt-1 overflow-hidden" style={{border:"1px solid #D0D9E8",maxHeight:240,overflowY:"auto"}}>
-                  {filteredDiagNP.slice(0,10).map(d=>(
-                    <button key={d.id} type="button"
-                      onMouseDown={e=>{e.preventDefault();toggleDiag(d.id);setDiagSearch("");setDiagDropOpen(false);}}
-                      className={`w-full text-right px-3 py-2 text-sm transition-colors border-b border-[#F5F5F5] last:border-0 flex items-center gap-2 ${selDiagIds.includes(d.id)?"bg-[#EBF3FB]":"hover:bg-[#F5F8FF]"}`}>
-                      <span className="flex-1 font-medium">{d.name}</span>
-                      <span className="text-[10px] text-[#AAA] flex-shrink-0">{d.code}</span>
-                      {selDiagIds.includes(d.id)&&<Check size={12} className="text-[#1B3A6B] flex-shrink-0"/>}
-                    </button>
-                  ))}
-                  {!availDiag.some(d=>d.name.toLowerCase()===diagSearch.trim().toLowerCase())&&(
-                    <button type="button"
-                      onMouseDown={e=>{e.preventDefault();quickAddDiagNP(diagSearch);}}
-                      className="w-full text-right px-3 py-2.5 text-sm bg-[#F0FFF4] hover:bg-[#E8F5E9] border-t-2 border-[#C8E6C9] flex items-center gap-2 text-[#388E3C] font-bold">
-                      <Plus size={13} className="flex-shrink-0"/>
-                      <span>إضافة "<strong>{diagSearch.trim()}</strong>" كتشخيص دائم جديد</span>
-                    </button>
-                  )}
-                  {filteredDiagNP.length===0&&availDiag.some(d=>d.name.toLowerCase()===diagSearch.trim().toLowerCase())&&(
-                    <div className="px-3 py-2 text-xs text-[#999]">لا توجد نتائج أخرى</div>
-                  )}
-                </div>
-              )}
-            </div>
-            {selDiagIds.length>0&&(
-              <div className="flex flex-wrap gap-1.5 mb-3">{availDiag.filter(d=>selDiagIds.includes(d.id)).map(d=>(
-                <span key={d.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#EBF3FB] text-[#1B3A6B]" style={{border:"1px solid #BBDEFB"}}>
-                  {d.name}
-                  <button onClick={()=>toggleDiag(d.id)} className="text-[#D32F2F] mr-1 hover:text-[#B71C1C]"><X size={10}/></button>
-                </span>
-              ))}</div>
-            )}
-            <div className="space-y-1.5 overflow-y-auto" style={{maxHeight:260}}>
-              {filteredDiagNP.length===0&&!diagSearch&&<p className="text-center text-sm text-[#999] py-6">ابحث أعلاه أو أضف تشخيصاً جديداً</p>}
-              {filteredDiagNP.map(d=>(
-                <div key={d.id} className={`flex items-center gap-3 p-2.5 rounded-xl transition-colors cursor-pointer ${selDiagIds.includes(d.id)?"bg-[#EBF3FB] border-[#1B3A6B]":"bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#1B3A6B]"}`} style={{border:"1px solid"}}>
-                  <input type="checkbox" checked={selDiagIds.includes(d.id)} onChange={()=>toggleDiag(d.id)} className="accent-[#1B3A6B] flex-shrink-0"/>
-                  <div className="flex-1 min-w-0 cursor-pointer" onClick={()=>toggleDiag(d.id)}><p className="text-sm font-medium">{d.name}</p><p className="text-xs text-[#999]">{d.code} · {d.category}</p></div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={e=>{e.stopPropagation();openEditDiag(d);}} className="p-1.5 rounded-lg hover:bg-[#E3F2FD] text-[#1565C0] transition-colors" title="تعديل"><Pencil size={13}/></button>
-                    <button onClick={e=>{e.stopPropagation();deleteDiag(d.id);}} className="p-1.5 rounded-lg hover:bg-[#FFEBEE] text-[#D32F2F] transition-colors" title="حذف"><Trash2 size={13}/></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          {/* Doctor notes */}
-          <Card title="ملاحظات الطبيب — Doctor's Notes">
-            <textarea rows={3} value={sessionNotes} onChange={e=>setSessionNotes(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}} placeholder="الملاحظات السريرية، نتائج الفحص، توجيهات الطبيب..."/>
-          </Card>
-
-          {/* Medications */}
-          <Card title="الأدوية الموصوفة" action={<Btn variant="secondary" onClick={openAddMed}><Plus size={14}/>إضافة دواء</Btn>}>
-            {medications.length===0?(
-              <div className="text-center py-6 text-[#999]"><Pill size={28} className="mx-auto mb-2 text-[#CCC]"/><p className="text-sm">لم تُضَف أدوية بعد</p></div>
-            ):(
-              <div className="space-y-2">
-                {medications.map(m=>(
-                  <div key={m.id} className="flex items-center gap-3 p-3 rounded-xl" style={{backgroundColor:"#F8F9FA",border:"1px solid #E0E0E0"}}>
-                    <div className="w-8 h-8 rounded-full bg-[#E3F2FD] flex items-center justify-center flex-shrink-0"><Pill size={15} className="text-[#1565C0]"/></div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-[#1B3A6B]">{m.name}</p>
-                      <p className="text-xs text-[#555]">{[m.dose,m.freq,m.duration].filter(Boolean).join(" · ")}</p>
-                    </div>
-                    <div className="flex gap-1">
-                      <button onClick={()=>openEditMed(m)} className="p-1.5 rounded-lg hover:bg-[#E3F2FD] text-[#1565C0] transition-colors" title="تعديل"><Pencil size={13}/></button>
-                      <button onClick={()=>deleteMed(m.id)} className="p-1.5 rounded-lg hover:bg-[#FFEBEE] text-[#D32F2F] transition-colors" title="حذف"><Trash2 size={13}/></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          {/* File upload */}
-          <div className="space-y-2">
-            <div className="border-2 border-dashed border-[#CCC] rounded-xl p-6 text-center hover:border-[#0D7377] transition-colors cursor-pointer" onClick={()=>{const inp=document.createElement("input");inp.type="file";inp.multiple=true;inp.accept="image/*,application/pdf,.doc,.docx";inp.onchange=(ev)=>{const files=Array.from((ev.target as HTMLInputElement).files||[]);if(!files.length)return;setPendingFiles(p=>[...p,...files]);toast(`تم اختيار ${files.length} ملف — سيتم رفعه عند الحفظ`,"success");};inp.click();}}>
-              <CloudUpload size={28} className="mx-auto text-[#CCC] mb-2"/>
-              <p className="text-sm text-[#555]">اسحب الملفات أو <span className="text-[#0D7377] font-medium">اختر ملفاً</span></p>
-              <p className="text-xs text-[#999] mt-1">PDF، صور، نتائج مختبر (حد أقصى 10MB)</p>
-            </div>
-            {pendingFiles.length>0&&(
-              <div className="space-y-1">
-                {pendingFiles.map((f,fi)=>(
-                  <div key={fi} className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[#C5E1A5] bg-[#F1F8E9]">
-                    <span className="text-xs text-[#388E3C] flex items-center gap-1 truncate"><FileText size={12}/>{f.name} ({(f.size/1024).toFixed(1)} KB)</span>
-                    <button type="button" onClick={(e)=>{e.stopPropagation();setPendingFiles(p=>p.filter((_,idx)=>idx!==fi));}} className="text-[#D32F2F] hover:text-[#B71C1C]"><X size={14}/></button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-between"><Btn variant="outline" onClick={()=>setStep(1)}><ChevronDown className="rotate-90" size={16}/>رجوع</Btn><Btn variant="secondary" onClick={()=>setStep(3)}>التالي: التفاصيل المالية <ChevronRight size={16}/></Btn></div>
-        </div>
-      )}
-
-      {/* ── Step 3: Financial ── */}
-      {step===3&&(
-        <Card title="التفاصيل المالية للكشفية">
-          {isLab&&selTests.length>0&&<div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{backgroundColor:"#E6F4F4",border:"1px solid #B2DFDB"}}><FlaskConical size={16} className="text-[#0D7377]"/><span className="text-sm text-[#0D7377]">إجمالي التحاليل المحددة: <strong>{fmt(testTotalNP)}</strong></span></div>}
-          {isRehab&&selRehabService&&<div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}><Dumbbell size={16} className="text-[#1B3A6B]"/><span className="text-sm text-[#1B3A6B]">الخطة التأهيلية: <strong>{selRehabService.name}</strong> × {rehabSessionCount} جلسة = <strong>{fmt(rehabTotal)}</strong></span></div>}
-          {insComp&&insDiscPct>0&&(
-            <div className="mb-4 p-3 rounded-xl flex items-start gap-3" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}>
-              <Shield size={16} className="text-[#1B3A6B] mt-0.5 flex-shrink-0"/>
-              <div>
-                <p className="text-sm font-semibold text-[#1B3A6B]">تأمين: {insComp.name} — خصم {insDiscPct}%</p>
-                <p className="text-xs text-[#555] mt-0.5">قيمة الخصم <strong className="text-[#1B3A6B]">{fmt(insDiscAmt)}</strong> ستُسجَّل تلقائياً كدين على شركة التأمين في نظام الفواتير</p>
-              </div>
-            </div>
-          )}
+        <Card title="بيانات المريض">
           <div className="grid grid-cols-2 gap-4">
-            <div><InputField label="المبلغ الإجمالي الكشفية (₪)" required type="number" placeholder="0" value={form.price} onChange={v=>set("price",v)}/>{errF("price")}</div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-[#555]">الخصم {insComp&&insDiscPct>0&&<span className="text-[#0D7377] font-normal">(محدَّد من شركة التأمين)</span>}</label>
-              <div className="flex gap-2"><input type="number" placeholder="0" value={form.discount} onChange={e=>set("discount",e.target.value)} className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{border:`1px solid ${insComp&&insDiscPct>0?"#0D7377":"#CCCCCC"}`,backgroundColor:"#FAFAFA"}}/><select value={form.discountType} onChange={e=>set("discountType",e.target.value)} className="h-10 px-2 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}><option value="amount">₪</option><option value="percent">%</option></select></div>
-            </div>
-            <InputField label="المبلغ المدفوع (₪)" required type="number" placeholder="0" value={form.paid} onChange={v=>set("paid",v)}/>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-[#555]">{remaining>0?"الباقي / الدين على المريض (₪)":remaining<0?"رصيد لصالح المريض (₪)":"الحالة"}</label>
-              <div className={`h-10 px-3 rounded-lg flex items-center text-xl font-bold ${remaining>0?"bg-[#FFEBEE] text-[#D32F2F]":"bg-[#E8F5E9] text-[#388E3C]"}`} style={{border:`1px solid ${remaining>0?"#FFCDD2":"#C8E6C9"}`}}>
-                {remaining>0?fmt(remaining):remaining<0?fmt(-remaining):"مسدد ✓"}
-              </div>
+            <div><InputField label="الاسم الكامل" required value={form.name} onChange={v=>set("name",v)}/></div>
+            <div><InputField label="العمر" required type="number" value={form.age} onChange={v=>set("age",v)}/></div>
+            <InputField label="رقم الجوال" required value={form.phone} onChange={v=>set("phone",v)}/>
+            <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الجنس</label>
+              <select value={form.gender} onChange={e=>set("gender",e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}>
+                <option value="ذكر">ذكر</option><option value="أنثى">أنثى</option>
+              </select>
             </div>
           </div>
-          {insComp&&insDiscAmt>0&&<div className="mt-3 p-2 rounded-lg flex items-center gap-2 text-xs text-[#1B3A6B]" style={{backgroundColor:"#EBF3FB",border:"1px solid #BBDEFB"}}><Shield size={12}/>دين على شركة التأمين ({insComp.name}): <strong>{fmt(insDiscAmt)}</strong></div>}
-          {remaining>0&&<p className="text-xs text-[#D32F2F] mt-2 p-2 bg-[#FFEBEE] rounded-lg">⚠️ {fmt(remaining)} سيُضاف كدين على المريض</p>}
-          {remaining===0&&(parseFloat(form.price)||0)>0&&<p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">✓ مسدد بالكامل</p>}
-          {remaining<0&&(parseFloat(form.price)||0)>0&&<p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">رصيد لصالح المريض: {fmt(-remaining)} ₪ — لا يُسجَّل دين</p>}
-          <div className="flex justify-between mt-6"><Btn variant="outline" onClick={()=>setStep(2)}><ChevronDown className="rotate-90" size={16}/>رجوع للتشخيص والعلاج</Btn><Btn variant="success" loading={saving} onClick={()=>{if(v2())handleSave();}}><Save size={16}/>حفظ الجلسة</Btn></div>
+          <Btn variant="secondary" onClick={()=>{if(v1())setStep(2)}}>التالي →</Btn>
+        </Card>
+      )}
+      {step===2&&(
+        <Card title="التشخيص والخدمات">
+           <p className="text-sm text-[#555]">هنا يتم إدخال تفاصيل الجلسة...</p>
+           <div className="flex gap-3 mt-4"><Btn variant="outline" onClick={()=>setStep(1)}>رجوع</Btn><Btn variant="secondary" onClick={()=>setStep(3)}>التالي →</Btn></div>
+        </Card>
+      )}
+      {step===3&&(
+        <Card title="التفاصيل المالية">
+          <InputField label="المبلغ الإجمالي (₪)" required type="number" value={form.price} onChange={v=>set("price",v)}/>
+          <InputField label="المدفوع (₪)" type="number" value={form.paid} onChange={v=>set("paid",v)}/>
+          <div className="flex gap-3 mt-4"><Btn variant="outline" onClick={()=>setStep(2)}>رجوع</Btn><Btn variant="success" loading={saving} onClick={handleSave}><Save size={16}/>حفظ الجلسة</Btn></div>
         </Card>
       )}
     </div>
@@ -3332,10 +2783,9 @@ function PatientSearchScreen({onNavigate,debts,customDepts=[]}:{onNavigate:(r:Ro
       <Card title={`قائمة المرضى — ${filtered.length} مريض`}>
         {filtered.length===0?<EmptyState msg="لا يوجد مريض بهذه البيانات"/>:(
           <table className="w-full text-sm">
-            <THead cols={["اسم المريض","رقم الهوية","الجنس","الجوال","فصيلة الدم","القسم","الدين","آخر زيارة",""]}/>
+            <THead cols={["اسم المريض","رقم الهوية","الجنس","الجوال","فصيلة الدم","الدين","آخر زيارة",""]}/>
             <tbody>{filtered.map((p,i)=>{
               const debt=getDebt(p.id);
-              const deptInfo=DEPARTMENTS.find(d=>d.id===p.dept);
               return(
                 <TRow key={p.id} i={i}>
                   <TD><div className="flex items-center gap-2">
@@ -3346,7 +2796,6 @@ function PatientSearchScreen({onNavigate,debts,customDepts=[]}:{onNavigate:(r:Ro
                   <TD className="text-[#555]">{p.gender||"—"}</TD>
                   <TD className="text-[#555] font-mono text-xs">{p.phone}</TD>
                   <TD><Badge color="neutral">{p.blood}</Badge></TD>
-                  <TD>{deptInfo&&<Badge color="info">{deptInfo.short}</Badge>}</TD>
                   <TD>{debt>0?<span className="text-[#D32F2F] font-bold">{fmt(debt)}</span>:<Badge color="success">مسدد</Badge>}</TD>
                   <TD className="text-[#555] text-xs">{p.date}</TD>
                   <TD><div className="flex gap-1">
@@ -3365,670 +2814,49 @@ function PatientSearchScreen({onNavigate,debts,customDepts=[]}:{onNavigate:(r:Ro
 
 // ─── PATIENT FILE ──────────────────────────────────────────────────────────────
 
-function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,setDebts,customDepts=[],patientDeleteRequests,setPatientDeleteRequests,loggedUser,setDeletedPatientIds,onAdminDeletePatient,rehabQueueEntries=[],rehabPlans=[],onDeleteSession}:{dept:string;onNavigate:(r:Route)=>void;patientId:string;sessions:PatientSession[];debts:DebtRow[];doDeposit?:(dept:string,amount:number,title:string,type:string)=>void;setDebts?:React.Dispatch<React.SetStateAction<DebtRow[]>>;customDepts?:Array<{id:string;name:string;short:string}>;patientDeleteRequests?:PatientDeleteRequest[];setPatientDeleteRequests?:React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>;loggedUser?:LoggedUser|null;setDeletedPatientIds?:React.Dispatch<React.SetStateAction<string[]>>;onAdminDeletePatient?:(id:string)=>Promise<void>;rehabQueueEntries?:RehabQueueEntry[];rehabPlans?:RehabPlan[];onDeleteSession?:(id:number)=>void}){
+function PatientFileScreen({dept,onNavigate,patientId,sessions,debts,doDeposit,doWithdraw,setDebts,customDepts=[],patientDeleteRequests,setPatientDeleteRequests,loggedUser,setDeletedPatientIds,onAdminDeletePatient,rehabQueueEntries=[],rehabPlans=[],onDeleteSession}:{dept:string;onNavigate:(r:Route)=>void;patientId:string;sessions:PatientSession[];debts:DebtRow[];doDeposit?:(dept:string,amount:number,title:string,type:string)=>void;doWithdraw?:(dept:string,amount:number,title:string,cat:string,ben?:string)=>void;setDebts?:React.Dispatch<React.SetStateAction<DebtRow[]>>;customDepts?:Array<{id:string;name:string;short:string}>;patientDeleteRequests?:PatientDeleteRequest[];setPatientDeleteRequests?:React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>;loggedUser?:LoggedUser|null;setDeletedPatientIds?:React.Dispatch<React.SetStateAction<string[]>>;onAdminDeletePatient?:(id:string)=>Promise<void>;rehabQueueEntries?:RehabQueueEntry[];rehabPlans?:RehabPlan[];onDeleteSession?:(id:number)=>void}){
   const isAdmin=loggedUser?.type==="admin";
-  const [deletingSessionId,setDeletingSessionId]=useState<number|null>(null);
-  const handleDeleteSession=async(id:number)=>{
-    if(!window.confirm("تحذير: سيُحذف سجل هذه الجلسة نهائياً. هل أنت متأكد؟"))return;
-    setDeletingSessionId(id);
-    try{
-      await api.sessions.delete(id);
-      onDeleteSession?.(id);
-    }catch{/* silent */}finally{setDeletingSessionId(null);}
-  };
   const [p,setP]=useState<PatientRecord|undefined>(()=>mockPatients.find(x=>x.id===patientId)||mockPatients[0]);
   const [tab,setTab]=useState<"clinic"|"lab"|"radiology"|"rehab"|"prescriptions"|"referrals"|"finance">("clinic");
   const [labEntries,setLabEntries]=useState<{id:number;patient:string;tests:string[];time:string;status:"pending"|"done";results?:Record<string,{name:string;unit:string;min:string;max:string;value:string}[]>}[]>([]);
-  const [labLoading,setLabLoading]=useState(false);
-  const [expanded,setExpanded]=useState<number|null>(null);
-  const [debtModal,setDebtModal]=useState(false);
-  const [debtAmt,setDebtAmt]=useState("");
-  const [patDelModal,setPatDelModal]=useState(false);
-  const [patDelReason,setPatDelReason]=useState("");
-  const [editModal,setEditModal]=useState(false);
-  const [editForm,setEditForm]=useState<PatientRecord|null>(null);
-  const [adminDateModal,setAdminDateModal]=useState(false);
-  const [adminDateVal,setAdminDateVal]=useState("");
-  const [adminDelModal,setAdminDelModal]=useState(false);
-  const [printModal,setPrintModal]=useState(false);
-  const [printOpts,setPrintOpts]=useState({info:true,sessions:true,meds:true,refs:true});
-  const [sessionFiles,setSessionFiles]=useState<Record<number,Array<{id:number;filename:string;originalname:string;size:number}>>>({});
-  useEffect(()=>{const found=mockPatients.find(x=>x.id===patientId);if(found)setP(found);},[patientId]);
   useEffect(()=>{
     if(!p?.name)return;
-    setLabLoading(true);
     api.queues.getAll("lab").then(rows=>{
-      if(!rows){setLabLoading(false);return;}
-      const all=(rows as any[]).map((r:any)=>({id:r.id,patient:r.patient_name,tests:Array.isArray(r.items)?r.items:[],time:r.queue_time??"",status:r.status as "pending"|"done",results:r.results||undefined}));
+      if(!rows)return;
+      const all=(rows as any[]).map((r:any)=>({id:r.id,patient:r.patient_name,tests:Array.isArray(r.items)?r.items.map((t:any)=>String(t)):[],time:r.queue_time??"",status:r.status==="done"?"done":"pending",results:r.results||undefined}));
       setLabEntries(all.filter(e=>e.patient===p.name));
-    }).catch(()=>{}).finally(()=>setLabLoading(false));
+    });
   },[p?.name]);
 
   const [radEntries,setRadEntries]=useState<{id:number;patient:string;images:string[];time:string;status:"pending"|"done";reports?:Record<string,string>}[]>([]);
-  const [radLoading,setRadLoading]=useState(false);
   useEffect(()=>{
     if(!p?.name)return;
-    setRadLoading(true);
     api.queues.getAll("radiology").then(rows=>{
-      if(!rows){setRadLoading(false);return;}
+      if(!rows)return;
       const all=(rows as any[]).map((r:any)=>({id:r.id,patient:r.patient_name,images:Array.isArray(r.items)?r.items:[],time:r.queue_time??"",status:r.status as "pending"|"done",reports:r.results||undefined}));
       setRadEntries(all.filter(e=>e.patient===p.name));
-    }).catch(()=>{}).finally(()=>setRadLoading(false));
-  },[p?.name]);
-  const loadFilesForSession=(sessionId:number)=>{
-    if(sessionFiles[sessionId])return;
-    api.sessions.files.getAll(sessionId).then(files=>{
-      if(files&&Array.isArray(files)){
-        setSessionFiles(prev=>({...prev,[sessionId]:files}));
-      }
-    }).catch(()=>{});
-  };
-  if(!p)return<div className="flex items-center justify-center h-64 flex-col gap-3"><div className="w-10 h-10 rounded-full bg-[#EBF3FB] flex items-center justify-center"><User size={20} className="text-[#1B3A6B]"/></div><p className="text-sm text-[#999]">جارٍ تحميل بيانات المريض...</p></div>;
-  const setEF2=(fn:(p:PatientRecord)=>PatientRecord)=>setEditForm(p=>p?fn(p):p);
-  const handleEditSave=()=>{
-    if(!editForm)return;
-    const idx=mockPatients.findIndex(x=>x.id===editForm.id);
-    if(idx>=0){Object.assign(mockPatients[idx],editForm);_syncPatients();}
-    setP({...editForm});
-    api.patients.update(editForm.id,{name:editForm.name,age:editForm.age,phone:editForm.phone,blood_type:editForm.blood,has_insurance:editForm.insurance,gender:editForm.gender,address:editForm.address,has_chronic:!!(editForm.chronic?.trim()),chronic_detail:editForm.chronic||"",has_allergy:!!(editForm.allergy?.trim()),allergy_detail:editForm.allergy||""}).catch(()=>{});
-    setEditModal(false);
-    fireToast("تم تحديث بيانات المريض ✓");
-  };
-  const existDelReq=(patientDeleteRequests||[]).find(r=>r.patientId===p.id&&r.status==="pending");
-  const pSess=sessions.filter(s=>s.patientId===p.id).sort((a,b)=>b.id-a.id);
-  // ── Financial segregation by department (Unified Medical File / Isolated Financial File) ──
-  // Admin: full visibility across all departments. Staff: financial figures (invoices/paid/debt)
-  // are visible only for the department they are currently working in — medical data (diagnoses,
-  // medications, referrals) stays unified across departments as before.
-  const canSeeFinance=(sessDept:string)=>isAdmin||sessDept===dept;
-  const finSess=pSess.filter(s=>canSeeFinance(s.dept));
-  const liveDebt=debts.filter(d=>d.pid===p.id&&canSeeFinance(d.dept)).reduce((s,d)=>s+d.amount,0);
-  const lastVisit=pSess[0]?.date||p.date;
-  const initials=(n:string)=>n.split(" ").slice(0,2).map(w=>w[0]).join("");
-  const deptShort=(dId:string)=>DEPARTMENTS.find(d=>d.id===dId)?.short||customDepts.find(d=>d.id===dId)?.short||dId;
-  const totalAmt=finSess.reduce((s,x)=>s+x.amount,0);
-  const totalPaid=finSess.reduce((s,x)=>s+x.paid,0);
-  const clinicSessions = pSess.filter(s => s.dept === "surgery" || customDepts.some(cd => cd.id === s.dept));
-  const allMeds=pSess.flatMap(s=>s.medications.map(m=>({...m,date:s.date,dept:deptShort(s.dept),rawDept:s.dept})));
-  const filteredMeds = isAdmin ? allMeds : allMeds.filter(m => m.rawDept === dept);
-  const allRefs=pSess.flatMap(s=>[...s.labRefs.map(r=>({type:"lab" as const,name:r,date:s.date,dept:deptShort(s.dept),rawDept:s.dept})),...s.radRefs.map(r=>({type:"rad" as const,name:r,date:s.date,dept:deptShort(s.dept),rawDept:s.dept}))]);
-  const filteredRefs = isAdmin ? allRefs : allRefs.filter(r => r.rawDept === dept);
-  const visibleSessionsCount = isAdmin 
-    ? pSess.length 
-    : (dept === "surgery" || customDepts.some(cd => cd.id === dept))
-      ? clinicSessions.length
-      : dept === "lab"
-        ? labEntries.length
-        : dept === "radiology"
-          ? radEntries.length
-          : dept === "rehab"
-            ? pRehab.length
-            : 0;
-  const pRehab=(rehabQueueEntries||[]).filter(e=>e.patientId===p.id).sort((a,b)=>b.id-a.id);
-  const handleDebtPayment=()=>{
-    const amt=parseFloat(debtAmt)||0;
-    if(amt<=0||amt>liveDebt)return;
-    if(doDeposit)doDeposit(dept,amt,`سداد دين — ${p.name}`,"سند قبض — دفعة نقدية");
-    if(setDebts)setDebts(prev=>{
-      let rem=amt;
-      return prev.map(d=>{
-        if(d.pid!==p.id||rem<=0)return d;
-        if(d.amount<=rem){rem-=d.amount;api.finance.debts.delete(d.id);return null as any;}
-        const nd={...d,amount:d.amount-rem};rem=0;api.finance.debts.update(d.id,{amount:nd.amount});return nd;
-      }).filter(Boolean) as DebtRow[];
     });
-    setDebtModal(false);setDebtAmt("");
-  };
-  const TABS_ALL=[
-    {id:"clinic",       l:`🩺 العيادة (${clinicSessions.length})`},
-    {id:"lab",          l:`🔬 المختبر (${labEntries.length})`},
-    {id:"radiology",    l:`☢️ الأشعة (${radEntries.length})`},
-    {id:"rehab",        l:`🏃 التأهيل (${pRehab.length})`},
-    {id:"prescriptions",l:`💊 الوصفات (${filteredMeds.length})`},
-    {id:"referrals",    l:`📋 الإحالات (${filteredRefs.length})`},
-    {id:"finance",      l:"💰 الملف المالي"},
-  ];
+  },[p?.name]);
 
-  const visibleTabs = TABS_ALL.filter(t => {
-    if (isAdmin) return true;
-    if (dept === "surgery" || customDepts.some(cd => cd.id === dept)) {
-      return ["clinic", "prescriptions", "referrals", "finance"].includes(t.id);
-    }
-    if (dept === "lab") {
-      return ["lab", "finance"].includes(t.id);
-    }
-    if (dept === "radiology") {
-      return ["radiology", "finance"].includes(t.id);
-    }
-    if (dept === "rehab") {
-      return ["rehab", "finance"].includes(t.id);
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    const ids = visibleTabs.map(t => t.id);
-    if (!ids.includes(tab) && ids.length > 0) {
-      setTab(ids[0] as any);
-    }
-  }, [dept, isAdmin]);
+  if(!p)return<div className="flex items-center justify-center h-64 flex-col gap-3"><p>جاري التحميل...</p></div>;
   return(
     <div className="space-y-5">
-      {/* ── Admin: edit registration date modal ── */}
-      {isAdmin&&(
-        <Modal open={adminDateModal} onClose={()=>setAdminDateModal(false)} title={`تعديل تاريخ تسجيل — ${p.name}`}
-          footer={<><Btn variant="success" onClick={()=>{
-            if(!adminDateVal.trim())return;
-            const idx=mockPatients.findIndex(x=>x.id===p.id);
-            if(idx>=0){mockPatients[idx].date=adminDateVal;setP(prev=>({...prev,date:adminDateVal}));_syncPatients();}
-            api.patients.update(p.id,{date:adminDateVal}).catch(()=>{});
-            setAdminDateModal(false);fireToast("تم تعديل تاريخ التسجيل ✓");
-          }}><Save size={14}/>حفظ التاريخ</Btn><Btn variant="outline" onClick={()=>setAdminDateModal(false)}>إلغاء</Btn></>}>
-          <div className="space-y-3">
-            <div className="p-3 rounded-xl flex items-start gap-3" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}>
-              <AlertCircle size={15} className="text-[#F57C00] flex-shrink-0 mt-0.5"/>
-              <p className="text-xs text-[#795548]">صلاحية المدير فقط — تعديل تاريخ تسجيل المريض في النظام.</p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-[#555]">تاريخ التسجيل الجديد</label>
-              <input type="date" value={adminDateVal} onChange={e=>setAdminDateVal(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}/>
-            </div>
-          </div>
-        </Modal>
-      )}
-      {/* ── Admin: direct delete modal ── */}
-      {isAdmin&&(
-        <Modal open={adminDelModal} onClose={()=>setAdminDelModal(false)} title={`حذف مباشر — ${p.name}`}
-          footer={<><Btn variant="danger" onClick={async()=>{
-            setAdminDelModal(false);
-            onNavigate({screen:"open-patient",dept});
-            if(onAdminDeletePatient){await onAdminDeletePatient(p.id);}
-            else{if(setDeletedPatientIds)setDeletedPatientIds(prev=>[...prev,p.id]);fireToast("تم حذف ملف المريض نهائياً","error");}
-          }}><Trash2 size={14}/>حذف نهائي بالكامل</Btn><Btn variant="outline" onClick={()=>setAdminDelModal(false)}>إلغاء</Btn></>}>
-          <div className="p-4 rounded-xl flex items-start gap-3" style={{backgroundColor:"#FFEBEE",border:"2px solid #EF9A9A"}}>
-            <AlertCircle size={18} className="text-[#D32F2F] flex-shrink-0 mt-0.5"/>
-            <div>
-              <p className="text-sm font-bold text-[#D32F2F]">تحذير: هذا الإجراء نهائي ولا يمكن التراجع عنه</p>
-              <p className="text-xs text-[#555] mt-1">سيُحذف ملف المريض <strong>{p.name}</strong> (رقم الملف: <span className="font-mono">{p.id}</span>) فوراً.</p>
-            </div>
-          </div>
-        </Modal>
-      )}
-      {/* ── Delete request modal ── */}
-      <Modal open={patDelModal} onClose={()=>setPatDelModal(false)} title={`طلب حذف ملف المريض — ${p.name}`}
-        footer={<><Btn variant="danger" disabled={!patDelReason.trim()} onClick={()=>{
-          const today=_today();
-          const req:PatientDeleteRequest={id:Date.now(),patientId:p.id,patientName:p.name,requestedBy:"موظف",requestDept:dept,requestDate:today,reason:patDelReason.trim(),status:"pending"};
-          if(setPatientDeleteRequests)setPatientDeleteRequests(prev=>[...prev,req]);
-          setPatDelModal(false);setPatDelReason("");
-        }}><Trash2 size={14}/>إرسال طلب الحذف</Btn><Btn variant="outline" onClick={()=>setPatDelModal(false)}>إلغاء</Btn></>}>
-        <div className="space-y-3">
-          <div className="p-3 rounded-xl flex items-start gap-3" style={{backgroundColor:"#FFEBEE",border:"1px solid #FFCDD2"}}>
-            <AlertCircle size={16} className="text-[#D32F2F] flex-shrink-0 mt-0.5"/>
-            <p className="text-sm text-[#D32F2F]">سيتم إرسال هذا الطلب للإدارة للمراجعة. لن يُحذف الملف حتى تتم الموافقة عليه من قِبل المدير.</p>
-          </div>
-          <InputField label="سبب طلب الحذف" required placeholder="مثال: مريض مكرر، بيانات خاطئة، طلب المريض شخصياً..." value={patDelReason} onChange={setPatDelReason}/>
-        </div>
-      </Modal>
-      {/* ── Edit patient modal ── */}
-      {editForm&&(
-        <Modal open={editModal} onClose={()=>setEditModal(false)} title={`تعديل بيانات المريض — ${editForm.name}`}
-          footer={<><Btn variant="success" onClick={handleEditSave}><Save size={14}/>حفظ التعديلات</Btn><Btn variant="outline" onClick={()=>setEditModal(false)}>إلغاء</Btn></>}>
-          <div className="grid grid-cols-2 gap-4">
-            <div><InputField label="الاسم الكامل" required value={editForm.name} onChange={v=>setEF2(p=>({...p,name:v}))}/></div>
-            <div><InputField label="العمر" required type="number" value={String(editForm.age)} onChange={v=>setEF2(p=>({...p,age:parseInt(v)||0}))}/></div>
-            <div className="col-span-2"><InputField label="رقم الجوال" value={editForm.phone} onChange={v=>setEF2(p=>({...p,phone:v}))}/></div>
-            <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">فصيلة الدم</label>
-              <select value={editForm.blood} onChange={e=>setEF2(p=>({...p,blood:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}>
-                {["A+","A-","B+","B-","AB+","AB-","O+","O-","غير محدد"].map(b=><option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الجنس</label>
-              <select value={editForm.gender||""} onChange={e=>setEF2(p=>({...p,gender:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}>
-                <option value="">—</option><option value="ذكر">ذكر</option><option value="أنثى">أنثى</option>
-              </select>
-            </div>
-            <div className="col-span-2"><InputField label="العنوان / الموقع" value={editForm.address||""} onChange={v=>setEF2(p=>({...p,address:v}))}/></div>
-            <div className="col-span-2"><InputField label="الأمراض المزمنة" placeholder="مثال: سكري، ضغط، قصور كلوي..." value={editForm.chronic||""} onChange={v=>setEF2(p=>({...p,chronic:v}))}/></div>
-            <div className="col-span-2"><InputField label="الحساسية" placeholder="مثال: بنسلين، مسكنات..." value={editForm.allergy||""} onChange={v=>setEF2(p=>({...p,allergy:v}))}/></div>
-            <div className="col-span-2 flex items-center gap-2 p-3 rounded-xl" style={{backgroundColor:"#F5F5F5",border:"1px solid #E0E0E0"}}>
-              <input type="checkbox" id="ins-edit-pf" checked={editForm.insurance} onChange={e=>setEF2(p=>({...p,insurance:e.target.checked}))} className="w-4 h-4 accent-[#1B3A6B]"/>
-              <label htmlFor="ins-edit-pf" className="text-sm text-[#555] cursor-pointer">يمتلك تأمين صحي</label>
-            </div>
-          </div>
-        </Modal>
-      )}
-      {/* ── Debt payment modal ── */}
-      <Modal open={debtModal} onClose={()=>{setDebtModal(false);setDebtAmt("");}} title={`سداد دين — ${p.name}`}
-        footer={<><Btn variant="success" onClick={handleDebtPayment} disabled={!debtAmt||parseFloat(debtAmt)<=0||parseFloat(debtAmt)>liveDebt}><DollarSign size={14}/>تسجيل الدفعة</Btn><Btn variant="outline" onClick={()=>{setDebtModal(false);setDebtAmt("");}}>إلغاء</Btn></>}>
-        <div className="space-y-3">
-          <div className="p-3 rounded-xl flex items-center gap-3" style={{backgroundColor:"#FFEBEE",border:"1px solid #FFCDD2"}}>
-            <AlertCircle size={16} className="text-[#D32F2F] flex-shrink-0"/>
-            <p className="text-sm text-[#D32F2F]">إجمالي الدين المتبقي: <strong>{fmt(liveDebt)}</strong></p>
-          </div>
-          <InputField label="مبلغ الدفعة (₪)" required type="number" placeholder={`الحد الأقصى ${fmt(liveDebt)}`} value={debtAmt} onChange={v=>setDebtAmt(v)}/>
-          {debtAmt&&parseFloat(debtAmt)>liveDebt&&<p className="text-xs text-[#D32F2F]">المبلغ أكبر من الدين المتبقي</p>}
-          {debtAmt&&parseFloat(debtAmt)>0&&parseFloat(debtAmt)<=liveDebt&&<p className="text-xs text-[#388E3C]">الدين المتبقي بعد الدفعة: {fmt(liveDebt-parseFloat(debtAmt))}</p>}
-        </div>
-      </Modal>
-      {/* ── Print selection modal ── */}
-      <Modal open={printModal} onClose={()=>setPrintModal(false)} title={`طباعة ملف المريض — ${p.name}`}
-        footer={<>
-          <Btn variant="primary" onClick={()=>{
-            let html="";
-            const printSessions = isAdmin ? pSess : (dept === "surgery" || customDepts.some(cd => cd.id === dept) ? clinicSessions : []);
-            const printMeds = isAdmin ? allMeds : filteredMeds;
-            const printRefs = isAdmin ? allRefs : filteredRefs;
-            if(printOpts.info)html+=`<h2>بيانات المريض</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">الاسم الكامل</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">العمر</div><div class="kpi-v">${p.age} سنة</div></div><div class="kpi-box"><div class="kpi-l">فصيلة الدم</div><div class="kpi-v">${p.blood}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div>${p.insurance?`<div class="kpi-box"><div class="kpi-l">التأمين</div><div class="kpi-v">يمتلك تأمين</div></div>`:""} ${p.chronic?`<div class="kpi-box"><div class="kpi-l">أمراض مزمنة</div><div class="kpi-v">${p.chronic}</div></div>`:""} ${p.allergy?`<div class="kpi-box"><div class="kpi-l">حساسية</div><div class="kpi-v out">${p.allergy}</div></div>`:""}</div>`;
-            if(printOpts.sessions)html+=`<h2>الجلسات (${printSessions.length})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>الطبيب</th><th>الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${printSessions.map(s=>canSeeFinance(s.dept)?`<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0,2).join(" · ")||"—"}</td><td>${s.doctor||"—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt>0?"out":"in"}">${s.debt>0?fmt(s.debt):"✓"}</td></tr>`:`<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0,2).join(" · ")||"—"}</td><td>${s.doctor||"—"}</td><td colspan="3">بيانات مالية غير متاحة لهذا القسم</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="4">الإجمالي (قسمك فقط)</td><td>${fmt(totalAmt)}</td><td class="in">${fmt(totalPaid)}</td><td class="${liveDebt>0?"out":"in"}">${liveDebt>0?fmt(liveDebt):"مسدد ✓"}</td></tr></tfoot></table>`;
-            if(printOpts.meds&&printMeds.length>0)html+=`<h2>الوصفات الطبية (${printMeds.length})</h2><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printMeds.map(m=>`<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td><td>${m.date}</td><td>${m.dept}</td></tr>`).join("")}</tbody></table>`;
-            if(printOpts.refs&&printRefs.length>0)html+=`<h2>الإحالات (${printRefs.length})</h2><table><thead><tr><th>النوع</th><th>الطلب</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printRefs.map(r=>`<tr><td>${r.type==="lab"?"مختبر":"أشعة"}</td><td>${r.name}</td><td>${r.date}</td><td>${r.dept}</td></tr>`).join("")}</tbody></table>`;
-            printHtml(html,`ملف المريض — ${p.name}`);
-            setPrintModal(false);
-          }}><Printer size={14}/>طباعة</Btn>
-          <Btn variant="outline" onClick={()=>setPrintModal(false)}>إلغاء</Btn>
-        </>}>
-        <div className="space-y-3">
-          <p className="text-xs text-[#999]">اختر الأقسام التي تريد تضمينها في المطبوعة:</p>
-          {([
-            {key:"info",    label:"بيانات المريض الأساسية",   sub:"الاسم، العمر، الجوال، الأمراض، الحساسية"},
-            {key:"sessions",label:`الجلسات (${pSess.length})`, sub:"كل الزيارات والتشخيصات والمبالغ"},
-            {key:"meds",    label:`الوصفات الطبية (${allMeds.length})`, sub:"الأدوية المُوصوفة في جميع الجلسات"},
-            {key:"refs",    label:`الإحالات (${allRefs.length})`, sub:"طلبات المختبر والأشعة"},
-          ] as const).map(opt=>(
-            <label key={opt.key} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${printOpts[opt.key]?"bg-[#EBF3FB]":"bg-[#F9F9F9]"}`} style={{border:`1px solid ${printOpts[opt.key]?"#BBDEFB":"#E0E0E0"}`}}>
-              <input type="checkbox" checked={printOpts[opt.key]} onChange={e=>setPrintOpts(prev=>({...prev,[opt.key]:e.target.checked}))} className="w-4 h-4 accent-[#1B3A6B]"/>
-              <div><p className="text-sm font-semibold text-[#1A1A1A]">{opt.label}</p><p className="text-xs text-[#999]">{opt.sub}</p></div>
-            </label>
-          ))}
-        </div>
-      </Modal>
-
-      {/* ── HEADER ── */}
-      <div className="bg-white rounded-2xl overflow-hidden" style={{border:"1px solid #E0E0E0"}}>
-        <div className="p-4 sm:p-5" style={{background:"linear-gradient(135deg,#1B3A6B,#0D4480)"}}>
-          {/* Row 1: info + avatar */}
-          <div className="flex items-start gap-3 mb-3">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 border border-white/30 flex items-center justify-center text-white text-xl font-bold flex-shrink-0">{initials(p.name)}</div>
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-bold text-white leading-tight">{p.name}</h1>
-              <p className="text-white/70 text-xs mt-0.5">{p.age} سنة</p>
-              <p className="text-white/70 text-xs">{p.blood}</p>
-              <p className="text-white/70 text-xs">{p.phone}</p>
-              {liveDebt>0&&(
-                <button onClick={()=>setDebtModal(true)} className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold text-white transition-colors hover:opacity-90" style={{backgroundColor:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.3)"}}>
-                  دين: {fmt(liveDebt)} · سداد
-                </button>
-              )}
-              {p.insurance&&<span className="inline-block mt-1 px-2 py-0.5 bg-white/20 rounded-full text-xs text-white">مؤمَّن</span>}
-              <p className="text-white/40 text-xs mt-1">رقم الملف: {p.id} · آخر زيارة: {lastVisit}</p>
-            </div>
-          </div>
-          {/* Row 2: action buttons */}
-          <div className="flex gap-1.5 flex-wrap">
-            <Btn small variant="outline-white" onClick={()=>onNavigate({screen:"open-patient",dept})}><ChevronRight size={13}/>رجوع</Btn>
-            <Btn small variant="outline-white" onClick={()=>{setEditForm({...p});setEditModal(true);}}><Pencil size={13}/>تعديل البيانات</Btn>
-            {liveDebt>0&&doDeposit&&<Btn small variant="danger" onClick={()=>setDebtModal(true)}><DollarSign size={13}/>سداد دين</Btn>}
-            <Btn small variant="secondary" onClick={()=>onNavigate({screen:"new-session",dept,patientId:p.id})}><Plus size={13}/>جلسة جديدة</Btn>
-            {isAdmin?(
-              <>
-                <Btn small variant="outline-white" onClick={()=>{const parts=p.date.split("/");const iso=parts.length===3?`${parts[2]}-${parts[1]}-${parts[0]}`:p.date;setAdminDateVal(iso);setAdminDateModal(true);}}><Calendar size={13}/>تعديل التاريخ</Btn>
-                <Btn small variant="danger" onClick={()=>setAdminDelModal(true)}><Trash2 size={13}/>حذف مباشر</Btn>
-              </>
-            ):(existDelReq?<span className="text-xs px-2 py-1 rounded-lg font-medium" style={{backgroundColor:"#FFF3E0",color:"#F57C00",border:"1px solid #FFE0B2"}}>طلب حذف قيد المراجعة</span>:<Btn small variant="danger" onClick={()=>{setPatDelModal(true);setPatDelReason("");}}><Trash2 size={13}/>طلب حذف</Btn>)}
-            <Btn small variant="outline-white" onClick={()=>setPrintModal(true)}><Printer size={13}/>طباعة الملف</Btn>
-            <Btn small variant="outline-white" onClick={()=>{
-              const html=`<h2>كشف الحساب المالي — ${p.name}${isAdmin?"":` (قسم ${deptShort(dept)} فقط)`}</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">الاسم</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div></div><h2>تفاصيل الفواتير</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>إجمالي الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${finSess.map(s=>`<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0,2).join(" · ")||"—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt>0?"out":"in"}">${s.debt>0?fmt(s.debt):"✓"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي</td><td style="font-weight:bold">${fmt(totalAmt)}</td><td class="in" style="font-weight:bold">${fmt(totalPaid)}</td><td class="${liveDebt>0?"out":"in"}" style="font-weight:bold">${liveDebt>0?fmt(liveDebt):"مسدد بالكامل ✓"}</td></tr></tfoot></table>`;
-              printHtml(html,`كشف الحساب المالي — ${p.name}`);
-            }}><Receipt size={13}/>كشف الحساب</Btn>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-[#E0E0E0]" style={{borderTop:"1px solid #E0E0E0"}}>
-          {[{l:"الجلسات",v:String(visibleSessionsCount),c:"#1B3A6B"},{l:"إجمالي الفواتير",v:fmt(totalAmt),c:"#555"},{l:"المدفوع",v:fmt(totalPaid),c:"#388E3C"},{l:"الديون",v:fmt(liveDebt),c:liveDebt>0?"#D32F2F":"#388E3C"}].map(k=>(
-            <div key={k.l} className="p-3 sm:p-4 text-center"><p className="text-xs text-[#999] mb-1">{k.l}</p><p className="text-base sm:text-lg font-bold" style={{color:k.c}}>{k.v}</p></div>
-          ))}
-        </div>
+      <div className="bg-white rounded-2xl p-5" style={{border:"1px solid #E0E0E0"}}>
+        <h1 className="text-xl font-bold text-[#1B3A6B]">{p.name}</h1>
+        <p className="text-sm text-[#999]">رقم الملف: {p.id} · تاريخ التسجيل: {p.date}</p>
+        <div className="flex gap-2 mt-4"><Btn size="sm" variant="outline" onClick={()=>{}} style={{borderColor:"#ddd",color:"#777"}}><Printer size={14}/>طباعة</Btn></div>
       </div>
-      {/* ── TABS ── */}
       <div className="flex gap-1.5 flex-wrap">
-        {visibleTabs.map(t=><button key={t.id} onClick={()=>setTab(t.id as any)} className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.id?"bg-[#1B3A6B] text-white shadow-sm":"bg-white text-[#555] hover:bg-[#F5F5F5]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}
+        {[
+          {id:"clinic",       l:`🩺 العيادة`},
+          {id:"lab",          l:`🔬 المختبر`},
+          {id:"radiology",    l:`☢️ الأشعة`},
+          {id:"rehab",        l:`🏃 التأهيل`},
+          {id:"prescriptions",l:`💊 الوصفات`},
+          {id:"referrals",    l:`📋 الإحالات`},
+          {id:"finance",      l:"💰 الملف المالي"},
+        ].map(t=><button key={t.id} onClick={()=>setTab(t.id as any)} className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${tab===t.id?"bg-[#1B3A6B] text-white":"bg-white text-[#555]"}`} style={{border:"1px solid #E0E0E0"}}>{t.l}</button>)}
       </div>
-
-      {/* ══════════ تبويب العيادة ══════════ */}
-      {tab==="clinic"&&<Card title="السجل الطبي — زيارات العيادة" action={<Btn small variant="secondary" onClick={()=>onNavigate({screen:"new-session",dept,patientId:p.id})}><Plus size={13}/>جلسة جديدة</Btn>}>
-        {clinicSessions.length===0?<EmptyState msg="لا توجد زيارات عيادية مسجَّلة"/>:
-          <div className="space-y-3">{clinicSessions.map(s=>(
-            <div key={s.id} className="rounded-xl overflow-hidden transition-shadow hover:shadow-sm" style={{border:`1px solid ${expanded===s.id?"#0D7377":"#E0E0E0"}`}}>
-              <button className="w-full flex items-center justify-between p-4 text-right" onClick={()=>{const target=expanded===s.id?null:s.id;setExpanded(target);if(target)loadFilesForSession(s.id);}}>
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#EBF3FB] flex items-center justify-center flex-shrink-0"><Calendar size={15} className="text-[#1B3A6B]"/></div>
-                  <div>
-                    <p className="text-sm font-semibold text-[#1A1A1A]">{s.diagnoses.length>0?s.diagnoses.join(" · "):"زيارة بدون تشخيص"}</p>
-                    <div className="flex items-center gap-2 mt-0.5"><Badge color="info">{deptShort(s.dept)}</Badge><span className="text-xs text-[#999]">{s.date}</span>{s.doctor&&<span className="text-xs text-[#999]">· {s.doctor}</span>}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4 flex-shrink-0">
-                  {canSeeFinance(s.dept)?(
-                    <div className="text-left"><p className="text-sm font-bold text-[#1B3A6B]">{fmt(s.amount)}</p><p className="text-xs">{s.debt>0?<span className="text-[#D32F2F] font-bold">دين: {fmt(s.debt)}</span>:<span className="text-[#388E3C]">مسدد</span>}</p></div>
-                  ):(
-                    <div className="text-left"><p className="text-xs text-[#BBB] flex items-center gap-1"><Lock size={10}/>قسم آخر</p></div>
-                  )}
-                  {expanded===s.id?<ChevronUp size={16} className="text-[#999]"/>:<ChevronDown size={16} className="text-[#999]"/>}
-                </div>
-              </button>
-              {expanded===s.id&&<div className="px-4 pb-4 pt-3 space-y-3" style={{borderTop:"1px solid #F0F0F0",backgroundColor:"#FAFAFA"}}>
-                {/* التشخيصات */}
-                {s.diagnoses.length>0&&<div><p className="text-xs font-bold text-[#555] mb-1.5">التشخيص</p><div className="flex flex-wrap gap-1.5">{s.diagnoses.map((d,i)=><Badge key={i} color="warning">{d}</Badge>)}</div></div>}
-                {/* الملاحظات والتوصيات */}
-                {s.notes&&<div><p className="text-xs font-bold text-[#555] mb-1.5">الملاحظات والتوصيات</p><p className="text-sm text-[#444] p-3 rounded-lg bg-white" style={{border:"1px solid #E0E0E0",lineHeight:1.7}}>{s.notes}</p></div>}
-                {/* الأدوية */}
-                {s.medications.length>0&&<div><p className="text-xs font-bold text-[#555] mb-1.5">الأدوية والوصفات</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{s.medications.map((m,i)=>(
-                    <div key={i} className="p-3 rounded-lg bg-white flex items-start gap-2.5" style={{border:"1px solid #DCE8F8"}}>
-                      <div className="w-7 h-7 rounded-lg bg-[#EBF3FB] flex items-center justify-center flex-shrink-0"><span className="text-xs font-bold text-[#1B3A6B]">💊</span></div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-[#1B3A6B] truncate">{m.name}</p>
-                        <p className="text-xs text-[#555] mt-0.5">{m.dose&&`الجرعة: ${m.dose}`}{m.freq&&` · ${m.freq}`}</p>
-                        {m.duration&&<p className="text-xs text-[#999]">المدة: {m.duration}</p>}
-                      </div>
-                    </div>
-                  ))}</div>
-                </div>}
-                {/* الإحالات */}
-                {(s.labRefs.length>0||s.radRefs.length>0)&&<div><p className="text-xs font-bold text-[#555] mb-1.5">الإحالات</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {s.labRefs.map(r=><Badge key={r} color="info"><FlaskConical size={10}/>{r}</Badge>)}
-                    {s.radRefs.map(r=><Badge key={r} color="warning"><Aperture size={10}/>{r}</Badge>)}
-                  </div>
-                </div>}
-                {/* الملفات المرفقة */}
-                {sessionFiles[s.id]!==undefined&&(
-                  <div>
-                    <p className="text-xs font-bold text-[#555] mb-1.5">الملفات المرفقة ({sessionFiles[s.id].length})</p>
-                    {sessionFiles[s.id].length===0?(
-                      <p className="text-xs text-[#999]">لا توجد ملفات مرفقة بهذه الجلسة</p>
-                    ):(
-                      <div className="space-y-1">
-                        {sessionFiles[s.id].map(f=>(
-                          <div key={f.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-[#BBDEFB] bg-white">
-                            <a href={`/api/uploads/sessions/${f.filename}`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#1565C0] hover:underline flex items-center gap-1.5 truncate">
-                              <FileText size={12}/>{f.originalname} <span className="text-[10px] text-[#999]">({(f.size/1024).toFixed(1)} KB)</span>
-                            </a>
-                            <button type="button" onClick={(e)=>{
-                              e.stopPropagation();
-                              if(window.confirm("هل أنت متأكد من حذف هذا المرفق؟")){
-                                api.sessions.files.delete(s.id, f.id).then(()=>{
-                                  setSessionFiles(prev=>({...prev,[s.id]:prev[s.id].filter(x=>x.id!==f.id)}));
-                                  toast("تم حذف الملف المرفق ✓","info");
-                                });
-                              }
-                            }} className="text-[#D32F2F] hover:text-[#B71C1C]"><X size={12}/></button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {/* الملف المالي للجلسة — مع الصلاحية */}
-                {canSeeFinance(s.dept)?(
-                  <div className="flex justify-between text-xs text-[#555] pt-1 border-t border-[#F0F0F0]"><span>الفاتورة: <strong className="text-[#1B3A6B]">{fmt(s.amount)}</strong></span><span className="text-[#388E3C]">مدفوع: <strong>{fmt(s.paid)}</strong></span>{s.debt>0&&<span className="text-[#D32F2F] font-bold">دين: {fmt(s.debt)}</span>}</div>
-                ):(
-                  <div className="flex items-center gap-1.5 text-xs text-[#BBB] pt-1 border-t border-[#F0F0F0]"><Lock size={11}/><span>البيانات المالية لهذه الزيارة خاصة بقسم آخر</span></div>
-                )}
-                {isAdmin&&(
-                  <div className="flex justify-end pt-2 border-t border-[#F0F0F0]">
-                    <button
-                      disabled={deletingSessionId===s.id}
-                      onClick={e=>{e.stopPropagation();handleDeleteSession(s.id);}}
-                      className="flex items-center gap-1.5 text-xs text-[#D32F2F] hover:text-[#B71C1C] disabled:opacity-40 transition-colors px-2 py-1 rounded-lg hover:bg-[#FFEBEE]"
-                    >
-                      <Trash2 size={12}/>{deletingSessionId===s.id?"جارٍ الحذف...":"حذف هذه الجلسة"}
-                    </button>
-                  </div>
-                )}
-              </div>}
-            </div>
-          ))}</div>
-        }
-      </Card>}
-
-      {/* ══════════ تبويب المختبر ══════════ */}
-      {tab==="lab"&&<Card title="نتائج فحوصات المختبر">
-        {labLoading?(
-          <div className="flex items-center justify-center py-10 gap-2 text-[#999] text-sm"><span className="animate-spin">⏳</span>جارٍ تحميل نتائج المختبر...</div>
-        ):labEntries.length===0?(
-          <EmptyState msg="لا توجد فحوصات مخبرية مسجَّلة لهذا المريض"/>
-        ):(
-          <div className="space-y-4">
-            {labEntries.map(entry=>(
-              <div key={entry.id} className="rounded-xl overflow-hidden" style={{border:"1px solid #E0E0E0"}}>
-                {/* رأس الفحص */}
-                <div className="flex items-center justify-between px-4 py-3" style={{backgroundColor:"#F8F9FF",borderBottom:"1px solid #E8ECF8"}}>
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-[#EBF3FB] flex items-center justify-center"><FlaskConical size={15} className="text-[#1B3A6B]"/></div>
-                    <div>
-                      <p className="text-sm font-semibold text-[#1A1A1A]">{entry.tests.join(" · ")||"فحص مختبري"}</p>
-                      <p className="text-xs text-[#999]">{entry.time}</p>
-                    </div>
-                  </div>
-                  <Badge color={entry.status==="done"?"success":"warning"}>{entry.status==="done"?"مُسلَّم ✓":"قيد الإنجاز"}</Badge>
-                </div>
-                {/* جدول النتائج */}
-                {entry.results&&Object.keys(entry.results).length>0?(
-                  <div className="divide-y divide-[#F0F0F0]">
-                    {Object.entries(entry.results).map(([testName,params])=>(
-                      <div key={testName} className="px-4 py-3">
-                        <p className="text-xs font-bold text-[#1B3A6B] mb-2">📋 {testName}</p>
-                        {params.length===0?<p className="text-xs text-[#AAA]">لا توجد معاملات مدخلة</p>:(
-                          <table className="w-full text-xs">
-                            <thead><tr className="text-[#999]"><th className="text-right font-medium pb-1.5">المعامل</th><th className="text-center font-medium pb-1.5">النتيجة</th><th className="text-center font-medium pb-1.5">الوحدة</th><th className="text-center font-medium pb-1.5">المدى الطبيعي</th><th className="text-center font-medium pb-1.5">الحالة</th></tr></thead>
-                            <tbody>{params.map((param,pi)=>{
-                              const v=parseFloat(param.value);const mn=parseFloat(param.min);const mx=parseFloat(param.max);
-                              const hasRange=param.min&&param.max&&param.value&&!isNaN(v)&&!isNaN(mn)&&!isNaN(mx);
-                              const isNormal=hasRange&&v>=mn&&v<=mx;
-                              const isHigh=hasRange&&v>mx;
-                              const statusEl=hasRange?(isNormal?<span className="text-[#388E3C] font-bold">طبيعي ✓</span>:isHigh?<span className="text-[#D32F2F] font-bold">↑ مرتفع</span>:<span className="text-[#F57C00] font-bold">↓ منخفض</span>):<span className="text-[#CCC]">—</span>;
-                              return(
-                                <tr key={pi} className={`${pi%2===0?"bg-white":"bg-[#FAFAFA]"}`}>
-                                  <td className="py-1.5 pr-2 font-medium text-[#333]">{param.name||"—"}</td>
-                                  <td className="py-1.5 text-center font-bold text-[#1B3A6B]">{param.value||"—"}</td>
-                                  <td className="py-1.5 text-center text-[#777]">{param.unit||"—"}</td>
-                                  <td className="py-1.5 text-center text-[#777]">{param.min&&param.max?`${param.min} – ${param.max}`:"—"}</td>
-                                  <td className="py-1.5 text-center">{statusEl}</td>
-                                </tr>
-                              );
-                            })}</tbody>
-                          </table>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ):(
-                  <div className="px-4 py-3"><p className="text-xs text-[#AAA]">لم تُدخَل نتائج بعد لهذا الطلب</p></div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>}
-
-      {/* ══════════ تبويب الأشعة ══════════ */}
-      {tab==="radiology"&&<Card title="نتائج الأشعة الطبية">
-        {radLoading?(
-          <div className="flex items-center justify-center py-10 gap-2 text-[#999] text-sm"><span className="animate-spin">⏳</span>جارٍ تحميل نتائج الأشعة...</div>
-        ):radEntries.length===0?(
-          <EmptyState msg="لا توجد صور أشعة مسجَّلة لهذا المريض"/>
-        ):(
-          <div className="space-y-4">
-            {radEntries.map(entry=>(
-              <div key={entry.id} className="rounded-xl overflow-hidden" style={{border:"1px solid #E0E0E0"}}>
-                {/* رأس الأشعة */}
-                <div className="flex items-center justify-between px-4 py-3" style={{backgroundColor:"#FFF9F2",borderBottom:"1px solid #FFE0B2"}}>
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-[#FFF3E0] flex items-center justify-center"><Aperture size={15} className="text-[#E65100]"/></div>
-                    <div>
-                      <p className="text-sm font-semibold text-[#1A1A1A]">{entry.images.join(" · ")||"صور أشعة"}</p>
-                      <p className="text-xs text-[#999]">{entry.time}</p>
-                    </div>
-                  </div>
-                  <Badge color={entry.status==="done"?"success":"warning"}>{entry.status==="done"?"مُنجز ✓":"قيد الإنجاز"}</Badge>
-                </div>
-                {/* التقارير */}
-                {entry.reports&&Object.keys(entry.reports).length>0?(
-                  <div className="divide-y divide-[#F0F0F0] bg-white">
-                    {Object.entries(entry.reports).map(([imgName,reportText])=>(
-                      <div key={imgName} className="px-4 py-3">
-                        <p className="text-xs font-bold text-[#E65100] mb-2">📋 {imgName}</p>
-                        <p className="text-sm text-[#444] p-3 rounded-lg bg-white" style={{border:"1px solid #E0E0E0",lineHeight:1.7}}>{reportText||"لا يوجد تقرير مدخل"}</p>
-                      </div>
-                    ))}
-                  </div>
-                ):(
-                  <div className="px-4 py-3 bg-white"><p className="text-xs text-[#AAA]">لم تُدخل تقارير بعد لهذا الطلب</p></div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>}
-
-      {/* ══════════ تبويب التأهيل ══════════ */}
-      {tab==="rehab"&&<Card title="السجل العلاجي — قسم التأهيل">
-        {pRehab.length===0?<EmptyState msg="لا توجد جلسات تأهيل مسجَّلة لهذا المريض"/>:(
-          <div className="space-y-4">
-            {pRehab.map(entry=>{
-              const plan=rehabPlans.find(pl=>pl.id===entry.planId);
-              return(
-                <div key={entry.id} className="rounded-xl overflow-hidden" style={{border:`1px solid ${entry.status==="done"?"#C8E6C9":"#E0E0E0"}`}}>
-                  {/* رأس الجلسة */}
-                  <div className="flex items-center justify-between px-4 py-3" style={{backgroundColor:entry.status==="done"?"#F1F8E9":"#FAFAFA",borderBottom:"1px solid #F0F0F0"}}>
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{backgroundColor:"#EDE7F6"}}><Activity size={15} className="text-[#7B1FA2]"/></div>
-                      <div>
-                        <p className="text-sm font-semibold text-[#1A1A1A]">جلسة #{entry.sessionNumber} — {entry.diagnosis||plan?.diagnosis||"تأهيل"}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs text-[#999]">{entry.date}</span>
-                          {entry.time&&<span className="text-xs text-[#999]">· {entry.time}</span>}
-                          {(entry.specialist||plan?.specialist)&&<span className="text-xs text-[#999]">· {entry.specialist||plan?.specialist}</span>}
-                        </div>
-                      </div>
-                    </div>
-                    <Badge color={entry.status==="done"?"success":"warning"}>{entry.status==="done"?"مُكتملة ✓":"قيد التنفيذ"}</Badge>
-                  </div>
-                  {/* تفاصيل الجلسة */}
-                  <div className="px-4 py-3 space-y-3">
-                    {/* خانات التقييم الأربعة */}
-                    {(entry.grossMotorSkills||entry.fineMotorSkills||entry.sensoryCondition||entry.adlActivities)&&(
-                      <div>
-                        <p className="text-xs font-bold text-[#7B1FA2] mb-2">📊 تقييم الأداء الوظيفي</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {entry.grossMotorSkills&&<div className="p-2.5 rounded-lg bg-white" style={{border:"1px solid #E1BEE7"}}><p className="text-xs font-semibold text-[#7B1FA2]">المهارات الحركية الكبيرة (Gross Motor)</p><p className="text-xs text-[#444] mt-1" style={{lineHeight:1.6}}>{entry.grossMotorSkills}</p></div>}
-                          {entry.fineMotorSkills&&<div className="p-2.5 rounded-lg bg-white" style={{border:"1px solid #E1BEE7"}}><p className="text-xs font-semibold text-[#7B1FA2]">المهارات الحركية الدقيقة (Fine Motor)</p><p className="text-xs text-[#444] mt-1" style={{lineHeight:1.6}}>{entry.fineMotorSkills}</p></div>}
-                          {entry.sensoryCondition&&<div className="p-2.5 rounded-lg bg-white" style={{border:"1px solid #E1BEE7"}}><p className="text-xs font-semibold text-[#7B1FA2]">الحالة الحسية (Sensory Condition)</p><p className="text-xs text-[#444] mt-1" style={{lineHeight:1.6}}>{entry.sensoryCondition}</p></div>}
-                          {entry.adlActivities&&<div className="p-2.5 rounded-lg bg-white" style={{border:"1px solid #E1BEE7"}}><p className="text-xs font-semibold text-[#7B1FA2]">أنشطة الحياة اليومية (ADL's)</p><p className="text-xs text-[#444] mt-1" style={{lineHeight:1.6}}>{entry.adlActivities}</p></div>}
-                        </div>
-                      </div>
-                    )}
-                    {/* نتيجة الجلسة وملاحظات المعالج */}
-                    {entry.sessionResult&&<div><p className="text-xs font-bold text-[#555] mb-1">نتيجة الجلسة</p><p className="text-xs text-[#444] p-2.5 rounded-lg bg-white" style={{border:"1px solid #E0E0E0",lineHeight:1.6}}>{entry.sessionResult}</p></div>}
-                    {entry.therapistNotes&&<div><p className="text-xs font-bold text-[#555] mb-1">ملاحظات المعالج</p><p className="text-xs text-[#444] p-2.5 rounded-lg bg-white" style={{border:"1px solid #E0E0E0",lineHeight:1.6}}>{entry.therapistNotes}</p></div>}
-                    {/* بيانات الخطة العلاجية */}
-                    {plan&&<div className="flex items-center gap-3 text-xs text-[#777] pt-1 border-t border-[#F5F5F5]"><span>الخطة: <strong className="text-[#555]">{plan.totalSessions} جلسة</strong></span><span>·</span><span>المكتمل: <strong className="text-[#388E3C]">{plan.completedSessions}</strong></span><span>·</span><span>السعر/جلسة: <strong className="text-[#1B3A6B]">{fmt(plan.pricePerSession)}</strong></span></div>}
-                    {/* إذا لم يكن هناك أي بيانات */}
-                    {!entry.grossMotorSkills&&!entry.fineMotorSkills&&!entry.sensoryCondition&&!entry.adlActivities&&!entry.sessionResult&&!entry.therapistNotes&&<p className="text-xs text-[#AAA]">لم يتم إدخال تفاصيل للجلسة بعد</p>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>}
-
-      {/* ══════════ تبويب الوصفات ══════════ */}
-      {tab==="prescriptions"&&<Card title="💊 الوصفات الطبية">
-        {filteredMeds.length===0?<EmptyState msg="لا توجد وصفات طبية مسجَّلة"/>:
-          <table className="w-full text-sm"><THead cols={["الدواء","الجرعة","التكرار","المدة","التاريخ","القسم"]}/>
-            <tbody>{filteredMeds.map((m,i)=><TRow key={i} i={i}><TD className="font-medium">{m.name}</TD><TD className="text-[#555]">{m.dose||"—"}</TD><TD className="text-[#555]">{m.freq||"—"}</TD><TD className="text-[#555]">{m.duration||"—"}</TD><TD className="text-[#999]">{m.date}</TD><TD><Badge color="info">{m.dept}</Badge></TD></TRow>)}</tbody>
-          </table>
-        }
-      </Card>}
-
-      {/* ══════════ تبويب الإحالات ══════════ */}
-      {tab==="referrals"&&<Card title="📋 طلبات المختبر والأشعة">
-        {filteredRefs.length===0?<EmptyState msg="لا توجد إحالات مسجَّلة"/>:
-          <table className="w-full text-sm"><THead cols={["النوع","الطلب","التاريخ","القسم"]}/>
-            <tbody>{filteredRefs.map((r,i)=><TRow key={i} i={i}><TD><Badge color={r.type==="lab"?"info":"warning"}>{r.type==="lab"?<><FlaskConical size={11}/>مختبر</>:<><Aperture size={11}/>أشعة</>}</Badge></TD><TD className="font-medium">{r.name}</TD><TD className="text-[#999]">{r.date}</TD><TD><Badge color="info">{r.dept}</Badge></TD></TRow>)}</tbody>
-          </table>
-        }
-      </Card>}
-
-      {/* ══════════ تبويب الملف المالي ══════════ */}
-      {tab==="finance"&&(
-        <div className="space-y-4">
-          {/* بطاقة الملخص المالي */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              {l:"إجمالي الفواتير",v:fmt(totalAmt),c:"#1B3A6B",bg:"#EBF3FB"},
-              {l:"المدفوع",v:fmt(totalPaid),c:"#388E3C",bg:"#E8F5E9"},
-              {l:"الديون المتبقية",v:fmt(liveDebt),c:liveDebt>0?"#D32F2F":"#388E3C",bg:liveDebt>0?"#FFEBEE":"#E8F5E9"},
-              {l:"عدد الجلسات",v:String(isAdmin?pSess.length:finSess.length),c:"#555",bg:"#F5F5F5"},
-            ].map(k=>(
-              <div key={k.l} className="p-3 rounded-xl text-center" style={{backgroundColor:k.bg,border:`1px solid ${k.bg}`}}>
-                <p className="text-xs text-[#777] mb-1">{k.l}</p>
-                <p className="text-lg font-bold" style={{color:k.c}}>{k.v}</p>
-              </div>
-            ))}
-          </div>
-          {/* تفاصيل الفواتير */}
-          <Card title={isAdmin?"سجل الفواتير — جميع الأقسام":`سجل الفواتير — قسم ${deptShort(dept)} فقط`}>
-            {finSess.length===0?(
-              <EmptyState msg={isAdmin?"لا توجد فواتير مسجَّلة":"لا توجد فواتير مسجَّلة لقسمك"}/>
-            ):(
-              <div className="space-y-2">
-                <table className="w-full text-sm">
-                  <THead cols={["التاريخ","القسم","التشخيص","إجمالي الفاتورة","المدفوع","الدين"]}/>
-                  <tbody>{finSess.map((s,i)=>(
-                    <TRow key={s.id} i={i}>
-                      <TD className="text-[#999]">{s.date}</TD>
-                      <TD><Badge color="info">{deptShort(s.dept)}</Badge></TD>
-                      <TD className="text-[#555]">{s.diagnoses.slice(0,2).join(" · ")||"—"}</TD>
-                      <TD className="font-bold text-[#1B3A6B]">{fmt(s.amount)}</TD>
-                      <TD className="text-[#388E3C] font-medium">{fmt(s.paid)}</TD>
-                      <TD>{s.debt>0?<span className="font-bold text-[#D32F2F]">{fmt(s.debt)}</span>:<span className="text-[#388E3C]">مسدد ✓</span>}</TD>
-                    </TRow>
-                  ))}</tbody>
-                </table>
-                {/* صف الإجماليات */}
-                <div className="flex justify-between items-center px-3 py-2 rounded-lg text-sm font-bold" style={{backgroundColor:"#F8F9FF",border:"1px solid #E8ECF8"}}>
-                  <span className="text-[#555]">الإجمالي</span>
-                  <div className="flex gap-6">
-                    <span className="text-[#1B3A6B]">{fmt(totalAmt)}</span>
-                    <span className="text-[#388E3C]">{fmt(totalPaid)}</span>
-                    <span className={liveDebt>0?"text-[#D32F2F]":"text-[#388E3C]"}>{liveDebt>0?fmt(liveDebt):"مسدد بالكامل ✓"}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-            {/* سجل الديون التفصيلي */}
-            {liveDebt>0&&(
-              <div className="mt-4 pt-4" style={{borderTop:"1px solid #F0F0F0"}}>
-                <p className="text-xs font-bold text-[#D32F2F] mb-2">📌 تفاصيل الديون المتبقية</p>
-                <div className="space-y-1.5">
-                  {debts.filter(d=>d.pid===p.id&&canSeeFinance(d.dept)).map(d=>(
-                    <div key={d.id} className="flex items-center justify-between px-3 py-2 rounded-lg text-xs" style={{backgroundColor:"#FFF8F8",border:"1px solid #FFCDD2"}}>
-                      <div className="flex items-center gap-2"><AlertCircle size={12} className="text-[#D32F2F]"/><span className="text-[#444]">{d.dept}</span><span className="text-[#999]">· {d.date}</span></div>
-                      <span className="font-bold text-[#D32F2F]">{fmt(d.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-                {doDeposit&&<div className="mt-3"><Btn small variant="danger" onClick={()=>setDebtModal(true)}><DollarSign size={13}/>تسجيل دفعة سداد</Btn></div>}
-              </div>
-            )}
-          </Card>
-          {/* تنبيه الصلاحية للموظفين */}
-          {!isAdmin&&<div className="flex items-start gap-2.5 p-3 rounded-xl text-xs" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}><Lock size={13} className="text-[#F57C00] mt-0.5 flex-shrink-0"/><p className="text-[#795548]">الملف المالي المعروض يشمل قسمك <strong>({deptShort(dept)})</strong> فقط. لعرض فواتير أقسام أخرى يلزم صلاحية المدير.</p></div>}
-        </div>
-      )}
     </div>
   );
 }
@@ -4041,283 +2869,7 @@ function NewSessionScreen({dept,patientId,sessions,setSessions,doDeposit,setDebt
   debts:DebtRow[];toast:(m:string,t?:any)=>void;onNavigate:(r:Route)=>void;diagnoses:DiagnosisEntry[];setDiagnoses:React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;
   loggedUser?:LoggedUser|null;drugs?:string[];setDrugs?:React.Dispatch<React.SetStateAction<string[]>>;
 }){
-  const p=mockPatients.find(x=>x.id===patientId)||mockPatients[0];
-  const deptInfo=DEPARTMENTS.find(d=>d.id===dept)||DEPARTMENTS[0];
-  const initials=(n:string)=>n.split(" ").slice(0,2).map(w=>w[0]).join("");
-  const today=_today();
-  const autoDoctor=loggedUser?.type==="staff"?loggedUser.staff.name:"";
-  const [doctor,setDoctor]=useState(autoDoctor);
-  const [notes,setNotes]=useState("");
-  const [selDiag,setSelDiag]=useState<string[]>([]);
-  const [diagSearch,setDiagSearch]=useState("");
-  const [diagDropOpenNS,setDiagDropOpenNS]=useState(false);
-  const diagDropRefNS=useRef<HTMLDivElement>(null);
-  useEffect(()=>{const h=(e:MouseEvent)=>{if(diagDropRefNS.current&&!diagDropRefNS.current.contains(e.target as Node))setDiagDropOpenNS(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
-  const [meds,setMeds]=useState<{name:string;dose:string;freq:string;duration:string}[]>([]);
-  const [labRefs,setLabRefs]=useState<string[]>([]); const [radRefs,setRadRefs]=useState<string[]>([]);
-  const [amount,setAmount]=useState(""); const [discount,setDiscount]=useState(""); const [paid,setPaid]=useState("");
-  const [saving,setSaving]=useState(false); const [saved,setSaved]=useState(false);
-  const totalAmt=parseFloat(amount)||0; const discAmt=Math.min(parseFloat(discount)||0,totalAmt); const netAmt=totalAmt-discAmt; const paidAmt=parseFloat(paid)||0; const debtAmt=Math.max(0,netAmt-paidAmt); const creditAmt=Math.max(0,paidAmt-netAmt);
-  const prevDebt=debts.filter(d=>d.pid===p.id).reduce((s,d)=>s+d.amount,0);
-  const toggleDiag=(n:string)=>setSelDiag(p=>p.includes(n)?p.filter(x=>x!==n):[...p,n]);
-  const addMed=()=>setMeds(p=>[...p,{name:"",dose:"",freq:"",duration:""}]);
-  const setMed=(i:number,k:string,v:string)=>setMeds(p=>p.map((m,j)=>j===i?{...m,[k]:v}:m));
-  const removeMed=(i:number)=>setMeds(p=>p.filter((_,j)=>j!==i));
-  // قائمة تشخيصات محلية مستقلة حسب القسم
-  const [availDiagNS,setAvailDiagNS]=useState(diagnoses.filter(d=>dept==="rehab"?d.dept==="rehab":d.dept==="surgery").map(d=>({...d})));
-  useEffect(()=>{setAvailDiagNS(diagnoses.filter(d=>dept==="rehab"?d.dept==="rehab":d.dept==="surgery").map(d=>({...d})));}, [diagnoses, dept]);
-  const filteredDiags=availDiagNS.filter(d=>!diagSearch.trim()||(d.name+d.code+d.category).toLowerCase().includes(diagSearch.toLowerCase()));
-  const quickAddDiagNS=(name:string)=>{
-    const trimmed=name.trim();if(!trimmed)return;
-    const existing=availDiagNS.find(d=>d.name.toLowerCase()===trimmed.toLowerCase());
-    if(existing){if(!selDiag.includes(existing.name))setSelDiag(p=>[...p,existing.name]);setDiagSearch("");setDiagDropOpenNS(false);return;}
-    const deptVal=dept==="rehab"?"rehab":"surgery";
-    const nd:DiagnosisEntry={id:Date.now(),code:`USR${Date.now()}`,name:trimmed,category:"أخرى",dept:deptVal};
-    setAvailDiagNS(p=>[nd,...p]);setSelDiag(p=>[...p,nd.name]);
-    setDiagnoses(p=>[...p,nd]);
-    api.diagnoses.create({code:nd.code,name:nd.name,category:nd.category,dept:deptVal}).then(r=>{if(r&&(r as any).id){const _rid=(r as any).id;setAvailDiagNS(p=>p.map(d=>d.id===nd.id?{...d,id:_rid}:d));setDiagnoses(p=>p.map(d=>d.id===nd.id?{...d,id:_rid}:d));}}).catch(()=>{});
-    setDiagSearch("");setDiagDropOpenNS(false);
-    toast(`تم إضافة "${trimmed}" كتشخيص دائم ✓`,"success");
-  };
-  const toggleLab=(t:string)=>setLabRefs(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
-  const toggleRad=(t:string)=>setRadRefs(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
-  const DIAG_CATS_NS=dept==="rehab"?DIAG_CATS_REHAB:DIAG_CATS_SURGERY;
-  const [diagModal,setDiagModal]=useState<{open:boolean;mode:"add"|"edit";id:number;f:{code:string;name:string;category:string}}>({open:false,mode:"add",id:0,f:{code:"",name:"",category:""}});
-  const [medModal,setMedModal]=useState<{open:boolean;mode:"add"|"edit";idx:number;f:{name:string;dose:string;freq:string;duration:string}}>({open:false,mode:"add",idx:-1,f:{name:"",dose:"",freq:"",duration:""}});
-  const saveDiagModal=()=>{
-    if(!diagModal.f.name.trim())return;
-    const deptVal=dept==="rehab"?"rehab":"surgery";
-    if(diagModal.mode==="add"){
-      const d:DiagnosisEntry={id:Date.now(),code:diagModal.f.code||"USR",name:diagModal.f.name.trim(),category:diagModal.f.category||"أخرى",dept:deptVal};
-      setAvailDiagNS(p=>[...p,d]);setSelDiag(p=>[...p,d.name]);
-      setDiagnoses(p=>[...p,d]);
-      api.diagnoses.create({code:d.code,name:d.name,category:d.category,dept:deptVal}).then(r=>{if(r&&(r as any).id){const _rid=(r as any).id;setAvailDiagNS(p=>p.map(x=>x.id===d.id?{...x,id:_rid}:x));setDiagnoses(p=>p.map(x=>x.id===d.id?{...x,id:_rid}:x));}}).catch(()=>{});
-    } else {
-      setAvailDiagNS(p=>p.map(d=>d.id===diagModal.id?{...d,...diagModal.f}:d));
-      setDiagnoses(p=>p.map(d=>d.id===diagModal.id?{...d,...diagModal.f}:d));
-      api.diagnoses.update(diagModal.id,diagModal.f);
-    }
-    setDiagModal(m=>({...m,open:false}));
-  };
-  const deleteDiagEntry=(id:number,name:string)=>{
-    setAvailDiagNS(p=>p.filter(d=>d.id!==id));setSelDiag(p=>p.filter(x=>x!==name));
-    setDiagnoses(p=>p.filter(d=>d.id!==id));
-    api.diagnoses.delete(id);
-  };
-  const saveMedModal=()=>{
-    if(!medModal.f.name.trim())return;
-    if(medModal.mode==="add")setMeds(p=>[...p,medModal.f]);
-    else setMeds(p=>p.map((m,i)=>i===medModal.idx?{...medModal.f}:m));
-    const nm=medModal.f.name.trim();
-    if(nm&&setDrugs&&!drugs.some(d=>d.toLowerCase()===nm.toLowerCase()))setDrugs(p=>[nm,...p]);
-    setMedModal(m=>({...m,open:false}));
-  };
-  const handleSave=()=>{
-    const today=_today();
-    if(totalAmt<=0){toast("أدخل مبلغ الجلسة","error");return;}
-    setSaving(true);
-    if(paidAmt>0)doDeposit(dept,paidAmt,`دفعة مريض — ${p.name}`,"إيراد مريض");
-    if(debtAmt>0){const nd:DebtRow={id:Date.now(),patient:p.name,pid:p.id,dept:deptInfo.short,amount:debtAmt,date:today,days:0,phone:p.phone};setDebts(prev=>[nd,...prev]);api.finance.debts.create({patient:p.name,patient_id:p.id,dept:deptInfo.short,amount:debtAmt,date:api.parseDateISO(today),phone:p.phone}).then(r=>{if(r&&(r as any).id)setDebts(p=>p.map(d=>d.id===nd.id?{...d,id:(r as any).id}:d));}).catch(()=>{});}
-    const ns:PatientSession={id:Date.now(),patientId:p.id,dept,doctor:doctor.trim()||deptInfo.short,date:today,diagnoses:selDiag,medications:meds.filter(m=>m.name.trim()),notes,labRefs,radRefs,amount:netAmt,paid:paidAmt,debt:debtAmt};
-    setSessions(prev=>[ns,...prev]);
-    api.sessions.create({patient_id:p.id,dept,doctor:doctor.trim()||deptInfo.short,date:api.parseDateISO(today),diagnoses:selDiag,medications:meds.filter(m=>m.name.trim()),notes,lab_refs:labRefs,rad_refs:radRefs,amount:netAmt,paid:paidAmt,debt:debtAmt});
-    setTimeout(()=>{setSaving(false);setSaved(true);toast(`تم حفظ الجلسة${debtAmt>0?" — دين مسجَّل: "+fmt(debtAmt):creditAmt>0?" — رصيد لصالح المريض: "+fmt(creditAmt):" ✓"}`);},600);
-  };
-  if(saved)return(
-    <div className="max-w-md mx-auto text-center py-20">
-      <div className="w-20 h-20 rounded-full bg-[#E8F5E9] flex items-center justify-center mx-auto mb-4"><CheckCircle size={40} className="text-[#388E3C]"/></div>
-      <h2 className="text-xl font-bold text-[#1B3A6B] mb-2">تم حفظ الجلسة بنجاح</h2>
-      <p className="text-sm text-[#555] mb-1">المريض: {p.name}</p>
-      {debtAmt>0&&<div className="mt-2 mb-4 p-3 rounded-xl bg-[#FFEBEE] text-sm text-[#D32F2F] font-bold">دين مسجَّل: {fmt(debtAmt)}</div>}
-      {creditAmt>0&&<div className="mt-2 mb-4 p-3 rounded-xl bg-[#E8F5E9] text-sm text-[#388E3C] font-bold">رصيد لصالح المريض: {fmt(creditAmt)} ₪</div>}
-      <div className="flex gap-3 justify-center mt-4">
-        <Btn variant="secondary" onClick={()=>onNavigate({screen:"patient-file",dept,patientId:p.id})}><Eye size={15}/>عرض ملف المريض</Btn>
-        <Btn variant="outline" onClick={()=>onNavigate({screen:"open-patient",dept})}><Users size={15}/>مريض آخر</Btn>
-      </div>
-    </div>
-  );
-  return(
-    <div className="space-y-4">
-      {/* ── Modal: Diagnosis ── */}
-      <Modal open={diagModal.open} onClose={()=>setDiagModal(m=>({...m,open:false}))} title={diagModal.mode==="add"?"إضافة تشخيص جديد":"تعديل التشخيص"}
-        footer={<><Btn variant="primary" onClick={saveDiagModal}><Save size={14}/>حفظ</Btn><Btn variant="outline" onClick={()=>setDiagModal(m=>({...m,open:false}))}>إلغاء</Btn></>}>
-        <div className="space-y-3">
-          <InputField label="كود ICD" placeholder="مثال: K37" value={diagModal.f.code} onChange={v=>setDiagModal(m=>({...m,f:{...m.f,code:v}}))}/>
-          <InputField label="اسم التشخيص" required placeholder="اسم التشخيص بالعربي" value={diagModal.f.name} onChange={v=>setDiagModal(m=>({...m,f:{...m.f,name:v}}))}/>
-          <InputField label="التصنيف"><select className="h-10 px-3 rounded-lg text-sm w-full outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}} value={diagModal.f.category} onChange={e=>setDiagModal(m=>({...m,f:{...m.f,category:e.target.value}}))}><option value="">اختر التصنيف...</option>{DIAG_CATS_NS.map(c=><option key={c}>{c}</option>)}</select></InputField>
-        </div>
-      </Modal>
-      {/* ── Modal: Medication ── */}
-      <Modal open={medModal.open} onClose={()=>setMedModal(m=>({...m,open:false}))} title={medModal.mode==="add"?"إضافة دواء":"تعديل الدواء"}
-        footer={<><Btn variant="primary" onClick={saveMedModal}><Save size={14}/>حفظ</Btn><Btn variant="outline" onClick={()=>setMedModal(m=>({...m,open:false}))}>إلغاء</Btn></>}>
-        <div className="space-y-3">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#555]">الاسم العلمي للدواء <span className="text-[#D32F2F]">*</span></label>
-            <div className="relative">
-              <Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999] pointer-events-none"/>
-              <input
-                placeholder="ابحث أو اكتب الاسم العلمي للدواء..."
-                value={medModal.f.name}
-                onChange={e=>setMedModal(m=>({...m,f:{...m.f,name:e.target.value}}))}
-                className="h-10 pr-8 pl-3 rounded-lg text-sm w-full outline-none"
-                style={{border:"1px solid #CCCCCC",backgroundColor:"#FAFAFA"}}
-                autoComplete="off"
-              />
-              {medModal.f.name.trim().length>=1&&(()=>{
-                const q=medModal.f.name.trim().toLowerCase();
-                const hits=drugs.filter(d=>d.toLowerCase().includes(q));
-                const exact=drugs.some(d=>d.toLowerCase()===q);
-                if(!hits.length&&exact)return null;
-                return(
-                  <div className="absolute left-0 right-0 top-full z-50 bg-white rounded-xl shadow-2xl mt-1 overflow-hidden" style={{border:"1px solid #D0D9E8",maxHeight:240,overflowY:"auto"}}>
-                    {hits.slice(0,10).map(s=>(
-                      <button key={s} type="button"
-                        onMouseDown={e=>{e.preventDefault();setMedModal(m=>({...m,f:{...m.f,name:s}}));}}
-                        className="w-full text-right px-3 py-2 text-sm hover:bg-[#EBF3FB] transition-colors border-b border-[#F5F5F5] last:border-0 font-medium text-[#1B3A6B]">
-                        <Pill size={11} className="inline ml-2 text-[#1565C0]"/>{s}
-                      </button>
-                    ))}
-                    {!exact&&medModal.f.name.trim()&&(
-                      <div className="px-3 py-2 text-xs bg-[#FFFDE7] border-t-2 border-[#FFF176] flex items-center gap-2 text-[#F57F17]">
-                        <Plus size={11}/>سيُضاف "<strong>{medModal.f.name.trim()}</strong>" تلقائياً كدواء جديد دائم عند الحفظ
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-          <InputField label="الجرعة" placeholder="مثال: 500mg" value={medModal.f.dose} onChange={v=>setMedModal(m=>({...m,f:{...m.f,dose:v}}))}/>
-          <InputField label="التكرار" placeholder="مثال: 3× يومياً" value={medModal.f.freq} onChange={v=>setMedModal(m=>({...m,f:{...m.f,freq:v}}))}/>
-          <InputField label="المدة" placeholder="مثال: 7 أيام" value={medModal.f.duration} onChange={v=>setMedModal(m=>({...m,f:{...m.f,duration:v}}))}/>
-        </div>
-      </Modal>
-      {/* patient banner */}
-      <div className="bg-white rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3" style={{border:"1px solid #E0E0E0"}}>
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-11 h-11 rounded-xl bg-[#1B3A6B] flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{initials(p.name)}</div>
-          <div className="min-w-0"><p className="font-bold text-[#1B3A6B] truncate">{p.name}</p><p className="text-xs text-[#999] truncate">{p.id} · {p.age} سنة · {p.blood} · {p.phone}</p></div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <div className="flex items-center gap-2 text-sm text-[#555]"><Calendar size={14}/><span>{today}</span><span className="text-[#CCC]">·</span><span className="font-medium text-[#1B3A6B]">{deptInfo.short}</span></div>
-          <input value={doctor} onChange={e=>setDoctor(e.target.value)} placeholder="اسم الطبيب المعالج..." className="h-8 px-3 rounded-lg text-sm outline-none w-full sm:w-auto" style={{border:"1px solid #E0E0E0",minWidth:160}}/>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        {/* ── LEFT ── */}
-        <div className="space-y-4">
-          {/* Diagnosis */}
-          <Card title="التشخيصات" action={<Btn small variant="secondary" onClick={()=>setDiagModal({open:true,mode:"add",id:0,f:{code:"",name:"",category:""}})}><Plus size={13}/>تشخيص (ICD)</Btn>}>
-            {/* Autocomplete search */}
-            <div className="relative mb-3" ref={diagDropRefNS}>
-              <Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999] z-10 pointer-events-none"/>
-              <input value={diagSearch}
-                onChange={e=>{setDiagSearch(e.target.value);setDiagDropOpenNS(true);}}
-                onFocus={()=>setDiagDropOpenNS(true)}
-                onKeyDown={e=>{if(e.key==="Enter"&&diagSearch.trim()){quickAddDiagNS(diagSearch);e.preventDefault();}if(e.key==="Escape")setDiagDropOpenNS(false);}}
-                placeholder="ابحث أو اكتب تشخيصاً واضغط Enter للإضافة الدائمة..."
-                className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none"
-                style={{border:`1px solid ${diagDropOpenNS&&diagSearch?"#1B3A6B":"#E0E0E0"}`,backgroundColor:"#FAFAFA"}}/>
-              {diagDropOpenNS&&diagSearch.trim().length>=1&&(
-                <div className="absolute left-0 right-0 top-full z-50 bg-white rounded-xl shadow-2xl mt-1 overflow-hidden" style={{border:"1px solid #D0D9E8",maxHeight:220,overflowY:"auto"}}>
-                  {filteredDiags.slice(0,10).map(d=>(
-                    <button key={d.id} type="button"
-                      onMouseDown={e=>{e.preventDefault();toggleDiag(d.name);setDiagSearch("");setDiagDropOpenNS(false);}}
-                      className={`w-full text-right px-3 py-2 text-sm transition-colors border-b border-[#F5F5F5] last:border-0 flex items-center gap-2 ${selDiag.includes(d.name)?"bg-[#EBF3FB]":"hover:bg-[#F5F8FF]"}`}>
-                      <span className="flex-1 font-medium">{d.name}</span>
-                      <span className="text-[10px] text-[#AAA] flex-shrink-0">{d.code}</span>
-                      {selDiag.includes(d.name)&&<Check size={12} className="text-[#1B3A6B] flex-shrink-0"/>}
-                    </button>
-                  ))}
-                  {!availDiagNS.some(d=>d.name.toLowerCase()===diagSearch.trim().toLowerCase())&&(
-                    <button type="button"
-                      onMouseDown={e=>{e.preventDefault();quickAddDiagNS(diagSearch);}}
-                      className="w-full text-right px-3 py-2.5 text-sm bg-[#F0FFF4] hover:bg-[#E8F5E9] border-t-2 border-[#C8E6C9] flex items-center gap-2 text-[#388E3C] font-bold">
-                      <Plus size={13} className="flex-shrink-0"/>
-                      <span>إضافة "<strong>{diagSearch.trim()}</strong>" كتشخيص دائم جديد</span>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-            {selDiag.length>0&&<div className="flex flex-wrap gap-1.5 mb-3">{selDiag.map(n=><span key={n} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#EBF3FB] text-[#1B3A6B]" style={{border:"1px solid #BBDEFB"}}>{n}<button onClick={()=>toggleDiag(n)} className="text-[#D32F2F] mr-1 hover:text-[#B71C1C]"><X size={10}/></button></span>)}</div>}
-            <div className="space-y-1.5 max-h-52 overflow-y-auto">
-              {filteredDiags.length===0&&!diagSearch&&<p className="text-center text-sm text-[#999] py-4">ابحث أعلاه لاختيار التشخيص</p>}
-              {filteredDiags.map(d=>(
-                <div key={d.id} className={`flex items-center gap-3 p-2.5 rounded-xl transition-colors ${selDiag.includes(d.name)?"bg-[#EBF3FB] border-[#1B3A6B]":"bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#1B3A6B]"}`} style={{border:"1px solid"}}>
-                  <input type="checkbox" checked={selDiag.includes(d.name)} onChange={()=>toggleDiag(d.name)} className="accent-[#1B3A6B] flex-shrink-0"/>
-                  <div className="flex-1 min-w-0 cursor-pointer" onClick={()=>toggleDiag(d.name)}><p className="text-sm font-medium">{d.name}</p><p className="text-xs text-[#999]">{d.code} · {d.category}</p></div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={e=>{e.stopPropagation();setDiagModal({open:true,mode:"edit",id:d.id,f:{code:d.code,name:d.name,category:d.category}});}} className="p-1.5 rounded-lg hover:bg-[#E3F2FD] text-[#1565C0] transition-colors"><Pencil size={13}/></button>
-                    <button onClick={e=>{e.stopPropagation();deleteDiagEntry(d.id,d.name);}} className="p-1.5 rounded-lg hover:bg-[#FFEBEE] text-[#D32F2F] transition-colors"><Trash2 size={13}/></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-          {/* Notes */}
-          <Card title="وصف الجلسة">
-            <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} placeholder="وصف مفصَّل للجلسة والملاحظات الطبية..." className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{border:"1px solid #E0E0E0",backgroundColor:"#FAFAFA"}}/>
-          </Card>
-          {/* Medications */}
-          <Card title="الأدوية الموصوفة" action={<Btn small variant="secondary" onClick={()=>setMedModal({open:true,mode:"add",idx:-1,f:{name:"",dose:"",freq:"",duration:""}})}><Plus size={13}/>إضافة دواء</Btn>}>
-            {meds.length===0?(
-              <div className="text-center py-5 text-[#999]"><Pill size={26} className="mx-auto mb-2 text-[#CCC]"/><p className="text-sm">لم تُضَف أدوية بعد</p></div>
-            ):(
-              <div className="space-y-2">{meds.map((m,i)=>(
-                <div key={i} className="flex items-center gap-3 p-3 rounded-xl" style={{backgroundColor:"#F8F9FA",border:"1px solid #E0E0E0"}}>
-                  <div className="w-8 h-8 rounded-full bg-[#E3F2FD] flex items-center justify-center flex-shrink-0"><Pill size={15} className="text-[#1565C0]"/></div>
-                  <div className="flex-1 min-w-0"><p className="text-sm font-semibold text-[#1B3A6B]">{m.name}</p><p className="text-xs text-[#555]">{[m.dose,m.freq,m.duration].filter(Boolean).join(" · ")}</p></div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={()=>setMedModal({open:true,mode:"edit",idx:i,f:{name:m.name,dose:m.dose,freq:m.freq,duration:m.duration}})} className="p-1.5 rounded-lg hover:bg-[#E3F2FD] text-[#1565C0] transition-colors"><Pencil size={13}/></button>
-                    <button onClick={()=>removeMed(i)} className="p-1.5 rounded-lg hover:bg-[#FFEBEE] text-[#D32F2F] transition-colors"><Trash2 size={13}/></button>
-                  </div>
-                </div>
-              ))}</div>
-            )}
-          </Card>
-        </div>
-        {/* ── RIGHT ── */}
-        <div className="space-y-4">
-          {/* Prev Debt Banner */}
-          {prevDebt>0&&<div className="px-4 py-3 rounded-xl flex items-start gap-3" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}><AlertTriangle size={16} className="text-[#FF8F00] flex-shrink-0 mt-0.5"/><p className="text-sm font-bold text-[#E65100]">⚠️ هذا المريض لديه دين سابق بقيمة {fmt(prevDebt)}</p></div>}
-          {/* Financials */}
-          <Card title="التفاصيل المالية">
-            <div className="space-y-3">
-              <InputField label="سعر الكشف / الخدمة (₪)" required type="number" placeholder="0" value={amount} onChange={setAmount}/>
-              <InputField label="الخصم (₪)" type="number" placeholder="0" value={discount} onChange={setDiscount}/>
-              <InputField label="المبلغ المدفوع (₪)" type="number" placeholder="0" value={paid} onChange={setPaid}/>
-              {totalAmt>0&&<div className="space-y-2 border-t border-[#E0E0E0] pt-2">
-                {discAmt>0&&<div className="flex justify-between text-sm"><span className="text-[#555]">بعد الخصم:</span><span className="font-semibold">{fmt(netAmt)}</span></div>}
-                <div className={`flex items-center justify-between p-3 rounded-xl font-bold text-sm ${debtAmt>0?"bg-[#FFEBEE] text-[#D32F2F]":"bg-[#E8F5E9] text-[#388E3C]"}`} style={{border:`1px solid ${debtAmt>0?"#FFCDD2":"#C8E6C9"}`}}>
-                  <span>{debtAmt>0?"الباقي على المريض:":creditAmt>0?"رصيد لصالح المريض:":"مسدد بالكامل ✓"}</span>
-                  {debtAmt>0&&<span>{fmt(debtAmt)}</span>}
-                  {creditAmt>0&&<span>{fmt(creditAmt)}</span>}
-                </div>
-                {prevDebt>0&&debtAmt>0&&<div className="p-2 rounded-lg text-xs" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}><div className="flex justify-between"><span>ديون سابقة:</span><span className="font-bold text-[#FF8F00]">{fmt(prevDebt)}</span></div><div className="flex justify-between mt-1 font-bold text-[#D32F2F]"><span>إجمالي الدين الكلي:</span><span>{fmt(debtAmt+prevDebt)}</span></div></div>}
-              </div>}
-            </div>
-          </Card>
-          {/* Files */}
-          <Card title="الملفات المرفقة">
-            <div className="border-2 border-dashed border-[#CCC] rounded-xl p-5 text-center hover:border-[#0D7377] transition-colors cursor-pointer">
-              <CloudUpload size={22} className="mx-auto text-[#CCC] mb-2"/>
-              <p className="text-sm text-[#555]">رفع صور أو ملفات <span className="text-[#0D7377] font-medium">اضغط للاختيار</span></p>
-              <p className="text-xs text-[#999] mt-1">PDF، صور، تقارير مختبر</p>
-            </div>
-          </Card>
-        </div>
-      </div>
-      {/* ── SAVE BAR ── */}
-      <div className="flex items-center justify-between bg-white rounded-2xl p-4" style={{border:"1px solid #E0E0E0"}}>
-        <button onClick={()=>onNavigate({screen:"open-patient",dept})} className="flex items-center gap-1.5 text-sm text-[#555] hover:text-[#1B3A6B]"><ChevronRight size={15}/>رجوع للبحث</button>
-        <div className="flex items-center gap-3">
-          {totalAmt>0&&<div className="text-sm text-[#555]">{discAmt>0?<>الصافي: <strong className="text-[#1B3A6B]">{fmt(netAmt)}</strong> · </>:<>المجموع: <strong className="text-[#1B3A6B]">{fmt(totalAmt)}</strong> · </>}مدفوع: <strong className="text-[#388E3C]">{fmt(paidAmt)}</strong>{debtAmt>0&&<> · <span className="text-[#D32F2F] font-bold">الباقي: {fmt(debtAmt)}</span></>}{creditAmt>0&&<> · <span className="text-[#388E3C] font-bold">رصيد: {fmt(creditAmt)}</span></>}</div>}
-          <Btn variant="success" loading={saving} onClick={handleSave}><Save size={16}/>حفظ الجلسة</Btn>
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="p-5 bg-white rounded-2xl">جلسة جديدة للمريض: {patientId}</div>;
 }
 
 // ─── LAB SESSION ───────────────────────────────────────────────────────────────
@@ -4331,446 +2883,18 @@ function LabSessionScreen({toast,doDeposit,setDebts,debts,patientId,inventory=[]
   checkAndNotify?:(itemName:string,dept:string,deptLabel:string,qty:number,threshold:number)=>void;
   labTests?:LabTest[];
 }){
-  const preselected=patientId?mockPatients.find(p=>p.id===patientId)||null:null;
-  const [view,setView]=useState<"register"|"board">("board");
-  const [lastSaved,setLastSaved]=useState<{name:string;tests:number;debtAmt:number}|null>(null);
-  const [step,setStep]=useState(preselected?2:0);
-  const [mode,setMode]=useState<"new"|"existing">("existing");
-  const [selPat,setSelPat]=useState<typeof mockPatients[0]|null>(preselected);
   const [patSearch,setPatSearch]=useState("");
-  const [newPat,setNewPat]=useState({name:"",pid:"",phone:"+970",dob:"",email:"",address:"",blood:"",gender:"male" as "male"|"female",allergies:false,chronic:false,insurance:false});
-  const [payMode,setPayMode]=useState<"cash"|"insurance"|"company">("cash");
-  const [discount,setDiscount]=useState(""); const [paid,setPaid]=useState("");
-  const [selTests,setSelTests]=useState<string[]>([]);
-  const [testSearch,setTestSearch]=useState(""); const [catFilter,setCatFilter]=useState("الكل");
-  const [labTypeFilter,setLabTypeFilter]=useState<"internal"|"external">("internal");
-  const [board,setBoard]=useState<{id:number;patient:string;tests:string[];time:string;status:"pending"|"done";labType?:"internal"|"external";results?:Record<string,{name:string;unit:string;min:string;max:string;value:string}[]>}[]>([]);
-  const [resultsModal,setResultsModal]=useState<{id:number;patient:string;tests:string[];time:string;status:"pending"|"done";labType?:"internal"|"external";results?:Record<string,{name:string;unit:string;min:string;max:string;value:string}[]>}|null>(null);
-  useEffect(()=>{api.queues.getAll("lab").then(rows=>{if(!rows)return;setBoard((rows as any[]).map(r=>({id:r.id,patient:r.patient_name,tests:Array.isArray(r.items)?r.items:[],time:r.queue_time??"",status:r.status as "pending"|"done",labType:typeof r.notes==="string"&&r.notes.includes("lab_type:external")?"external" as const:"internal" as const,results:r.results||undefined})));}).catch(()=>{});},[]);
-  const [resultVals,setResultVals]=useState<Record<string,string>>({});
-  const today=_today();
-  const LAB_FILTER_CATS=["الكل",...LAB_CATS];
-  const filteredTests=_labTests.filter(t=>{
-    const matchType=labTypeFilter==="internal"?!t.isL2L:t.isL2L;
-    const matchCat=catFilter==="الكل"||t.cat===catFilter;
-    const matchSearch=!testSearch.trim()||t.name.includes(testSearch)||t.code.toLowerCase().includes(testSearch.toLowerCase());
-    return matchType&&matchCat&&matchSearch;
-  });
-  const selTestsData=selTests.map(c=>_labTests.find(t=>t.code===c)!).filter(Boolean);
-  const testTotal=selTestsData.reduce((s,t)=>s+t.price,0);
-  const discAmt=Math.min(parseFloat(discount)||0,testTotal); const netTotal=testTotal-discAmt;
-  const paidAmt=parseFloat(paid)||0; const debtAmt=Math.max(0,netTotal-paidAmt); const creditAmt=Math.max(0,paidAmt-netTotal);
-  const patName=selPat?selPat.name:newPat.name; const patId=selPat?selPat.id:(newPat.pid.trim()||generatePatientId());
-  const prevDebt=selPat?debts.filter(d=>d.pid===selPat.id).reduce((s,d)=>s+d.amount,0):0;
-  const totalAllDebts=debts.reduce((s,d)=>s+d.amount,0);
-  const toggle=(code:string)=>setSelTests(p=>p.includes(code)?p.filter(x=>x!==code):[...p,code]);
-  const reset=()=>{if(!patientId){setStep(0);setSelPat(null);}else{setStep(2);setSelPat(preselected);}setSelTests([]);setDiscount("");setPaid("");setPayMode("cash");setLabTypeFilter("internal");};
-  const handleSave=()=>{
-    const today=_today();const labTime=_nowHHMM();
-    if(!patName.trim()||selTests.length===0)return;
-    if(mode==="new" && newPat.pid.trim() && mockPatients.find(p=>p.id===newPat.pid.trim())){toast("رقم الهوية مستخدم مسبقاً — اختر رقم آخر أو اتركه فارغاً للتوليد التلقائي","error");return;}
-    if(mode==="new" && !mockPatients.find(p=>p.id===patId)){
-      mockPatients.push({id:patId,name:patName,age:30,phone:newPat.phone||"—",blood:newPat.blood||"A+",insurance:newPat.insurance,dept:"lab",date:today,debt:0});
-      _syncPatients();
-      api.patients.create({id:patId,name:patName,age:30,phone:newPat.phone||"",blood_type:newPat.blood||"A+",has_insurance:newPat.insurance,dept:"lab",date:api.parseDateISO(today),debt:0});
-    }
-    if(paidAmt>0)doDeposit("lab",paidAmt,`دفعة مريض — ${patName}`,"إيراد مريض");
-    if(debtAmt>0){const nd:DebtRow={id:Date.now(),patient:patName,pid:patId,dept:"المختبر",amount:debtAmt,date:today,days:0,phone:selPat?.phone||newPat.phone||"—"};setDebts(p=>[nd,...p]);api.finance.debts.create({patient:patName,patient_id:patId,dept:"المختبر",amount:debtAmt,date:api.parseDateISO(today),phone:selPat?.phone||newPat.phone||""}).then(r=>{if(r&&(r as any).id)setDebts(p=>p.map(d=>d.id===nd.id?{...d,id:(r as any).id}:d));}).catch(()=>{});}
-
-    // ── خصم الكيتات تلقائياً لكل فحص مُختار ──────────────────────────────
-    const selectedTestNames=selTests.map(c=>_labTests.find(t=>t.code===c)?.name).filter(Boolean) as string[];
-    const deductedKits:string[]=[];
-    const emptyKits:string[]=[];
-    const deductedKitsInfo:{name:string;newQty:number;threshold:number}[]=[];
-    if(setInventory&&computeKitStatus){
-      setInventory(prev=>prev.map(kit=>{
-        const needed=selectedTestNames.some(n=>kit.tests.includes(n));
-        if(!needed)return kit;
-        if(kit.qty<=0){emptyKits.push(kit.name);return kit;}
-        const newQty=kit.qty-1;
-        deductedKits.push(kit.name);
-        deductedKitsInfo.push({name:kit.name,newQty,threshold:kit.threshold});
-        api.lab.inventory.update(kit.id,{name:kit.name,item_type:kit.itemType,qty:newQty,threshold:kit.threshold,unit:kit.unit,notes:kit.notes});
-        return{...kit,qty:newQty,status:computeKitStatus(newQty,kit.threshold)};
-      }));
-      // ── تحقق فوري من حد التنبيه بعد الخصم ─────────────────────────────
-      if(checkAndNotify){
-        deductedKitsInfo.forEach(k=>{if(k.newQty<=k.threshold)checkAndNotify(k.name,"lab","مختبر التحاليل",k.newQty,k.threshold);});
-      }
-    }
-
-    const labTestNames=selTests.map(c=>_labTests.find(t=>t.code===c)?.name||c);
-    const labLid=Date.now();
-    setBoard(p=>[{id:labLid,patient:patName,tests:labTestNames,time:labTime,status:"pending" as const,labType:labTypeFilter},...p]);
-    api.queues.create({dept:"lab",patient_name:patName,items:labTestNames,queue_time:labTime,status:"pending",notes:labTypeFilter==="external"?"lab_type:external":"lab_type:internal"}).then(r=>{if(r)setBoard(p=>p.map(s=>s.id===labLid?{...s,id:r.id}:s));}).catch(()=>{});
-
-    // إشعار موحد بنتيجة الجلسة والخصم
-    let msg=`تم تسجيل ${selTests.length} فحص لـ ${patName}${debtAmt>0?" — دين: "+fmt(debtAmt):creditAmt>0?" — رصيد: "+fmt(creditAmt):" ✓"}`;
-    if(deductedKits.length>0) msg+=` | خُصم: ${deductedKits.join("، ")}`;
-    if(emptyKits.length>0) toast(`تحذير: ${emptyKits.join("، ")} — الكمية صفر، لم يُخصم`,"warning");
-    toast(msg,"success");
-    setLastSaved({name:patName,tests:selTests.length,debtAmt});
-    reset();setView("board");
-  };
-  const buildLabResultsSnapshot=()=>{
-    const snap:Record<string,{name:string;unit:string;min:string;max:string;value:string}[]>={};
-    Object.keys(modalParams).forEach(testName=>{
-      snap[testName]=(modalParams[testName]||[]).map(p=>({name:p.name,unit:p.unit,min:p.min,max:p.max,value:resultVals[`${testName}-${p.name}`]||""}));
-    });
-    return snap;
-  };
-  const buildLabReportHtml=(patientName:string,results:Record<string,{name:string;unit:string;min:string;max:string;value:string}[]>|undefined)=>{
-    const pt=mockPatients.find(p=>p.name===patientName);
-    const infoItems:string[]=[];
-    infoItems.push(`<div class="pt-field"><b>المريض:</b> ${patientName}</div>`);
-    if(pt)infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
-    if(pt)infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
-    if(pt)infoItems.push(`<div class="pt-field"><b>فصيلة الدم:</b> ${pt.blood}</div>`);
-    infoItems.push(`<div class="pt-field"><b>تاريخ التقرير:</b> ${today}</div>`);
-    let body=`<div class="pt-info">${infoItems.join("")}</div>`;
-    const tests=results?Object.keys(results):[];
-    if(tests.length===0){
-      body+=`<p style="font-size:12px;color:#999">لم تُدخل نتائج بعد لهذا الطلب.</p>`;
-    } else {
-      tests.forEach(testName=>{
-        const params=results![testName]||[];
-        body+=`<div class="tests-title">${testName} — Official Lab Report</div>`;
-        body+=`<table><thead><tr><th>المعامل</th><th>النتيجة</th><th>الوحدة</th><th>المعدل الطبيعي</th><th>الحالة</th></tr></thead><tbody>`;
-        body+=params.map(p=>{
-          const v=parseFloat(p.value);const mn=parseFloat(p.min);const mx=parseFloat(p.max);
-          let status="—";
-          if(p.min&&p.max&&p.value&&!isNaN(v)){
-            status=(v>=mn&&v<=mx)?`<span class="in">طبيعي ✓</span>`:(v>mx?`<span class="out">↑ مرتفع</span>`:`<span class="out">↓ منخفض</span>`);
-          }
-          return `<tr><td>${p.name||"—"}</td><td>${p.value||"—"}</td><td>${p.unit||"—"}</td><td>${p.min&&p.max?`${p.min}–${p.max}`:"—"}</td><td>${status}</td></tr>`;
-        }).join("");
-        body+=`</tbody></table>`;
-      });
-    }
-    body+=`<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الأخصائي</div><div class="sig-box"><div class="sig-line"></div>مراجعة الطبيب</div><div class="sig-box"><div class="sig-line"></div>ختم المختبر</div></div>`;
-    return `<div class="pt-card">${body}</div>`;
-  };
-  const printLabReport=(patientName:string,results:Record<string,{name:string;unit:string;min:string;max:string;value:string}[]>|undefined)=>{
-    printHtml(buildLabReportHtml(patientName,results),`تقرير مخبري رسمي — ${patientName}`);
-  };
-  // ── حفظ النتائج فقط: يبقى الفحص "قيد الإنجاز" ولا يُعتبر مكتملاً إلا بعد طباعة التقرير فعلياً ──
-  const saveResultsOnly=(id:number)=>{
-    const snapshot=buildLabResultsSnapshot();
-    setBoard(p=>p.map(s=>s.id===id?{...s,results:snapshot}:s));
-    api.queues.updateStatus(id,"pending",snapshot).catch(()=>{});
-    toast("تم حفظ النتائج — يبقى الفحص قيد الإنجاز حتى طباعة التقرير الرسمي","success");
-  };
-  // ── طباعة التقرير الرسمي هي ما يُنهي الفحص فعلياً وينقله إلى "مكتمل" ──
-  const printAndComplete=(id:number,patientName:string)=>{
-    const snapshot=buildLabResultsSnapshot();
-    setBoard(p=>p.map(s=>s.id===id?{...s,status:"done" as const,results:snapshot}:s));
-    printLabReport(patientName,snapshot);
-    api.queues.updateStatus(id,"done",snapshot).catch(()=>{});
-    setResultsModal(null);
-    toast("تم طباعة التقرير واعتماد الفحص كمكتمل ✓");
-  };
-  // steps: 0=search/choose, 1=new patient data (simplified), 2=test selection, 3=financial
-  const STEP_LABELS=["تسجيل المريض","اختيار الفحوصات","المحاسبة"];
-  const stepIdx=step-1; const pendingCount=board.filter(s=>s.status==="pending").length;
-  const [modalParams,setModalParams]=useState<Record<string,KitParam[]>>({});
-  const [semenInfo,setSemenInfo]=useState<{site:string;examTime:string;abstinence:string}>({site:"",examTime:"",abstinence:""});
-  const openResults=(s:typeof labSessions[0])=>{
-    setResultsModal(s);setResultVals({});
-    const p:Record<string,KitParam[]>={};
-    s.tests.forEach(testName=>{
-      const isL2L = s.labType === "external";
-      const t = _labTests.find(x => x.name === testName && x.isL2L === isL2L) || _labTests.find(x => x.name === testName);
-      const defaults=t?DEFAULT_TEST_PARAMS[t.code]:undefined;
-      if(defaults&&defaults.length>0){
-        p[testName]=defaults.map(d=>({name:d.name,unit:d.unit,min:d.min,max:d.max}));
-      } else {
-        p[testName]=(t?.normalRanges||[]).map(r=>({name:r.param,unit:r.unit,min:r.min,max:r.max}));
-      }
-    });
-    setModalParams(p);
-  };
-  return(
+  return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h2 className="text-lg font-bold text-[#1B3A6B]">طلبات فحص المرضى قيد الإنجاز (بانتظار النتائج)</h2>
-          <p className="text-xs text-[#888] mt-0.5">تظهر هنا الفحوصات الطبية المطلوبة لكي يتم إدخال نتائجها.</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Btn small variant="ghost" onClick={()=>{const html=`<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s=>s.status==="pending").map((s,i)=>`<tr><td>${i+1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`;printHtml(html,"طلبات المختبر");}}><Printer size={14}/>طباعة</Btn>
-          <Btn small variant="ghost" onClick={()=>{const html=`<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s=>s.status==="pending").map((s,i)=>`<tr><td>${i+1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`;savePdfHtml(html,"طلبات المختبر");}}><FileDown size={14}/>PDF</Btn>
-        </div>
+      <div className="relative mb-3"><Search size={14} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input value={patSearch} onChange={e=>setPatSearch(e.target.value)} placeholder="ابحث بالاسم أو رقم الملف..." className="w-full h-10 pr-9 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/></div>
+      <div className="space-y-2 max-h-72 overflow-y-auto">
+        {mockPatients.filter(p=>!patSearch.trim()||p.name.includes(patSearch)||p.id.includes(patSearch)).map(p=>(
+          <button key={p.id} className={`w-full flex items-center gap-3 p-3 rounded-xl text-right transition-colors border-[#E0E0E0] bg-white hover:border-[#1B3A6B] hover:bg-[#EBF3FB]`} style={{border:"1px solid"}}>
+            <div className="w-10 h-10 rounded-xl bg-[#E6F4F4] flex items-center justify-center text-sm font-bold text-[#0D7377] flex-shrink-0">{p.name.split(" ").slice(0,2).map((w:string)=>w[0]).join("")}</div>
+            <div className="flex-1 min-w-0"><p className="text-sm font-semibold">{p.name}</p><p className="text-xs text-[#999]">{p.id} · {p.blood}</p></div>
+          </button>
+        ))}
       </div>
-      {view==="register"&&(
-        <div>
-          {step===0&&(
-            <div className="max-w-lg mx-auto">
-              <Card title="البحث عن مريض">
-                <p className="text-xs text-[#999] mb-3">ابحث باسم المريض أو رقم ملفه — إن وجد، اختره مباشرة. إن لم يُسجَّل بعد، سجّله كمريض جديد.</p>
-                <div className="relative mb-3"><Search size={14} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input value={patSearch} onChange={e=>setPatSearch(e.target.value)} placeholder="ابحث بالاسم أو رقم الملف أو رقم الهوية..." className="w-full h-10 pr-9 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}} autoFocus/></div>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {mockPatients.filter(p=>!patSearch.trim()||p.name.includes(patSearch)||p.id.includes(patSearch)).slice(0,30).map(p=>(
-                    <button key={p.id} onClick={()=>{setSelPat(p);setMode("existing");setStep(2);}} className="w-full flex items-center gap-3 p-3 rounded-xl text-right transition-colors border-[#E0E0E0] bg-white hover:border-[#0D7377] hover:bg-[#E6F4F4]" style={{border:"1px solid"}}>
-                      <div className="w-10 h-10 rounded-xl bg-[#EBF3FB] flex items-center justify-center text-sm font-bold text-[#1B3A6B] flex-shrink-0">{p.name.split(" ").slice(0,2).map((w:string)=>w[0]).join("")}</div>
-                      <div className="flex-1 min-w-0"><p className="text-sm font-semibold">{p.name}</p><p className="text-xs text-[#999]">{p.id} · {p.blood} · {p.phone}</p></div>
-                      {debts.filter(d=>d.pid===p.id).reduce((s,d)=>s+d.amount,0)>0&&<span className="text-xs font-bold text-[#D32F2F] flex-shrink-0">{fmt(debts.filter(d=>d.pid===p.id).reduce((s,d)=>s+d.amount,0))}</span>}
-                      <ChevronLeft size={14} className="text-[#0D7377] flex-shrink-0"/>
-                    </button>
-                  ))}
-                  {patSearch.trim()&&mockPatients.filter(p=>p.name.includes(patSearch)||p.id.includes(patSearch)).length===0&&(
-                    <div className="text-center py-5">
-                      <p className="text-sm text-[#999] mb-1">لم يُعثر على مريض بهذا الاسم في السجل</p>
-                      <p className="text-xs text-[#BBB] mb-3">إذا كانت هذه أول زيارة له، سجّله كمريض جديد</p>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 pt-3" style={{borderTop:"1px dashed #E0E0E0"}}>
-                  <button onClick={()=>{setMode("new");setNewPat({name:patSearch.trim(),pid:"",phone:"+970",dob:"",email:"",address:"",blood:"",gender:"male",allergies:false,chronic:false,insurance:false});setStep(1);}} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium text-[#0D7377] hover:bg-[#E6F4F4] transition-colors" style={{border:"1px dashed #0D7377"}}>
-                    <UserPlus size={15}/>مريض جديد (أول زيارة للمختبر)
-                  </button>
-                </div>
-              </Card>
-            </div>
-          )}
-          {/* Step 1: New patient — simplified form (lab-specific fields only) */}
-          {step===1&&mode==="new"&&(
-            <Card title="تسجيل مريض جديد — بيانات أساسية">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5 col-span-2">
-                  <label className="text-xs font-semibold text-[#555]">الاسم الكامل <span className="text-[#D32F2F]">*</span></label>
-                  <input value={newPat.name} onChange={e=>setNewPat(p=>({...p,name:e.target.value}))} placeholder="أدخل الاسم الرباعي" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">رقم الجوال <span className="text-[#D32F2F]">*</span></label>
-                  <input value={newPat.phone} onChange={e=>setNewPat(p=>({...p,phone:e.target.value}))} placeholder="+970" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">رقم الهوية <span className="text-xs font-normal text-[#999]">(اختياري)</span></label>
-                  <input value={newPat.pid} onChange={e=>setNewPat(p=>({...p,pid:e.target.value.replace(/\D/g,"").slice(0,9)}))} placeholder="9 أرقام" maxLength={9} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">فصيلة الدم <span className="text-xs font-normal text-[#999]">(اختياري)</span></label>
-                  <select value={newPat.blood} onChange={e=>setNewPat(p=>({...p,blood:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}>
-                    <option value="">— اختر —</option>
-                    {"A+ A- B+ B- O+ O- AB+ AB-".split(" ").map(b=><option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div className="flex items-center justify-between px-4 py-3 rounded-xl col-span-2" style={{backgroundColor:"#FAFAFA",border:"1px solid #E0E0E0"}}>
-                  <span className="text-xs font-semibold text-[#555]">تأمين صحي</span>
-                  <button type="button" onClick={()=>setNewPat(p=>({...p,insurance:!p.insurance}))} className="relative w-11 h-6 rounded-full transition-colors" style={{backgroundColor:newPat.insurance?"#0D7377":"#CCC"}}>
-                    <span className="absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all" style={{right:newPat.insurance?"2px":"auto",left:newPat.insurance?"auto":"2px"}}/>
-                  </button>
-                  <span className="text-xs text-[#999] w-6">{newPat.insurance?"نعم":"لا"}</span>
-                </div>
-              </div>
-              <div className="flex gap-3 mt-5"><Btn variant="outline" onClick={()=>setStep(0)}>رجوع</Btn><Btn variant="secondary" onClick={()=>setStep(2)} disabled={!newPat.name.trim()||!newPat.phone.trim()||newPat.phone==="+970"}>التالي: اختيار الفحوصات →</Btn></div>
-            </Card>
-          )}
-          {step===2&&(
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 md:gap-5">
-              <div className="md:col-span-3">
-                <Card title="اختيار الفحوصات المطلوبة">
-                  {/* ── مفتاح التبديل: مختبر داخلي / مختبر خارجي ── */}
-                  <div className="flex gap-2 mb-4 p-1 rounded-xl" style={{backgroundColor:"#F5F5F5",border:"1px solid #E0E0E0"}}>
-                    <button type="button" onClick={()=>{setLabTypeFilter("internal");setSelTests([]);setCatFilter("الكل");}}
-                      className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${labTypeFilter==="internal"?"bg-[#0D7377] text-white shadow-sm":"text-[#555] hover:bg-white"}`}>
-                      🔬 المختبر الداخلي
-                    </button>
-                    <button type="button" onClick={()=>{setLabTypeFilter("external");setSelTests([]);setCatFilter("الكل");}}
-                      className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 ${labTypeFilter==="external"?"bg-[#FF8F00] text-white shadow-sm":"text-[#555] hover:bg-white"}`}>
-                      🔗 مختبر خارجي (Lab to Lab)
-                    </button>
-                  </div>
-                  <div className="flex gap-1.5 mb-3 flex-wrap">{LAB_FILTER_CATS.map(c=><button key={c} onClick={()=>setCatFilter(c)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${catFilter===c?"bg-[#0D7377] text-white":"bg-[#F5F5F5] text-[#555] hover:bg-[#E6F4F4]"}`}>{c}</button>)}</div>
-                  <div className="relative mb-3"><Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input value={testSearch} onChange={e=>setTestSearch(e.target.value)} placeholder="ابحث عن فحص..." className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #E0E0E0",backgroundColor:"#FAFAFA"}}/></div>
-                  <div className="space-y-1.5 overflow-y-auto" style={{maxHeight:360}}>
-                    {filteredTests.map(t=>(
-                      <label key={t.code} onClick={()=>toggle(t.code)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${selTests.includes(t.code)?"bg-[#E6F4F4] border-[#0D7377]":"bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#0D7377]"}`} style={{border:"1px solid"}}>
-                        <input type="checkbox" readOnly checked={selTests.includes(t.code)} className="accent-[#0D7377] flex-shrink-0"/>
-                        <div className="flex-1 min-w-0"><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-[#999]">{t.code} · {t.cat} · {t.time}</p></div>
-                        <div className="text-left flex-shrink-0">
-                          <p className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</p>
-                          {t.kitQty>0&&t.kitQty<=t.kitThreshold&&<p className="text-xs text-[#FF8F00]">⚠️ مخزون منخفض</p>}
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </Card>
-              </div>
-              <div className="md:col-span-2">
-                <div className="sticky top-4 space-y-3">
-                  <Card title="الفحوصات المحددة">
-                    {selTests.length===0?<p className="text-sm text-[#999] text-center py-4">لم يُحدَّد فحص بعد</p>:(
-                      <div className="space-y-2">
-                        {selTestsData.map(t=>(
-                          <div key={t.code} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{backgroundColor:"#E6F4F4",border:"1px solid #B2DFDB"}}>
-                            <button onClick={()=>toggle(t.code)} className="text-[#D32F2F] hover:text-[#B71C1C] ml-1"><X size={12}/></button>
-                            <span className="text-sm flex-1 text-right mx-2">{t.name}</span>
-                            <span className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</span>
-                          </div>
-                        ))}
-                        <div className="pt-2 border-t border-[#E0E0E0] flex justify-between text-sm font-bold"><span>الإجمالي:</span><span className="text-[#0D7377]">{fmt(testTotal)}</span></div>
-                      </div>
-                    )}
-                  </Card>
-                  {prevDebt>0&&<div className="px-3 py-2.5 rounded-xl flex items-start gap-2 text-sm" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}><AlertTriangle size={15} className="text-[#FF8F00] flex-shrink-0 mt-0.5"/><span className="text-[#E65100]">دين سابق: <strong>{fmt(prevDebt)}</strong></span></div>}
-                  <div className="flex gap-2"><Btn variant="outline" onClick={()=>mode==="new"?setStep(1):setStep(0)}>رجوع</Btn><Btn variant="secondary" full onClick={()=>setStep(3)} disabled={selTests.length===0}>التالي: التفاصيل المالية →</Btn></div>
-                </div>
-              </div>
-            </div>
-          )}
-          {/* STEP 3 — التفاصيل المالية */}
-          {step===3&&(
-            <div className="max-w-lg mx-auto space-y-4">
-              <div className="flex items-center gap-3 px-4 py-3 rounded-xl" style={{backgroundColor:"#E6F4F4",border:"1px solid #B2DFDB"}}>
-                <div className="w-9 h-9 rounded-xl bg-[#0D7377] flex items-center justify-center text-white text-sm font-bold flex-shrink-0">{patName.split(" ").slice(0,2).map((w:string)=>w[0]).join("")}</div>
-                <div><p className="text-sm font-bold text-[#0D7377]">{patName}</p><p className="text-xs text-[#555]">{selTests.length} فحص · إجمالي {fmt(testTotal)}</p></div>
-                {prevDebt>0&&<span className="mr-auto text-xs font-bold text-[#D32F2F] flex items-center gap-1"><AlertTriangle size={12}/>دين سابق: {fmt(prevDebt)}</span>}
-              </div>
-              <Card title="طريقة الدفع">
-                <div className="grid grid-cols-3 gap-3">
-                  {[{v:"cash",l:"نقد",Icon:Wallet},{v:"insurance",l:"تأمين صحي",Icon:Shield},{v:"company",l:"شركة / جهة",Icon:Briefcase}].map(o=>(
-                    <button key={o.v} type="button" onClick={()=>setPayMode(o.v as any)}
-                      className={`flex flex-col items-center gap-2 py-4 rounded-xl text-xs font-semibold transition-all ${payMode===o.v?"bg-[#0D7377] text-white shadow-sm":"bg-[#FAFAFA] text-[#555] hover:bg-[#E6F4F4]"}`}
-                      style={{border:`2px solid ${payMode===o.v?"#0D7377":"#E0E0E0"}`}}>
-                      <o.Icon size={20}/>{o.l}
-                    </button>
-                  ))}
-                </div>
-              </Card>
-              <Card title="تفاصيل المبلغ">
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center p-3 rounded-xl" style={{backgroundColor:"#FAFAFA",border:"1px solid #E0E0E0"}}><span className="text-sm text-[#555]">مجموع الفحوصات ({selTests.length}):</span><span className="font-bold text-[#0D7377]">{fmt(testTotal)}</span></div>
-                  <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الخصم (₪)</label><input type="number" value={discount} onChange={e=>setDiscount(e.target.value)} placeholder="0" min="0" className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/></div>
-                  <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">المبلغ المدفوع (₪)</label><input type="number" value={paid} onChange={e=>setPaid(e.target.value)} placeholder="0" min="0" className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/></div>
-                  <div className="border-t border-[#E0E0E0] pt-3 space-y-2">
-                    {discAmt>0&&<div className="flex justify-between text-sm"><span className="text-[#555]">بعد الخصم:</span><span className="font-semibold">{fmt(netTotal)}</span></div>}
-                    <div className={`flex items-center justify-between p-3 rounded-xl font-bold text-sm ${debtAmt>0?"bg-[#FFEBEE] text-[#D32F2F]":"bg-[#E8F5E9] text-[#388E3C]"}`} style={{border:`1px solid ${debtAmt>0?"#FFCDD2":"#C8E6C9"}`}}>
-                      <span>{debtAmt>0?"الباقي على المريض:":creditAmt>0?"رصيد لصالح المريض:":"مسدد بالكامل ✓"}</span>
-                      {debtAmt>0&&<span>{fmt(debtAmt)}</span>}
-                      {creditAmt>0&&<span>{fmt(creditAmt)}</span>}
-                    </div>
-                    {prevDebt>0&&debtAmt>0&&<div className="flex justify-between text-sm font-bold text-[#D32F2F] px-1"><span>إجمالي الدين الكلي:</span><span>{fmt(debtAmt+prevDebt)}</span></div>}
-                  </div>
-                </div>
-              </Card>
-              <div className="flex gap-3"><Btn variant="outline" onClick={()=>setStep(2)}>رجوع للفحوصات</Btn><Btn variant="success" onClick={handleSave}><Save size={16}/>حفظ الطلب وإرساله للمختبر</Btn></div>
-            </div>
-          )}
-        </div>
-      )}
-      {view==="board"&&(
-        <div className="space-y-4">
-          {lastSaved&&(
-            <div className="flex items-start gap-3 p-4 rounded-2xl" style={{backgroundColor:"#E8F5E9",border:"2px solid #A5D6A7"}}>
-              <CheckCircle size={22} className="text-[#388E3C] flex-shrink-0 mt-0.5"/>
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-[#2E7D32] text-sm">تم تسجيل المريض بنجاح ✓</p>
-                <p className="text-xs text-[#555] mt-0.5">
-                  <strong>{lastSaved.name}</strong> — {lastSaved.tests} فحص مطلوب
-                  {lastSaved.debtAmt>0&&<> — <span className="text-[#D32F2F] font-semibold">دين: {fmt(lastSaved.debtAmt)}</span></>}
-                </p>
-                <p className="text-xs text-[#388E3C] mt-1">الطلب في قائمة الانتظار أدناه — ابدأ العمل عليه واضغط "إدخال النتائج" عند الانتهاء</p>
-              </div>
-              <button onClick={()=>setLastSaved(null)} className="text-[#555] hover:text-[#1B3A6B] flex-shrink-0"><X size={16}/></button>
-            </div>
-          )}
-          <Card title={`الفحوصات المطلوبة وقيد الإنجاز (${board.filter(s=>s.status==="pending").length})`}>
-            {board.filter(s=>s.status==="pending").length===0?<EmptyState msg="لا توجد فحوصات قيد الإنجاز حالياً"/>:(
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{board.filter(s=>s.status==="pending").map(s=>(
-                <div key={s.id} className="rounded-xl transition-all hover:shadow-md" style={{backgroundColor:"#FFF8E1",border:"1px solid #FFE082"}}>
-                  <div className="p-4 flex flex-col justify-between h-full min-h-[140px]">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2"><FileText size={15} className="text-[#FF8F00]"/><p className="text-sm font-bold text-[#333]">{s.patient}</p>{s.labType==="external"&&<span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{backgroundColor:"#FFF8E1",color:"#E65100",border:"1px solid #FFE082"}}>خارجي 🔗</span>}</div>
-                      <div className="flex flex-wrap gap-1 mb-3">{s.tests.map(t=><Badge key={t} color="warning">{t}</Badge>)}</div>
-                    </div>
-                    <div className="flex items-center justify-between mt-auto pt-2 border-t border-[#FFF3E0]"><span className="text-xs text-[#999] flex items-center gap-1"><Clock size={11}/>{s.time}</span><Btn small variant="secondary" onClick={()=>openResults(s)}>إدخال النتائج</Btn></div>
-                  </div>
-                </div>
-              ))}</div>
-            )}
-          </Card>
-        </div>
-      )}
-      {view==="inventory"&&setInventory&&computeKitStatus&&<InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus}/>}
-      {resultsModal&&(
-        <Modal open={true} onClose={()=>setResultsModal(null)} title={`إدخال نتائج: ${resultsModal.patient}`} wide
-          footer={<><Btn variant="outline" onClick={()=>saveResultsOnly(resultsModal.id)}><Save size={16}/>حفظ النتائج (يبقى قيد الإنجاز)</Btn><Btn variant="success" onClick={()=>printAndComplete(resultsModal.id,resultsModal.patient)}><Printer size={16}/>طباعة التقرير وإتمام الفحص</Btn><Btn variant="outline" onClick={()=>setResultsModal(null)}>إغلاق</Btn></>}>
-          <div className="space-y-5">
-            <p className="text-xs text-[#999] flex items-center gap-1"><AlertTriangle size={12} className="text-[#FF8F00]"/>يمكنك إضافة أو حذف معاملات للنتيجة الحالية فقط — لن يؤثر على البيانات الأساسية</p>
-            {resultsModal.tests.map(testName=>{
-              const isSemen=testName==="تحليل السائل المنوي";
-              const params=modalParams[testName]||[];
-              const addParam=()=>setModalParams(p=>({...p,[testName]:[...params,{name:"",unit:"",min:"",max:""}]}));
-              const delParam=(idx:number)=>setModalParams(p=>({...p,[testName]:params.filter((_,i)=>i!==idx)}));
-              const updateParam=(idx:number,field:keyof KitParam,val:string)=>setModalParams(p=>({...p,[testName]:params.map((r,i)=>i===idx?{...r,[field]:val}:r)}));
-              return(
-                <div key={testName} className="rounded-xl overflow-hidden" style={{border:"1px solid #E0E0E0"}}>
-                  {/* رأس الفحص */}
-                  <div className="px-4 py-2.5 font-semibold text-sm text-white flex items-center justify-between" style={{backgroundColor:"#0D7377"}}>
-                    <span>{testName}{isSemen&&<span className="text-[11px] font-normal opacity-80 mr-2">Seminal Analysis Report</span>}</span>
-                    <button onClick={addParam} className="flex items-center gap-1 text-xs bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded-lg transition-colors"><Plus size={11}/>إضافة معامل</button>
-                  </div>
-                  {/* بلوك معلومات العينة — يظهر فقط لفحص السائل المنوي */}
-                  {isSemen&&(
-                    <div className="px-4 py-3 grid grid-cols-3 gap-3" style={{backgroundColor:"#F0F7FF",borderBottom:"1px solid #BEDCF5"}}>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[11px] font-bold text-[#1B3A6B]">مكان جمع العينة — Site of Collection</label>
-                        <select value={semenInfo.site} onChange={e=>setSemenInfo(p=>({...p,site:e.target.value}))} className="h-8 px-2 rounded-lg text-xs outline-none" style={{border:"1px solid #BEDCF5",backgroundColor:"white"}}>
-                          <option value="">— اختر —</option>
-                          {["المستشفى / المختبر","المنزل (خلال ساعة)","العيادة","غير محدد"].map(o=><option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[11px] font-bold text-[#1B3A6B]">وقت الفحص — Time of Examination</label>
-                        <input type="time" value={semenInfo.examTime} onChange={e=>setSemenInfo(p=>({...p,examTime:e.target.value}))} className="h-8 px-2 rounded-lg text-xs outline-none" style={{border:"1px solid #BEDCF5",backgroundColor:"white"}}/>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[11px] font-bold text-[#1B3A6B]">فترة الامتناع — Abstinence (أيام)</label>
-                        <div className="flex items-center gap-1">
-                          <button type="button" onClick={()=>setSemenInfo(p=>({...p,abstinence:String(Math.max(0,(parseInt(p.abstinence)||0)-1))}))} className="w-7 h-8 rounded-lg text-sm font-bold hover:bg-[#BDBDBD] transition-colors" style={{backgroundColor:"#E0E0E0"}}>−</button>
-                          <input type="number" value={semenInfo.abstinence} onChange={e=>setSemenInfo(p=>({...p,abstinence:e.target.value}))} min="0" max="30" className="flex-1 h-8 px-2 rounded-lg text-xs text-center outline-none" style={{border:"1px solid #BEDCF5",backgroundColor:"white"}}/>
-                          <button type="button" onClick={()=>setSemenInfo(p=>({...p,abstinence:String((parseInt(p.abstinence)||0)+1)}))} className="w-7 h-8 rounded-lg text-sm font-bold hover:bg-[#BDBDBD] transition-colors" style={{backgroundColor:"#E0E0E0"}}>+</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {params.length>0?(
-                    <table className="w-full text-sm">
-                      <THead cols={["المعامل","النتيجة","الوحدة","المعدل الطبيعي","الحالة",""]}/>
-                      <tbody>{params.map((r,i)=>{
-                        const isSection=r.name.startsWith("§");
-                        if(isSection)return(
-                          <tr key={i}>
-                            <td colSpan={6} className="px-4 py-1.5 text-xs font-bold" style={{backgroundColor:"#EBF3FB",color:"#1B3A6B",borderTop:"1px solid #BEDCF5",borderBottom:"1px solid #BEDCF5"}}>
-                              {r.name.replace(/^§\s*/,"")}
-                            </td>
-                          </tr>
-                        );
-                        return(
-                          <TRow key={i} i={i}>
-                            <TD><input value={r.name} onChange={e=>updateParam(i,"name",e.target.value)} placeholder="اسم المعامل" className="h-7 w-28 px-2 rounded text-xs outline-none" style={{border:"1px solid #CCC"}}/></TD>
-                            <TD><input type="text" value={resultVals[`${testName}-${r.name}`]||""} onChange={e=>setResultVals(p=>({...p,[`${testName}-${r.name}`]:e.target.value}))} className="h-7 w-20 px-2 rounded text-xs outline-none" style={{border:"1px solid #CCC"}}/></TD>
-                            <TD><input value={r.unit} onChange={e=>updateParam(i,"unit",e.target.value)} placeholder="وحدة" className="h-7 w-16 px-2 rounded text-xs outline-none" style={{border:"1px solid #CCC"}}/></TD>
-                            <TD><span className="text-[#555] text-xs">{r.min&&r.max?`${r.min}–${r.max}`:<span className="flex gap-1"><input value={r.min} onChange={e=>updateParam(i,"min",e.target.value)} placeholder="أدنى" className="h-6 w-14 px-1 rounded text-xs outline-none" style={{border:"1px solid #CCC"}}/><input value={r.max} onChange={e=>updateParam(i,"max",e.target.value)} placeholder="أعلى" className="h-6 w-14 px-1 rounded text-xs outline-none" style={{border:"1px solid #CCC"}}/></span>}</span></TD>
-                            <TD>{r.min&&r.max&&resultVals[`${testName}-${r.name}`]?(()=>{const v=parseFloat(resultVals[`${testName}-${r.name}`]);const mn=parseFloat(r.min);const mx=parseFloat(r.max);if(isNaN(v))return<span className="text-[#999] text-xs">—</span>;if(v>=mn&&v<=mx)return<span className="text-[#388E3C] font-bold text-xs">طبيعي ✓</span>;return v>mx?<span className="text-[#D32F2F] font-bold text-xs">↑ مرتفع</span>:<span className="text-[#1B3A6B] font-bold text-xs">↓ منخفض</span>;})():<span className="text-[#999] text-xs">—</span>}</TD>
-                            <TD><button onClick={()=>delParam(i)} className="text-[#D32F2F] hover:text-[#B71C1C] p-1 rounded transition-colors"><Trash2 size={12}/></button></TD>
-                          </TRow>
-                        );
-                      })}</tbody>
-                    </table>
-                  ):(
-                    <div className="p-4 text-center">
-                      <p className="text-xs text-[#999] mb-2">لا توجد معاملات لهذا الفحص</p>
-                      <button onClick={addParam} className="flex items-center gap-1 text-xs text-[#0D7377] hover:underline mx-auto"><Plus size={11}/>إضافة معامل</button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
@@ -4782,216 +2906,6 @@ function RadSessionScreen({toast,doDeposit,setDebts,debts,patientId,radImages:_r
   setDebts:React.Dispatch<React.SetStateAction<DebtRow[]>>;debts:DebtRow[];patientId?:string;
   radImages?:RadImage[];
 }){
-  const preselected=patientId?mockPatients.find(p=>p.id===patientId)||null:null;
-  const [view,setView]=useState<"register"|"board">("board");
-  const [step,setStep]=useState(preselected?2:0);
-  const [uploadedResults,setUploadedResults]=useState<Record<number,string[]>>({});
-  const [uploadTargetId,setUploadTargetId]=useState<number|null>(null);
-  const fileInputRef=useRef<HTMLInputElement>(null);
-  const [mode,setMode]=useState<"new"|"existing">("existing");
-  const [selPat,setSelPat]=useState<typeof mockPatients[0]|null>(preselected);
-  const [patSearch,setPatSearch]=useState("");
-  const [newPat,setNewPat]=useState({name:"",pid:"",phone:"+970",dob:"",email:"",address:"",blood:"",gender:"male" as "male"|"female",allergies:false,chronic:false,insurance:false});
-  const [payMode,setPayMode]=useState<"cash"|"insurance"|"company">("cash");
-  const [selImgs,setSelImgs]=useState<number[]>([]);
-  const [deviceFilter,setDeviceFilter]=useState("الكل");
-  const [discount,setDiscount]=useState(""); const [paid,setPaid]=useState("");
-  type RadBoardItem={id:number;patient:string;images:string[];time:string;status:"pending"|"done";reports?:Record<string,{text:string;doctor:string;verdict:string}>};
-  const [board,setBoard]=useState<RadBoardItem[]>([]);
-  useEffect(()=>{api.queues.getAll("radiology").then(rows=>{if(!rows)return;setBoard((rows as any[]).map(r=>({id:r.id,patient:r.patient_name,images:Array.isArray(r.items)?r.items:[],time:r.queue_time??"",status:r.status as "pending"|"done",reports:r.results||undefined})));}).catch(()=>{});},[]);
-  const [reportModal,setReportModal]=useState<RadBoardItem|null>(null);
-  const [imgReports,setImgReports]=useState<Record<string,{text:string;doctor:string;verdict:string}>>({});
-  const openReportModal=(s:RadBoardItem)=>{
-    setReportModal(s);
-    const init:Record<string,{text:string;doctor:string;verdict:string}>={};
-    s.images.forEach(img=>{init[img]=s.reports?.[img]||{text:"",doctor:"",verdict:"طبيعي"};});
-    setImgReports(init);
-  };
-  const today=_today();
-  const RAD_FILTER=["الكل",...RAD_DEVICES];
-  const filteredImgs=_radImgs.filter(t=>deviceFilter==="الكل"||t.device===deviceFilter);
-  const selImgsData=selImgs.map(id=>_radImgs.find(t=>t.id===id)!).filter(Boolean);
-  const imgTotal=selImgsData.reduce((s,t)=>s+t.price,0);
-  const discAmt=Math.min(parseFloat(discount)||0,imgTotal); const netTotal=imgTotal-discAmt;
-  const paidAmt=parseFloat(paid)||0; const debtAmt=Math.max(0,netTotal-paidAmt); const creditAmt=Math.max(0,paidAmt-netTotal);
-  const patName=selPat?selPat.name:newPat.name; const patId=selPat?selPat.id:(newPat.pid.trim()||generatePatientId());
-  const prevDebt=selPat?debts.filter(d=>d.pid===selPat.id).reduce((s,d)=>s+d.amount,0):0;
-  const totalAllDebts=debts.reduce((s,d)=>s+d.amount,0);
-  const toggleImg=(id:number)=>setSelImgs(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
-  const reset=()=>{if(!patientId){setStep(0);setSelPat(null);}else{setStep(2);setSelPat(preselected);}setSelImgs([]);setDiscount("");setPaid("");setPayMode("cash");};
-  const handleSave=()=>{
-    const today=_today();const radTime=_nowHHMM();
-    if(!patName.trim()||selImgs.length===0)return;
-    if(mode==="new" && newPat.pid.trim() && mockPatients.find(p=>p.id===newPat.pid.trim())){toast("رقم الهوية مستخدم مسبقاً — اختر رقم آخر أو اتركه فارغاً للتوليد التلقائي","error");return;}
-    if(mode==="new" && !mockPatients.find(p=>p.id===patId)){
-      mockPatients.push({id:patId,name:patName,age:30,phone:newPat.phone||"—",blood:newPat.blood||"A+",insurance:newPat.insurance,dept:"radiology",date:today,debt:0});
-      _syncPatients();
-    }
-    if(paidAmt>0)doDeposit("radiology",paidAmt,`دفعة مريض — ${patName}`,"إيراد مريض");
-    if(debtAmt>0){const nd:DebtRow={id:Date.now(),patient:patName,pid:patId,dept:"الأشعة",amount:debtAmt,date:today,days:0,phone:selPat?.phone||newPat.phone||"—"};setDebts(p=>[nd,...p]);api.finance.debts.create({patient:patName,patient_id:patId,dept:"الأشعة",amount:debtAmt,date:api.parseDateISO(today),phone:selPat?.phone||newPat.phone||""}).then(r=>{if(r&&(r as any).id)setDebts(p=>p.map(d=>d.id===nd.id?{...d,id:(r as any).id}:d));}).catch(()=>{});}
-    const radImgNames=selImgsData.map(t=>t.name);
-    const radLid=Date.now();
-    setBoard(p=>[{id:radLid,patient:patName,images:radImgNames,time:radTime,status:"pending" as const},...p]);
-    api.queues.create({dept:"radiology",patient_name:patName,items:radImgNames,queue_time:radTime,status:"pending"}).then(r=>{if(r)setBoard(p=>p.map(s=>s.id===radLid?{...s,id:r.id}:s));}).catch(()=>{});
-    toast(`تم تسجيل ${selImgs.length} صورة لـ ${patName}${debtAmt>0?" — دين: "+fmt(debtAmt):creditAmt>0?" — رصيد: "+fmt(creditAmt):" ✓"}`,"success");
-    reset();setView("board");
-  };
-  const deliver=(id:number)=>{setBoard(p=>p.map(s=>s.id===id?{...s,status:"done" as const}:s));api.queues.updateStatus(id,"done");toast("تم تسليم نتائج الأشعة ✓");};
-  const buildRadReportHtml=(s:RadBoardItem,reports:Record<string,{text:string;doctor:string;verdict:string}>)=>{
-    const pt=mockPatients.find(p=>p.name===s.patient);
-    const infoItems:string[]=[];
-    infoItems.push(`<div class="pt-field"><b>المريض:</b> ${s.patient}</div>`);
-    if(pt)infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
-    if(pt)infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
-    infoItems.push(`<div class="pt-field"><b>تاريخ الفحص:</b> ${today}</div>`);
-    let body=`<div class="pt-info">${infoItems.join("")}</div>`;
-    s.images.forEach(img=>{
-      const r=reports[img]||{text:"",doctor:"",verdict:"—"};
-      body+=`<div class="tests-title">${img}</div>`;
-      body+=`<p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor||"—"}</p>`;
-      body+=`<p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict||"—"}</p>`;
-      body+=`<p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text||"—"}</p>`;
-    });
-    body+=`<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الطبيب المُشخِّص</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div><div class="sig-box"><div class="sig-line"></div>ختم قسم الأشعة</div></div>`;
-    return `<div class="pt-card">${body}</div>`;
-  };
-  const printRadReport=(s:RadBoardItem)=>{
-    printHtml(buildRadReportHtml(s,s.reports||{}),`تقرير أشعة تشخيصية — ${s.patient}`);
-  };
-  const saveReportAndDeliver=()=>{
-    if(!reportModal)return;
-    setBoard(p=>p.map(s=>s.id===reportModal.id?{...s,status:"done" as const,reports:{...imgReports}}:s));
-    api.queues.updateStatus(reportModal.id,"done",{...imgReports}).catch(()=>{});
-    toast("تم حفظ التقرير وتسليم النتائج ✓","success");
-    setReportModal(null);
-  };
-  const handleUploadClick=(id:number)=>{setUploadTargetId(id);fileInputRef.current?.click();};
-  const handleFileChange=(e:React.ChangeEvent<HTMLInputElement>)=>{
-    const files=Array.from(e.target.files||[]);
-    if(!files.length||uploadTargetId===null)return;
-    const names=files.map(f=>f.name);
-    setUploadedResults(p=>({...p,[uploadTargetId]:[...(p[uploadTargetId]||[]),...names]}));
-    const fd=new FormData();files.forEach(f=>fd.append("files",f));
-    {const _tok=getAdminToken();fetch(`/api/sessions/${uploadTargetId}/files`,{method:"POST",headers:_tok?{Authorization:`Bearer ${_tok}`}:{},body:fd}).catch(()=>{});}
-    toast(`تم رفع ${files.length} ملف للأشعة ✓`,"success");
-    e.target.value="";
-    setUploadTargetId(null);
-  };
-  const handleRemoveFile=(sessionId:number,fileName:string)=>{
-    setUploadedResults(p=>{
-      const updated=(p[sessionId]||[]).filter(f=>f!==fileName);
-      if(updated.length===0){const {[sessionId]:_,...rest}=p;return rest;}
-      return {...p,[sessionId]:updated};
-    });
-  };
-  // steps: 0=choose, 1=patient data, 2=financial details, 3=session images
-  const STEP_LABELS=["بيانات المريض","ملف الجلسة","التفاصيل المالية"];
-  const stepIdx=step-1; const pendingCount=board.filter(s=>s.status==="pending").length;
-  return(
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-2">
-          {[{k:"register",l:"تسجيل جلسة جديدة"},{k:"board",l:"لوحة الحالة"}].map(t=>(
-            <button key={t.k} onClick={()=>setView(t.k as any)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${view===t.k?"bg-[#1B3A6B] text-white shadow-sm":"bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{border:"1px solid #E0E0E0"}}>
-              {t.k==="register"?<Plus size={14}/>:<Layers size={14}/>}{t.l}
-              {t.k==="board"&&pendingCount>0&&<span className="bg-[#FF8F00] text-white text-xs rounded-full px-1.5 font-bold">{pendingCount}</span>}
-            </button>
-          ))}
-        </div>
-        {view==="register"&&step>0&&(
-          <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl" style={{border:"1px solid #E0E0E0"}}>
-            {STEP_LABELS.map((s,i)=>(
-              <div key={s} className="flex items-center gap-2">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${stepIdx>=i?"bg-[#1B3A6B] text-white":"bg-[#E0E0E0] text-[#999]"}`}>{i+1}</div>
-                <span className={`text-xs ${stepIdx===i?"text-[#1B3A6B] font-bold":stepIdx>i?"text-[#555]":"text-[#999]"}`}>{s}</span>
-                {i<STEP_LABELS.length-1&&<ChevronLeft size={12} className="text-[#CCC] mx-1"/>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {view==="register"&&(
-        <div>
-          {step===0&&(
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 max-w-xl mx-auto mt-6 sm:mt-10">
-              {[{m:"new",Icon:UserPlus,title:"تسجيل مريض جديد",sub:"مريض يزور الأشعة لأول مرة",color:"#1B3A6B",bg:"#EBF3FB"},{m:"existing",Icon:Search,title:"مريض مسجل مسبقاً",sub:"ابحث بالاسم أو رقم الملف",color:"#0D7377",bg:"#E6F4F4"}].map(o=>(
-                <button key={o.m} onClick={()=>{setMode(o.m as any);setStep(1);}} className="flex flex-col items-center gap-4 p-6 sm:p-8 rounded-2xl bg-white border-2 border-[#E0E0E0] hover:border-[#1B3A6B] transition-all text-center">
-                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{backgroundColor:o.bg}}><o.Icon size={32} style={{color:o.color}}/></div>
-                  <div><p className="text-base font-bold text-[#1B3A6B] mb-1">{o.title}</p><p className="text-xs text-[#999]">{o.sub}</p></div>
-                </button>
-              ))}
-            </div>
-          )}
-          {step===1&&mode==="new"&&(
-            <Card title="بيانات المريض الأساسية">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">الاسم الكامل <span className="text-[#D32F2F]">*</span></label>
-                  <input value={newPat.name} onChange={e=>setNewPat(p=>({...p,name:e.target.value}))} placeholder="أدخل الاسم الرباعي" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">رقم الهوية <span className="text-[#D32F2F]">*</span></label>
-                  <input value={newPat.pid} onChange={e=>setNewPat(p=>({...p,pid:e.target.value.replace(/\D/g,"").slice(0,9)}))} placeholder="رقم الهوية 9 أرقام" maxLength={9} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">رقم الجوال <span className="text-[#D32F2F]">*</span></label>
-                  <input value={newPat.phone} onChange={e=>setNewPat(p=>({...p,phone:e.target.value}))} placeholder="+970" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">تاريخ الميلاد <span className="text-[#D32F2F]">*</span></label>
-                  <input type="date" value={newPat.dob} onChange={e=>setNewPat(p=>({...p,dob:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">البريد الإلكتروني</label>
-                  <input type="email" value={newPat.email} onChange={e=>setNewPat(p=>({...p,email:e.target.value}))} placeholder="example@email.com" className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">العنوان</label>
-                  <input value={newPat.address} onChange={e=>setNewPat(p=>({...p,address:e.target.value}))} placeholder="المدينة، الشارع..." className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">فصيلة الدم <span className="text-[#D32F2F]">*</span></label>
-                  <select value={newPat.blood} onChange={e=>setNewPat(p=>({...p,blood:e.target.value}))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}>
-                    <option value="">اختر فصيلة الدم</option>
-                    {"A+ A- B+ B- O+ O- AB+ AB-".split(" ").map(b=><option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-[#555]">الجنس <span className="text-[#D32F2F]">*</span></label>
-                  <div className="flex gap-6 items-center h-10">
-                    {[{v:"male",l:"ذكر"},{v:"female",l:"أنثى"}].map(g=>(
-                      <label key={g.v} className="flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="rad-gender" value={g.v} checked={newPat.gender===g.v} onChange={()=>setNewPat(p=>({...p,gender:g.v as "male"|"female"}))} className="accent-[#1B3A6B]"/>
-                        <span className="text-sm">{g.l}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mt-4 pt-4" style={{borderTop:"1px solid #E0E0E0"}}>
-                {[{key:"allergies",label:"حساسية / موانع دوائية"},{key:"chronic",label:"أمراض مزمنة"},{key:"insurance",label:"تأمين صحي"}].map(item=>(
-                  <div key={item.key} className="flex items-center justify-between px-4 py-3 rounded-xl" style={{backgroundColor:"#FAFAFA",border:"1px solid #E0E0E0"}}>
-                    <span className="text-xs font-semibold text-[#555]">{item.label} <span className="text-[#D32F2F]">*</span></span>
-                    <button type="button" onClick={()=>setNewPat(p=>({...p,[item.key]:!(p as any)[item.key]}))}
-                      className="relative w-11 h-6 rounded-full transition-colors flex-shrink-0"
-                      style={{backgroundColor:(newPat as any)[item.key]?"#1B3A6B":"#CCC"}}>
-                      <span className="absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all" style={{right:(newPat as any)[item.key]?"2px":"auto",left:(newPat as any)[item.key]?"auto":"2px"}}/>
-                    </button>
-                    <span className="text-xs text-[#999] w-4">{(newPat as any)[item.key]?"نعم":"لا"}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex gap-3 mt-5"><Btn variant="outline" onClick={()=>setStep(0)}>رجوع</Btn><Btn variant="secondary" onClick={()=>setStep(2)} disabled={!newPat.name.trim()||!newPat.blood}>التالي: ملف الجلسة →</Btn></div>
-            </Card>
-          )}
-          {step===1&&mode==="existing"&&(
-            <Card title="بحث عن مريض مسجل">
-              <div className="relative mb-3"><Search size={14} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]"/><input value={patSearch} onChange={e=>setPatSearch(e.target.value)} placeholder="ابحث بالاسم أو رقم الملف..." className="w-full h-10 pr-9 pl-3 rounded-lg text-sm outline-none" style={{border:"1px solid #CCC",backgroundColor:"#FAFAFA"}}/></div>
-              <div className="space-y-2 max-h-72 overflow-y-auto">
-                {mockPatients.filter(p=>!patSearch.trim()||p.name.includes(patSearch)||p.id.includes(patSearch)).map(p=>(
-                  <button key={p.id} onClick={()=>setSelPat(p)} className={`w-full flex items-center gap-3 p-3 rounded-xl text-right transition-colors ${selPat?.id===p.id?"border-[#1B3A6B] bg-[#EBF3FB]":"border-[#E0E0E0] bg-white hover:border-[#1B3A6B]"}`} style={{border:"1px solid"}}>
-                    <div className="w-10 h-10 rounded-xl bg-[#E6F4F4] flex items-center justify-center text-sm font-bold text-[#0D7377] flex-shrink-0">{p.name.split(" ").slice(0,2).map((w:string)=>w[0]).join("")}</div>
-                    <div className="flex-1 min-w-0"><p className="text-sm font-semibold">{p.name}</p><p className="text-xs text-[#999]">{p.id} · {p.blood}</p></div>
                     {debts.filter(d=>d.pid===p.id).reduce((s,d)=>s+d.amount,0)>0&&<span className="text-xs font-bold text-[#D32F2F]">{fmt(debts.filter(d=>d.pid===p.id).reduce((s,d)=>s+d.amount,0))}</span>}
                     {selPat?.id===p.id&&<Check size={16} className="text-[#1B3A6B] flex-shrink-0"/>}
                   </button>
@@ -5358,7 +3272,7 @@ function LabQueueScreen({isAdmin=false,perms}:{isAdmin?:boolean;perms?:DeptPermi
           setData(rows.map((r:any)=>({
             id:r.id,
             patient:r.patient_name??"—",
-            tests:Array.isArray(r.items)?r.items:[],
+            tests:Array.isArray(r.items)?r.items.map((t:any)=>String(t)):[],
             time:r.queue_time??"",
             status:r.status==="done"?"done":"pending",
             date:r.created_at ? r.created_at.substring(0,10) : ""
@@ -6007,8 +3921,18 @@ function TestCatalogScreen({toast,labTests:labTestsProp=[],setLabTests,perms}:{t
   const openEdit=(t:LabTest)=>{setForm({code:t.code,name:t.name,nameEn:t.nameEn,cat:t.cat,priceOfficial:String(t.priceOfficial||0),price:String(t.price),consumablesCost:String(t.consumablesCost||0),priceCost:String(t.priceCost||0),isL2L:String(t.isL2L||false),kit:t.kit,kitQty:String(t.kitQty||0),kitUnit:t.kitUnit||"وحدة",kitThreshold:String(t.kitThreshold||10),time:t.time,timeUnit:"ساعة",desc:"",notes:""});setNormalRanges(t.normalRanges||[{param:"",unit:"",min:"",max:"",note:""}]);setEditItem(t);setAddModal(true)};
   const handleSave=()=>{
     if(!form.name.trim()||!form.code.trim()||!form.price)return;
-    const base={code:form.code,name:form.name,nameEn:form.nameEn,cat:form.cat,priceOfficial:parseFloat(form.priceOfficial)||0,price:parseFloat(form.price)||0,consumablesCost:parseFloat(form.consumablesCost)||0,priceCost:parseFloat(form.priceCost)||0,isL2L:form.isL2L==="true",kit:form.kit,kitQty:parseInt(form.kitQty)||0,kitUnit:form.kitUnit,kitThreshold:parseInt(form.kitThreshold)||10,time:form.time,normalRanges};
-    const dbPayload={code:form.code,name:form.name,name_en:form.nameEn,category:form.cat,price_official:parseFloat(form.priceOfficial)||0,price:parseFloat(form.price)||0,consumables_cost:parseFloat(form.consumablesCost)||0,price_cost:parseFloat(form.priceCost)||0,is_l2l:form.isL2L==="true",kit:form.kit,kit_qty:parseInt(form.kitQty)||0,kit_unit:form.kitUnit,kit_threshold:parseInt(form.kitThreshold)||10,time_estimate:form.time,normalRanges};
+    const isExternal = form.isL2L === "true";
+    let finalCode = form.code.trim();
+    if(isExternal && !finalCode.toUpperCase().endsWith("-EXT") && !finalCode.toUpperCase().endsWith("-L2L")){
+      finalCode = finalCode + "-EXT";
+    }
+    const exists = tests.some(t => t.code.toLowerCase() === finalCode.toLowerCase() && t.id !== editItem?.id);
+    if(exists){
+      toast("رمز الفحص (الكود) مستخدم مسبقاً، الرجاء استخدام رمز مختلف", "error");
+      return;
+    }
+    const base={code:finalCode,name:form.name,nameEn:form.nameEn,cat:form.cat,priceOfficial:parseFloat(form.priceOfficial)||0,price:parseFloat(form.price)||0,consumablesCost:parseFloat(form.consumablesCost)||0,priceCost:parseFloat(form.priceCost)||0,isL2L:isExternal,kit:form.kit,kitQty:parseInt(form.kitQty)||0,kitUnit:form.kitUnit,kitThreshold:parseInt(form.kitThreshold)||10,time:form.time,normalRanges};
+    const dbPayload={code:finalCode,name:form.name,name_en:form.nameEn,category:form.cat,price_official:parseFloat(form.priceOfficial)||0,price:parseFloat(form.price)||0,consumables_cost:parseFloat(form.consumablesCost)||0,price_cost:parseFloat(form.priceCost)||0,is_l2l:isExternal,kit:form.kit,kit_qty:parseInt(form.kitQty)||0,kit_unit:form.kitUnit,kit_threshold:parseInt(form.kitThreshold)||10,time_estimate:form.time,normalRanges};
     if(editItem){
       const updated=tests.map(t=>t.id===editItem.id?{...t,...base}:t);
       initialLabTests.splice(0,initialLabTests.length,...updated);
@@ -14596,6 +12520,11 @@ export default function App(){
     if(req)api.finance.purchaseRequests.update(id,{dept:req.dept,requested_by:req.requestedBy,date:_prDateISO(req.date),total_amount:req.totalAmount,status:"rejected",rejection_reason:reason,note:req.note});
   };
   const onDeletePurchaseRequest=(id:number)=>{
+    const req=purchaseRequests.find(r=>r.id===id);
+    // إذا كان الطلب مُعتمَداً وتم سحب مبلغ منه، نُعيد المبلغ إلى صندوق القسم
+    if(req&&req.status==="approved"&&req.paidAmount>0){
+      doDeposit(req.dept,req.paidAmount,`استرداد مشتريات محذوفة — طلب #${id}`,"استرداد مشتريات");
+    }
     setPurchaseRequests(p=>p.filter(r=>r.id!==id));
     api.finance.purchaseRequests.delete(id).catch(()=>{});
   };
@@ -14701,7 +12630,7 @@ export default function App(){
       case"open-patient":      return<OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast}/>;
       case"new-patient":       return<NewPatientScreen dept={dept} doDeposit={(d,a,t,ty)=>doDeposit(d,a,t,ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests}/>;
       case"new-session":       return<NewSessionScreen dept={dept} patientId={route.patientId||mockPatients[0]?.id||""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs}/>;
-      case"patient-file":      return<PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId||mockPatients[0]?.id||""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id=>setSessions(p=>p.filter(s=>s.id!==id))}/>;
+      case"patient-file":      return<PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId||mockPatients[0]?.id||""} sessions={sessions} debts={debts} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id=>setSessions(p=>p.filter(s=>s.id!==id))}/>;
       case"surgery-clinic-inv":return<SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify}/>;
       case"surgery-purchase-reqs": return<DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type==="admin"} dept="surgery"/>;
       case"lab-session":       return<LabSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests}/>;
@@ -14866,7 +12795,7 @@ export default function App(){
       {isMobile&&!collapsed&&<div className="fixed inset-0 z-30 bg-black/50 no-print" onClick={()=>setCollapsed(true)}/>}
       <div className="no-print"><Sidebar collapsed={collapsed} isMobile={isMobile} activeRoute={route} onNavigate={setRoute} onClose={()=>setCollapsed(true)} onLogout={handleLogout} customDepts={customDepts} hiddenSections={sidebarSettings.hiddenSections} isAdmin={true}/></div>
       <div style={{marginRight:sidebarW,transition:"margin-right 0.25s ease"}}>
-        <div className="no-print"><TopBar pageTitle={pageTitle} sidebarCollapsed={collapsed} isMobile={isMobile} onToggle={()=>setCollapsed(!collapsed)} notifications={notifications} onDismissNotif={id=>setNotifications(p=>p.filter(n=>n.id!==id))} onClearAllNotif={()=>setNotifications([])}/></div>
+        <div className="no-print"><TopBar pageTitle={pageTitle} sidebarCollapsed={collapsed} isMobile={isMobile} onToggle={()=>setCollapsed(!collapsed)} notifications={notifications} onDismissNotif={id=>setNotifications(p=>p.filter(n=>n.id!==id))} onClearAllNotif={()=>setNotifications([])} adminPendingPurchases={purchaseRequests.filter(r=>r.status==="pending")} adminPendingAdvances={staffAdvanceRequests.filter(r=>r.status==="pending")} adminExternalDebts={externalDebts}/></div>
         <div style={{paddingTop:60}}>
           <div className="no-print">
             <BroadcastBanner message={broadcastNotice}/>
