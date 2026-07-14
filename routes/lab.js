@@ -51,7 +51,7 @@ router.post('/tests', requireAdmin, async (req, res) => {
   const {
     code, name, name_en, category, price_official, price,
     consumables_cost, price_cost, is_l2l, kit, kit_qty, kit_unit,
-    kit_threshold, time_estimate, normalRanges
+    kit_threshold, kit_inventory_id, time_estimate, normalRanges
   } = req.body;
   const client = await pool.connect();
   try {
@@ -59,11 +59,11 @@ router.post('/tests', requireAdmin, async (req, res) => {
     const { rows } = await client.query(
       `INSERT INTO lab_tests
        (code,name,name_en,category,price_official,price,consumables_cost,price_cost,
-        is_l2l,kit,kit_qty,kit_unit,kit_threshold,time_estimate)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+        is_l2l,kit,kit_qty,kit_unit,kit_threshold,kit_inventory_id,time_estimate)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [code ?? null, name, name_en ?? null, category ?? null, price_official ?? 0,
        price ?? 0, consumables_cost ?? 0, price_cost ?? 0, is_l2l ?? false,
-       kit ?? null, kit_qty ?? 0, kit_unit ?? null, kit_threshold ?? 0, time_estimate ?? null]
+       kit ?? null, kit_qty ?? 0, kit_unit ?? null, kit_threshold ?? 0, kit_inventory_id ?? null, time_estimate ?? null]
     );
     const createdTest = rows[0];
     const rangesToInsert = normalRanges || req.body.normal_ranges;
@@ -100,12 +100,12 @@ router.put('/tests/:id', requireAdmin, async (req, res) => {
     const {
       code, name, name_en, category, price_official, price,
       consumables_cost, price_cost, is_l2l, kit, kit_qty, kit_unit,
-      kit_threshold, time_estimate, normalRanges
+      kit_threshold, kit_inventory_id, time_estimate, normalRanges
     } = req.body;
     const { rows } = await client.query(
       `UPDATE lab_tests SET code=$1,name=$2,name_en=$3,category=$4,price_official=$5,
        price=$6,consumables_cost=$7,price_cost=$8,is_l2l=$9,kit=$10,kit_qty=$11,
-       kit_unit=$12,kit_threshold=$13,time_estimate=$14 WHERE id=$15 RETURNING *`,
+       kit_unit=$12,kit_threshold=$13,kit_inventory_id=$14,time_estimate=$15 WHERE id=$16 RETURNING *`,
       [
         code             !== undefined ? code             : c.code,
         name             !== undefined ? name             : c.name,
@@ -120,6 +120,7 @@ router.put('/tests/:id', requireAdmin, async (req, res) => {
         kit_qty          !== undefined ? kit_qty          : c.kit_qty,
         kit_unit         !== undefined ? kit_unit         : c.kit_unit,
         kit_threshold    !== undefined ? kit_threshold    : c.kit_threshold,
+        kit_inventory_id !== undefined ? kit_inventory_id : c.kit_inventory_id,
         time_estimate    !== undefined ? time_estimate    : c.time_estimate,
         req.params.id,
       ]

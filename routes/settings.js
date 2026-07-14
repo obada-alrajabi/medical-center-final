@@ -176,6 +176,81 @@ router.put('/sidebar', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Print Settings ────────────────────────────────────────────────────────
+// One row per scope: 'lab' | 'surgery' | 'rehab' | 'radiology' | 'general'.
+// The 4 department scopes drive every print button inside that department;
+// 'general' drives every other print button in the system (reception,
+// financial reports, vouchers, payroll, patient-file printouts, etc.).
+const PRINT_SCOPES = ['lab', 'surgery', 'rehab', 'radiology', 'general'];
+
+router.get('/print', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM print_settings');
+    // Always return all 5 scopes, even if a row is somehow missing (e.g. DB
+    // migration hasn't run yet on an older deployment) — fall back to defaults.
+    const bySc = Object.fromEntries(rows.map(r => [r.scope, r]));
+    const full = PRINT_SCOPES.map(sc => bySc[sc] ?? {
+      scope: sc, letterhead_image: null,
+      margin_top: 25, margin_right: 15, margin_bottom: 20, margin_left: 15,
+      paper_size: 'A4', orientation: 'portrait', font_size: 13, font_family: null,
+      show_signature: true, with_header: true,
+    });
+    res.json(full);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/print/:scope', async (req, res) => {
+  const scope = req.params.scope;
+  if (!PRINT_SCOPES.includes(scope)) return res.status(400).json({ error: 'نطاق طباعة غير معروف' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM print_settings WHERE scope=$1', [scope]);
+    res.json(rows[0] ?? { scope });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/print/:scope', requireAdmin, async (req, res) => {
+  const scope = req.params.scope;
+  if (!PRINT_SCOPES.includes(scope)) return res.status(400).json({ error: 'نطاق طباعة غير معروف' });
+  const {
+    letterhead_image, margin_top, margin_right, margin_bottom, margin_left,
+    paper_size, orientation, font_size, font_family, show_signature, with_header,
+  } = req.body;
+  try {
+    const { rows: existingRows } = await pool.query('SELECT * FROM print_settings WHERE scope=$1', [scope]);
+    const existing = existingRows[0] ?? {};
+    const { rows } = await pool.query(
+      `INSERT INTO print_settings (scope, letterhead_image, margin_top, margin_right, margin_bottom, margin_left,
+                                    paper_size, orientation, font_size, font_family, show_signature, with_header, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+       ON CONFLICT (scope) DO UPDATE SET
+         letterhead_image=$2, margin_top=$3, margin_right=$4, margin_bottom=$5, margin_left=$6,
+         paper_size=$7, orientation=$8, font_size=$9, font_family=$10, show_signature=$11, with_header=$12, updated_at=NOW()
+       RETURNING *`,
+      [
+        scope,
+        letterhead_image !== undefined ? letterhead_image : (existing.letterhead_image ?? null),
+        margin_top ?? existing.margin_top ?? 25,
+        margin_right ?? existing.margin_right ?? 15,
+        margin_bottom ?? existing.margin_bottom ?? 20,
+        margin_left ?? existing.margin_left ?? 15,
+        paper_size ?? existing.paper_size ?? 'A4',
+        orientation ?? existing.orientation ?? 'portrait',
+        font_size ?? existing.font_size ?? 13,
+        font_family !== undefined ? font_family : (existing.font_family ?? null),
+        show_signature ?? existing.show_signature ?? true,
+        with_header ?? existing.with_header ?? true,
+      ]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Suppliers ─────────────────────────────────────────────────────────────
 router.get('/suppliers', async (_req, res) => {
   try {

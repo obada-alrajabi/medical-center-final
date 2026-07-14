@@ -31,6 +31,7 @@ const ALLOWED_TABLES = [
   'patient_sessions',
   'patients',
   'payment_vouchers',
+  'print_settings',
   'purchase_request_items',
   'purchase_requests',
   'queues',

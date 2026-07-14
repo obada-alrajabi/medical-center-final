@@ -36,33 +36,45 @@ router.post('/', async (req, res) => {
     has_allergy, allergy_detail, has_chronic, chronic_detail,
     has_insurance, insurance_company, dept, debt, notes, date
   } = req.body;
-  try {
-    let patientId = id;
-    if (!patientId) {
-      const { rows: maxRow } = await pool.query(
-        `SELECT MAX(CAST(id AS INTEGER)) AS max_id FROM patients WHERE id ~ '^[0-9]+$'`
+  // ── حماية من تعارض رقم الملف: العميل (المتصفح) يحسب رقم الملف التالي محلياً
+  //    من نسخته الخاصة بقائمة المرضى، فلو سجّل موظفان مريضين جديدين بنفس اللحظة
+  //    تقريباً (مثلاً موظف بالمختبر وموظف بالأشعة)، ممكن يحسبا نفس الرقم. نحاول
+  //    أولاً بالرقم المُرسَل من العميل، وإذا تعارض مع رقم موجود فعلياً (unique
+  //    violation) نعيد توليد رقم جديد من الخادم ونحاول مجدداً بدل فشل التسجيل
+  //    بالكامل بصمت. ──
+  const maxAttempts = 5;
+  let lastErr = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      let patientId = attempt === 0 ? id : null;
+      if (!patientId) {
+        const { rows: maxRow } = await pool.query(
+          `SELECT MAX(CAST(id AS INTEGER)) AS max_id FROM patients WHERE id ~ '^[0-9]+$'`
+        );
+        const maxId = maxRow[0]?.max_id;
+        patientId = String(maxId ? maxId + 1 : 100001);
+      }
+      const { rows } = await pool.query(
+        `INSERT INTO patients
+         (id,name,age,gender,phone,national_id,blood_type,address,email,
+          has_allergy,allergy_detail,has_chronic,chronic_detail,
+          has_insurance,insurance_company,dept,debt,notes,date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+         RETURNING *`,
+        [patientId, name, age ?? null, gender ?? null, phone ?? null, national_id ?? null,
+         blood_type ?? null, address ?? null, email ?? null,
+         has_allergy ?? false, allergy_detail ?? null,
+         has_chronic ?? false, chronic_detail ?? null,
+         has_insurance ?? false, insurance_company ?? null,
+         dept ?? null, debt ?? 0, notes ?? null, date ?? null]
       );
-      const maxId = maxRow[0]?.max_id;
-      patientId = String(maxId ? maxId + 1 : 100001);
+      return res.status(201).json(rows[0]);
+    } catch (err) {
+      if (err.code === '23505' && attempt < maxAttempts - 1) { lastErr = err; continue; }
+      return res.status(500).json({ error: err.message });
     }
-    const { rows } = await pool.query(
-      `INSERT INTO patients
-       (id,name,age,gender,phone,national_id,blood_type,address,email,
-        has_allergy,allergy_detail,has_chronic,chronic_detail,
-        has_insurance,insurance_company,dept,debt,notes,date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-       RETURNING *`,
-      [patientId, name, age ?? null, gender ?? null, phone ?? null, national_id ?? null,
-       blood_type ?? null, address ?? null, email ?? null,
-       has_allergy ?? false, allergy_detail ?? null,
-       has_chronic ?? false, chronic_detail ?? null,
-       has_insurance ?? false, insurance_company ?? null,
-       dept ?? null, debt ?? 0, notes ?? null, date ?? null]
-    );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
+  return res.status(500).json({ error: lastErr?.message || 'failed to allocate patient id' });
 });
 
 router.put('/:id', async (req, res) => {

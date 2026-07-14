@@ -1,5 +1,16 @@
-import { useState, useRef, useCallback } from "react";
-import { Image as ImageIcon, Printer, FileDown } from "lucide-react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { Image as ImageIcon, Printer, FileDown, Save, CheckCircle } from "lucide-react";
+import { api, type PrintSettingsRow } from "../api";
+
+// ─── Unified print settings ─────────────────────────────────────────────────
+// Backed by ONE backend row per scope: "lab" | "surgery" | "rehab" |
+// "radiology" | "general". A departmentId that isn't one of the 4 special
+// departments (e.g. a custom department such as "الاستقبال") resolves to the
+// "general" scope, matching the admin's "الإعدادات العامة" print settings —
+// this is the exact same resolver App.tsx uses when actually printing.
+const SPECIAL_DEPT_SCOPES = ["lab", "surgery", "rehab", "radiology"];
+export const resolvePrintScope = (departmentId?: string | null): string =>
+  departmentId && SPECIAL_DEPT_SCOPES.includes(departmentId) ? departmentId : "general";
 
 export interface UnifiedPrintSettings {
   headerEnabled: boolean;
@@ -8,6 +19,9 @@ export interface UnifiedPrintSettings {
   marginBottom: number;
   marginRight: number;
   marginLeft: number;
+  fontFamily: string;
+  fontSize: number;
+  showSignature: boolean;
 }
 
 const DEFAULT_SETTINGS: UnifiedPrintSettings = {
@@ -17,51 +31,44 @@ const DEFAULT_SETTINGS: UnifiedPrintSettings = {
   marginBottom: 20,
   marginRight: 15,
   marginLeft: 15,
+  fontFamily: "Tajawal",
+  fontSize: 13,
+  showSignature: true,
 };
 
-function lsLoad(dept: string): UnifiedPrintSettings {
-  try {
-    const raw = localStorage.getItem(`print_settings_${dept}`);
-    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-  } catch {}
-  try {
-    const lh = localStorage.getItem(`print_letterhead_${dept}`) || "";
-    const mRaw = localStorage.getItem(`print_margins_${dept}`);
-    const m = mRaw ? JSON.parse(mRaw) : {};
-    return {
-      headerEnabled: true,
-      headerImageBase64: lh,
-      marginTop: m.top ?? DEFAULT_SETTINGS.marginTop,
-      marginBottom: m.bottom ?? DEFAULT_SETTINGS.marginBottom,
-      marginRight: m.right ?? DEFAULT_SETTINGS.marginRight,
-      marginLeft: m.left ?? DEFAULT_SETTINGS.marginLeft,
-    };
-  } catch {}
-  return { ...DEFAULT_SETTINGS };
-}
+const PRINT_FONT_FAMILIES = [{ id: "Tajawal", label: "تجوّل (افتراضي)" }, { id: "Cairo", label: "القاهرة" }, { id: "Amiri", label: "أميري (كلاسيكي)" }, { id: "Arial", label: "أريال" }];
+const PRINT_FONT_SIZES = [{ v: 11, l: "صغير — 11px" }, { v: 13, l: "عادي — 13px" }, { v: 15, l: "كبير — 15px" }, { v: 17, l: "كبير جداً — 17px" }];
 
-function lsSave(dept: string, s: UnifiedPrintSettings) {
-  try {
-    localStorage.setItem(`print_settings_${dept}`, JSON.stringify(s));
-    if (s.headerImageBase64) {
-      localStorage.setItem(`print_letterhead_${dept}`, s.headerImageBase64);
-      localStorage.setItem("print_letterhead_global", s.headerImageBase64);
-    } else {
-      localStorage.removeItem(`print_letterhead_${dept}`);
-    }
-    localStorage.setItem(
-      `print_margins_${dept}`,
-      JSON.stringify({ top: s.marginTop, bottom: s.marginBottom, right: s.marginRight, left: s.marginLeft })
-    );
-  } catch {}
-}
+const rowToSettings = (r: PrintSettingsRow | null | undefined): UnifiedPrintSettings => ({
+  headerEnabled: r?.with_header ?? DEFAULT_SETTINGS.headerEnabled,
+  headerImageBase64: r?.letterhead_image || "",
+  marginTop: r?.margin_top ?? DEFAULT_SETTINGS.marginTop,
+  marginBottom: r?.margin_bottom ?? DEFAULT_SETTINGS.marginBottom,
+  marginRight: r?.margin_right ?? DEFAULT_SETTINGS.marginRight,
+  marginLeft: r?.margin_left ?? DEFAULT_SETTINGS.marginLeft,
+  fontFamily: r?.font_family || DEFAULT_SETTINGS.fontFamily,
+  fontSize: r?.font_size ?? DEFAULT_SETTINGS.fontSize,
+  showSignature: r?.show_signature ?? DEFAULT_SETTINGS.showSignature,
+});
+
+const settingsToRowPatch = (s: UnifiedPrintSettings): Partial<PrintSettingsRow> => ({
+  with_header: s.headerEnabled,
+  letterhead_image: s.headerImageBase64 || null,
+  margin_top: s.marginTop,
+  margin_bottom: s.marginBottom,
+  margin_right: s.marginRight,
+  margin_left: s.marginLeft,
+  font_family: s.fontFamily,
+  font_size: s.fontSize,
+  show_signature: s.showSignature,
+});
 
 export function generateUnifiedPrintHtml(
   bodyHtml: string,
   settings: UnifiedPrintSettings,
   title = "طباعة"
 ): string {
-  const { headerEnabled, headerImageBase64, marginTop, marginBottom, marginRight, marginLeft } = settings;
+  const { headerEnabled, headerImageBase64, marginTop, marginBottom, marginRight, marginLeft, fontFamily, fontSize } = settings;
   const hasBg = headerEnabled && !!headerImageBase64;
   const bgCss = hasBg
     ? `background-image:url('${headerImageBase64}');background-size:100% 100%;background-repeat:no-repeat;-webkit-print-color-adjust:exact;print-color-adjust:exact;`
@@ -72,10 +79,10 @@ export function generateUnifiedPrintHtml(
 <meta charset="UTF-8">
 <title>${title}</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&family=Cairo:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&family=Cairo:wght@400;500;700&family=Amiri&display=swap');
 *{box-sizing:border-box}
 @page{size:A4;margin:0}
-body{margin:0;padding:0;background:transparent;font-family:Tajawal,Arial,sans-serif;direction:rtl;color:#1A1A1A;font-size:13px}
+body{margin:0;padding:0;background:transparent;font-family:${fontFamily},Arial,sans-serif;direction:rtl;color:#1A1A1A;font-size:${fontSize}px}
 .lh-bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;${bgCss}}
 .content-area{
   padding:${marginTop}mm ${marginRight}mm ${marginBottom}mm ${marginLeft}mm;
@@ -130,21 +137,51 @@ interface Props {
   departmentId: string;
   departmentName: string;
   onSettingsChange?: (s: UnifiedPrintSettings) => void;
+  // Called right after a successful backend save with the raw row — callers
+  // use this to refresh the shared `gAllPrintSettings` cache in App.tsx so
+  // every print button reflects the change immediately, without a reload.
+  onSaved?: (row: PrintSettingsRow) => void;
   compact?: boolean;
 }
 
-export default function UnifiedPrintComponent({ departmentId, departmentName, onSettingsChange, compact = false }: Props) {
-  const [settings, setSettings] = useState<UnifiedPrintSettings>(() => lsLoad(departmentId));
+export default function UnifiedPrintComponent({ departmentId, departmentName, onSettingsChange, onSaved, compact = false }: Props) {
+  const scope = resolvePrintScope(departmentId);
+  const [settings, setSettings] = useState<UnifiedPrintSettings>(DEFAULT_SETTINGS);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    api.settings.print.getByScope(scope).then(row => {
+      if (cancelled) return;
+      setSettings(rowToSettings(row));
+      setLoaded(true);
+    }).catch(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
+  }, [scope]);
 
   const update = useCallback((patch: Partial<UnifiedPrintSettings>) => {
     setSettings(prev => {
       const next = { ...prev, ...patch };
-      lsSave(departmentId, next);
       onSettingsChange?.(next);
       return next;
     });
-  }, [departmentId, onSettingsChange]);
+  }, [onSettingsChange]);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      const row = await api.settings.print.update(scope, settingsToRowPatch(settings));
+      if (row) onSaved?.(row);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setSaving(false);
+    }
+  }, [scope, settings, onSaved]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -160,13 +197,25 @@ export default function UnifiedPrintComponent({ departmentId, departmentName, on
 
   const removeImage = () => update({ headerImageBase64: "" });
 
-  const { headerEnabled, headerImageBase64, marginTop, marginBottom, marginRight, marginLeft } = settings;
+  const { headerEnabled, headerImageBase64, marginTop, marginBottom, marginRight, marginLeft, fontFamily, fontSize, showSignature } = settings;
 
   return (
     <div className={compact ? "space-y-3" : "p-6 bg-white rounded-xl shadow-lg space-y-5"} style={compact ? {} : { border: "1px solid #BBDEFB" }}>
-      {!compact && (
-        <h2 className="text-lg font-bold text-[#1B3A6B]">إعدادات الطباعة: {departmentName}</h2>
-      )}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        {!compact ? (
+          <h2 className="text-lg font-bold text-[#1B3A6B]">إعدادات الطباعة: {departmentName}</h2>
+        ) : (
+          <div>
+            <p className="text-sm font-bold text-[#1B3A6B]">⚙️ إعدادات الطباعة — {departmentName}</p>
+            <p className="text-[10px] text-[#999] mt-0.5">تُطبَّق تلقائياً على كل زر طباعة {scope === "general" ? "في النظام (ما عدا المختبر/الجراحة/التأهيلي/الأشعة)" : `داخل هذا القسم`} — لكل الموظفين والمدير على أي جهاز</p>
+          </div>
+        )}
+        <button onClick={save} disabled={saving || !loaded}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-60"
+          style={{ backgroundColor: saved ? "#388E3C" : "#1B3A6B", color: "white" }}>
+          {saved ? <><CheckCircle size={14} />تم الحفظ</> : <><Save size={14} />{saving ? "جارٍ الحفظ..." : "حفظ إعدادات الطباعة"}</>}
+        </button>
+      </div>
 
       {/* Header toggle */}
       <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3" style={{ border: "1px solid #E0E0E0" }}>
@@ -193,7 +242,7 @@ export default function UnifiedPrintComponent({ departmentId, departmentName, on
         {/* Image uploader */}
         {headerEnabled && (
           <div className="mt-2">
-            <p className="text-xs font-semibold text-[#555] mb-2">صورة الترويسة الرسمية</p>
+            <p className="text-xs font-semibold text-[#555] mb-2">صورة الترويسة الرسمية (تُطبع كصفحة A4 كاملة خلف المحتوى)</p>
             {headerImageBase64 ? (
               <div className="rounded-xl overflow-hidden border border-[#D0D9E8]" style={{ background: "#F9FAFB" }}>
                 <img src={headerImageBase64} alt="الترويسة" className="w-full object-contain" style={{ maxHeight: 110 }} />
@@ -238,7 +287,46 @@ export default function UnifiedPrintComponent({ departmentId, departmentName, on
             </div>
           ))}
         </div>
-        <p className="text-[10px] text-[#AAA] mt-2">تُطبَّق على هذا القسم فقط</p>
+      </div>
+
+      {/* Font family + size */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <p className="text-xs font-semibold text-[#555] mb-2">نمط الخط (Font Family)</p>
+          <div className="grid grid-cols-2 gap-2">
+            {PRINT_FONT_FAMILIES.map(f => (
+              <button key={f.id} onClick={() => update({ fontFamily: f.id })}
+                className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors ${fontFamily === f.id ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
+                style={{ border: `1.5px solid ${fontFamily === f.id ? "#1B3A6B" : "#E0E0E0"}`, fontFamily: f.id + ",Arial" }}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-[#555] mb-2">حجم الخط (Font Size)</p>
+          <div className="grid grid-cols-2 gap-2">
+            {PRINT_FONT_SIZES.map(s => (
+              <button key={s.v} onClick={() => update({ fontSize: s.v })}
+                className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors ${fontSize === s.v ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
+                style={{ border: `1.5px solid ${fontSize === s.v ? "#1B3A6B" : "#E0E0E0"}` }}>
+                {s.l}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Signature toggle */}
+      <div className="flex items-center justify-between py-3 px-4 rounded-xl" style={{ backgroundColor: "#F9FAFB", border: "1px solid #E0E0E0" }}>
+        <div>
+          <p className="text-xs font-semibold text-[#333]">التوقيع والختم (Signature & Stamp)</p>
+          <p className="text-[10px] text-[#999] mt-0.5">إظهار خانة توقيع أسفل التقارير التي تدعم ذلك</p>
+        </div>
+        <button onClick={() => update({ showSignature: !showSignature })}
+          className={`w-12 h-6 rounded-full transition-colors relative flex-shrink-0 ${showSignature ? "bg-[#388E3C]" : "bg-[#CCC]"}`}>
+          <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${showSignature ? "right-0.5" : "left-0.5"}`} />
+        </button>
       </div>
 
       {/* Quick print buttons (when used standalone) */}

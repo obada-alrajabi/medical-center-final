@@ -22,11 +22,11 @@ router.get('/', async (req, res) => {
 
 router.post('/', requireFinancialAuth, async (req, res) => {
   try {
-    const { dept, patient_name, patient_num, phone, dest_dept, notes, items, queue_time, status } = req.body;
+    const { dept, patient_id, patient_name, patient_num, phone, dest_dept, notes, items, queue_time, status } = req.body;
     const { rows } = await pool.query(
-      `INSERT INTO queues (dept,patient_name,patient_num,phone,dest_dept,notes,items,queue_time,status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [dept, patient_name, patient_num ?? null, phone ?? null, dest_dept ?? null, notes ?? null,
+      `INSERT INTO queues (dept,patient_id,patient_name,patient_num,phone,dest_dept,notes,items,queue_time,status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [dept, patient_id ?? null, patient_name, patient_num ?? null, phone ?? null, dest_dept ?? null, notes ?? null,
        JSON.stringify(items ?? []), queue_time ?? null, status ?? 'pending']
     );
     res.json(rows[0]);

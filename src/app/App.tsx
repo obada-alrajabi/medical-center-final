@@ -2,9 +2,9 @@
 import { useState, useEffect, useRef, Fragment, useMemo, useCallback } from "react";
 import { calculateFinancials } from "./financialEngine";
 import { calcNetProfit } from "../utils/finance";
-import UnifiedPrintComponent, { type UnifiedPrintSettings, doUnifiedPrint } from "./components/UnifiedPrintComponent";
+import UnifiedPrintComponent from "./components/UnifiedPrintComponent";
 import { createPortal } from "react-dom";
-import { api, setAdminToken, getAdminToken, type PatientReminderRow } from "./api";
+import { api, setAdminToken, getAdminToken, type PatientReminderRow, type PrintSettingsRow } from "./api";
 import { ScreenErrorBoundary } from "./ErrorBoundary";
 import * as XLSX from "xlsx";
 import {
@@ -47,8 +47,6 @@ import {
 } from "./constants";
 import {
   fmt, _JLM_OFFSET, _jlmNow, _nowDT, _today, _isoDate, _localISO, _nowHHMM,
-  _lsGetMargins, _lsSaveMargins, _lsGetLetterhead, _lsGetLetterheadGlobal,
-  _lsGetPrintAdv, _lsSavePrintAdv,
   makeDefaultDeptPerms, inRangeDDMMYYYY,
 } from "./utils";
 import { fireToast } from "./toastStore";
@@ -852,23 +850,58 @@ const withdrawCats: { name: string; value: number }[] = [];
 const patientsPie: { name: string; value: number }[] = [];
 const weeklyOccupancy: { day: string;[dept: string]: number | string }[] = [];
 
-let gPrintSettings: { top: number; right: number; bottom: number; left: number; paperSize: string; orientation: string } = { top: 25, right: 15, bottom: 20, left: 15, paperSize: "A4", orientation: "portrait" };
 let gReportContext: { userName: string; userRole: string } = { userName: "", userRole: "" };
-let gLetterheadImg: string = "";
 const gPrintExportPerDept: Record<string, PrintExportSaved> = {};
 const defaultPrintExportFields = () => ({ name: true, phone: true, nid: false, age: true, blood: false, doctor: true, tests: true, diagnoses: true, medications: true, amount: true, paid: true, debt: true, notes: true });
-let gDeptPrintAdv: DeptPrintAdv = { fontSize: 13, fontFamily: "Tajawal", showSignature: true, withHeader: true };
-const PRINT_FONT_FAMILIES = [{ id: "Tajawal", label: "تجوّل (افتراضي)" }, { id: "Cairo", label: "القاهرة" }, { id: "Amiri", label: "أميري (كلاسيكي)" }, { id: "Arial", label: "أريال" }];
-const PRINT_FONT_SIZES = [{ v: 11, l: "صغير — 11px" }, { v: 13, l: "عادي — 13px" }, { v: 15, l: "كبير — 15px" }, { v: 17, l: "كبير جداً — 17px" }];
 
+// ─── Unified print-settings resolver ───────────────────────────────────────
+// Every print button in the system resolves its letterhead image + margins
+// from ONE of 5 backend-stored scopes: "lab" | "surgery" | "rehab" |
+// "radiology" | "general". The 4 department scopes drive every print button
+// that lives inside that department's own screens; "general" (configured in
+// the admin's "الإعدادات العامة") drives every other print button in the
+// system. Which scope a given print call uses is derived automatically from
+// the ambient `dept` value already threaded through each screen — when
+// `dept` is one of the 4 special department ids the matching scope is used,
+// otherwise (undefined, or any other department such as "الاستقبال") it
+// falls back to "general".
+const PRINT_SCOPE_IDS = ["lab", "surgery", "rehab", "radiology"] as const;
+const _defaultPrintSettingsRow = (scope: string): PrintSettingsRow => ({
+  scope: scope as PrintSettingsRow["scope"], letterhead_image: null,
+  margin_top: 25, margin_right: 15, margin_bottom: 20, margin_left: 15,
+  paper_size: "A4", orientation: "portrait", font_size: 13, font_family: "Tajawal",
+  show_signature: true, with_header: true,
+});
+let gAllPrintSettings: Record<string, PrintSettingsRow> = {
+  lab: _defaultPrintSettingsRow("lab"), surgery: _defaultPrintSettingsRow("surgery"),
+  rehab: _defaultPrintSettingsRow("rehab"), radiology: _defaultPrintSettingsRow("radiology"),
+  general: _defaultPrintSettingsRow("general"),
+};
+const _resolvePrintScope = (dept?: string | null): string =>
+  dept && (PRINT_SCOPE_IDS as readonly string[]).includes(dept) ? dept : "general";
+const loadAllPrintSettings = async () => {
+  try {
+    const rows = await api.settings.print.getAll();
+    if (rows && Array.isArray(rows)) {
+      const next = { ...gAllPrintSettings };
+      rows.forEach(r => { next[r.scope] = r; });
+      gAllPrintSettings = next;
+    }
+  } catch (_) { /* keep defaults on failure */ }
+};
 let gPatientPrintSettings: {
   showName: boolean; showAge: boolean; showPhone: boolean; showNationalId: boolean; showBlood: boolean; showInsurance: boolean; showDiagnoses: boolean; showMedications: boolean; showReferrals: boolean; showDebt: boolean; showNotes: boolean;
   sessionsMode: "all" | "last" | "range"; sessionsCount: number; sessionsFrom: string; sessionsTo: string;
 } = { showName: true, showAge: true, showPhone: true, showNationalId: true, showBlood: true, showInsurance: true, showDiagnoses: true, showMedications: true, showReferrals: true, showDebt: true, showNotes: true, sessionsMode: "all", sessionsCount: 5, sessionsFrom: "", sessionsTo: "" };
 
-const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true) => {
+const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true, dept?: string | null) => {
   const { date, time } = _nowDT();
-  const { top, right, bottom, left, paperSize, orientation } = gPrintSettings;
+  const scope = _resolvePrintScope(dept);
+  const ps = gAllPrintSettings[scope] || _defaultPrintSettingsRow(scope);
+  const top = ps.margin_top, right = ps.margin_right, bottom = ps.margin_bottom, left = ps.margin_left;
+  const paperSize = ps.paper_size, orientation = ps.orientation;
+  const fontFamily = ps.font_family || "Tajawal";
+  const fontSize = ps.font_size || 13;
   const userName = gReportContext.userName;
   const userRole = gReportContext.userRole;
   const periodTxt = from || to ? `${from ? new Date(from).toLocaleDateString("en-GB") : "..."} — ${to ? new Date(to).toLocaleDateString("en-GB") : "..."}` : null;
@@ -877,19 +910,34 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
   if (periodTxt) metaItems.push(`<span class="rm-item">📅 الفترة: <strong>${periodTxt}</strong></span>`);
   else metaItems.push(`<span class="rm-item">📅 تاريخ التقرير: <strong>${date}</strong></span>`);
   const metaRow = `<div class="rm">${metaItems.join("")}</div>`;
-  const effectiveLh = withHeader ? (gLetterheadImg || _lsGetLetterheadGlobal()) : "";
+  const effectiveLh = withHeader && ps.with_header !== false ? (ps.letterhead_image || "") : "";
   const lhBgCss = effectiveLh ? `background-image:url('${effectiveLh}');background-size:100% 100%;background-position:center;background-repeat:no-repeat;-webkit-print-color-adjust:exact;print-color-adjust:exact;` : "";
-  const lhHtml = effectiveLh ? `<div class="lh-bg"></div>` : "";
   const head = effectiveLh
     ? ""
     : (withHeader
       ? `<div class="ch"><div><b class="ct">${title}</b><div class="cs">مركز وعيادة الدكتور مهند سليمان جابر</div></div><div class="cm">تاريخ الطباعة: ${date}<br/>${time}</div></div>${metaRow}`
       : `${metaRow}`);
   const topMargin = withHeader ? top : Math.max(top, 45);
+  // ── صورة الترويسة يجب أن تغطي الصفحة الفعلية بالكامل على كل صفحة (حتى مع
+  //    هامش @page غير صفري)، لكن position:fixed بمتصفح Chrome بالطباعة تتموضع
+  //    نسبةً لصندوق الهامش (margin box) وليس الصفحة الفعلية — فنعوّض بإزاحة
+  //    سالبة وحجم أكبر بمقدار الهوامش نفسها لتمتد الصورة خلف منطقة الهامش
+  //    وتغطي الورقة كاملة، بينما .content يبقى داخل صندوق الهامش الطبيعي
+  //    فيرث هامشاً صحيحاً (علوي/سفلي/جانبي) على كل صفحة تلقائياً من المتصفح. ──
+  const lhGeomCss = effectiveLh ? `top:-${topMargin}mm;left:-${left}mm;width:calc(100% + ${left}mm + ${right}mm);height:calc(100% + ${topMargin}mm + ${bottom}mm);` : "";
+  const lhHtml = effectiveLh ? `<div class="lh-bg" style="${lhGeomCss}"></div>` : "";
   const pdfBar = pdfMode ? `<div class="pdf-bar"><span>📄 ${title}</span><button onclick="window.print()" class="pdf-btn">🖨️ حفظ كـ PDF / طباعة</button></div>` : "";
 
+  // ── الهوامش على كل الصفحات (وليس فقط الأولى/الأخيرة): كنا سابقاً نصفّر هامش
+  //    الصفحة (@page margin:0) ونحاكي الهوامش بـ padding على صندوق المحتوى
+  //    الكامل عند وجود صورة ترويسة — ومشكلة الـ padding أنه بينطبّق فقط أعلى
+  //    أول صفحة وأسفل آخر صفحة (سلوك تجزئة CSS القياسي)، فتطبع أي صفحة وسطى
+  //    بدون أي هامش علوي/سفلي وتتصادم مع تصميم الترويسة. الحل: نستخدم هامش
+  //    الصفحة الطبيعي @page دائماً (يتكرر صحيحاً على كل صفحة تلقائياً من
+  //    المتصفح)، وصورة الترويسة (.lh-bg) تبقى تغطي الصفحة كاملة لأنها
+  //    position:fixed بالنسبة لصندوق الصفحة الفعلي وليس صندوق الهامش. ──
   const marginCss = effectiveLh
-    ? `@page{size:${paperSize} ${orientation};margin:0} .content{padding:${topMargin}mm ${right}mm ${bottom}mm ${left}mm}`
+    ? `@page{size:${paperSize} ${orientation};margin:${topMargin}mm ${right}mm ${bottom}mm ${left}mm} .content{padding:0}`
     : `@page{size:${paperSize} ${orientation};margin:${topMargin}mm ${right}mm ${bottom}mm ${left}mm} .content{padding:16px 20px}`;
 
   const footerHtml = effectiveLh
@@ -898,8 +946,8 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
 
   return `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>${title}</title>
 <style>@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&family=Cairo:wght@400;500;700&family=Amiri&display=swap');
-*{box-sizing:border-box}body{font-family:${gDeptPrintAdv.fontFamily},Arial,sans-serif;direction:rtl;color:#1A1A1A;font-size:${gDeptPrintAdv.fontSize}px;margin:0;padding:0;background:transparent}
-.lh-bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;${lhBgCss}}
+*{box-sizing:border-box}body{font-family:${fontFamily},Arial,sans-serif;direction:rtl;color:#1A1A1A;font-size:${fontSize}px;margin:0;padding:0;background:transparent}
+.lh-bg{position:fixed;z-index:-1;${lhBgCss}}
 .pdf-bar{display:flex;align-items:center;justify-content:space-between;background:#1B3A6B;color:white;padding:10px 18px;font-size:13px;font-weight:600;position:sticky;top:0;z-index:99}
 .pdf-btn{background:#0D7377;color:white;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-family:Tajawal,sans-serif;cursor:pointer;font-weight:700}
 .content{position:relative;z-index:1;}
@@ -933,8 +981,8 @@ ${footerHtml}</div>
 </body></html>`;
 };
 
-const _printViaIframe = (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true) => {
-  const doc = _buildPrintDoc(html, title, pdfMode, from, to, withHeader);
+const _printViaIframe = (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true, dept?: string | null) => {
+  const doc = _buildPrintDoc(html, title, pdfMode, from, to, withHeader, dept);
   const iframe = document.createElement("iframe");
   iframe.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;opacity:0;pointer-events:none;";
   document.body.appendChild(iframe);
@@ -946,8 +994,13 @@ const _printViaIframe = (html: string, title: string, pdfMode: boolean, from?: s
     setTimeout(() => { try { document.body.removeChild(iframe); } catch (_) { } }, 6000);
   }, 600);
 };
-const printHtml = (html: string, title: string = "طباعة", from?: string, to?: string, withHeader = true) => _printViaIframe(html, title, false, from, to, withHeader);
-const savePdfHtml = (html: string, title: string = "PDF", from?: string, to?: string, withHeader = true) => _printViaIframe(html, title, false, from, to, withHeader);
+// `dept`: pass the ambient department id (e.g. "lab"/"surgery"/"rehab"/"radiology")
+// when the print button lives inside that department's own screens, so the
+// correct print-settings scope (letterhead + margins) is resolved automatically.
+// Omit it (or pass an id that isn't one of the 4 special departments) to use
+// the admin's general print settings.
+const printHtml = (html: string, title: string = "طباعة", from?: string, to?: string, withHeader = true, dept?: string | null) => _printViaIframe(html, title, false, from, to, withHeader, dept);
+const savePdfHtml = (html: string, title: string = "PDF", from?: string, to?: string, withHeader = true, dept?: string | null) => _printViaIframe(html, title, false, from, to, withHeader, dept);
 
 // ─── WITHDRAW / DEPOSIT MODALS ─────────────────────────────────────────────────
 
@@ -1906,7 +1959,11 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
   const totalPersonalExp = dashStats.breakdown.expenses.personalExpenseVouchers;
   const totalPurchases = dashStats.breakdown.expenses.purchaseRequests;
   const totalReceiptsAll = dashStats.breakdown.revenue.receiptVouchers;
-  const totalWithdrawals = totalPersonalExp;
+  // ── نفس إصلاح "الملخص المالي": "إجمالي المصروفات" هون كانت مربوطة فقط
+  //    بسندات الصرف الشخصية (totalPersonalExp) بدل كل ما يُخصم فعلياً من
+  //    صافي الربح (مشتريات + سندات شخصية + رواتب) — فكانت تظهر رقم أصغر
+  //    بكثير من الفرق الحقيقي بين الإيرادات وصافي الربح. ──
+  const totalWithdrawals = dashStats.expenses + dashStats.salaryCost;
   const netProfit = dashStats.profit;
 
 
@@ -2338,10 +2395,13 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
   const activePatients = mockPatients.filter(p => !deletedPatientIds.includes(p.id));
   const filtered = search.trim() ? activePatients.filter(p => p.name.includes(search) || p.id.includes(search)) : activePatients;
   const patSessions = (pid: string) => sessions.filter(s => s.patientId === pid).sort((a, b) => b.id - a.id);
-  const liveDebt = (pid: string) => debts.filter(d => d.pid === pid).reduce((s, d) => s + d.amount, 0);
-  const lastVisit = (pid: string) => { const s = patSessions(pid); return s[0]?.date || mockPatients.find(p => p.id === pid)?.date || "—"; };
   const initials = (name: string) => name.split(" ").slice(0, 2).map(w => w[0]).join("");
   const deptShort = (dId: string) => DEPARTMENTS.find(d => d.id === dId)?.short || customDepts.find(d => d.id === dId)?.short || dId;
+  // ── دين المريض المعروض بالقائمة يجب أن يطابق ما يظهر داخل ملفه بالضبط —
+  //    نفس مبدأ "الملف المالي المعزول" بملف المريض: الموظف غير الإداري يرى فقط
+  //    ديون قسمه الحالي (debts.dept مخزّن كاسم قصير وليس id، لذلك نقارنه بـ deptShort(dept)) ──
+  const liveDebt = (pid: string) => debts.filter(d => d.pid === pid && (isAdmin || d.dept === deptShort(dept))).reduce((s, d) => s + d.amount, 0);
+  const lastVisit = (pid: string) => { const s = patSessions(pid); return s[0]?.date || mockPatients.find(p => p.id === pid)?.date || "—"; };
   return (
     <div className="flex flex-col md:flex-row bg-white rounded-2xl overflow-hidden shadow-sm" style={{ border: "1px solid #E0E0E0", minHeight: "76vh" }}>
       {/* ── LEFT PANEL: patient list ── */}
@@ -2593,7 +2653,11 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
 
 // ─── NEW PATIENT ───────────────────────────────────────────────────────────────
 
-function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>> }) {
+function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles, customDepts = [] }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>; customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }> }) {
+  // ── إيجاد بيانات القسم من الثابتة أو المخصصة — بدون هذا، أي قسم مخصص (كالاستقبال)
+  //    كان يسقط احتياطياً على DEPARTMENTS[0] (الجراحة)، فيُسجَّل كل دين/جلسة لقسم
+  //    مخصص باسم "الجراحة" خطأً ويتضخم صندوقها بأموال لا تخصه. ──
+  const findDeptInfo = (dId: string) => DEPARTMENTS.find(d => d.id === dId) || customDepts.find(d => d.id === dId) || DEPARTMENTS[0];
   const isAdmin = !loggedUser || loggedUser.type === "admin";
   const isLab = dept === "lab";
   const isRad = dept === "radiology";
@@ -2728,19 +2792,29 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
     setErrors(e); return Object.keys(e).length === 0;
   };
   const v2 = () => { const e: Record<string, string> = {}; if (!form.price || parseFloat(form.price) <= 0) e.price = "أدخل سعر الخدمة"; setErrors(e); return Object.keys(e).length === 0; };
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaving(true);
     if (!false) {
       const today = _today();
       const joinDateDisplay = form.joinDate ? new Date(form.joinDate).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) : today;
       // ── Determine effective patient ID ──
       // If an existing patient was selected from prefill, use THEIR ID (no duplicate!).
-      // Only create a new patient record when the patient is genuinely new.
-      const effectiveId = prefillPatient ? prefillPatient.id : fileId;
+      // Only create a new patient record when the patient is genuinely new. We await the
+      // server's response and use the ID it actually persisted (the server resolves any
+      // collision by re-generating a free ID and retrying) instead of trusting the
+      // locally pre-generated fileId — this guarantees no session/debt/queue record is
+      // ever created against a patient row that doesn't truly exist in the database.
+      let effectiveId = prefillPatient ? prefillPatient.id : fileId;
       if (!prefillPatient && !mockPatients.find(p => p.id === fileId)) {
-        mockPatients.push({ id: fileId, name: form.name, age: Number(form.age), phone: form.phone, blood: form.blood || "غير معروف", insurance: !!form.insuranceCompany, dept, date: joinDateDisplay, debt: 0, gender: form.gender, address: form.address, chronic: form.chronic ? form.chronicDetail : "", allergy: form.allergy ? form.allergyDetail : "" });
+        const created = await api.patients.create({ id: fileId, name: form.name, age: Number(form.age), phone: form.phone, gender: form.gender, address: form.address, email: form.email, national_id: form.id, blood_type: form.blood || "غير معروف", has_insurance: !!form.insuranceCompany, insurance_company: form.insuranceCompany, dept, date: form.joinDate || _localISO(), has_allergy: form.allergy, allergy_detail: form.allergyDetail, has_chronic: form.chronic, chronic_detail: form.chronicDetail, debt: 0, notes: form.notes });
+        if (!created || !(created as any).id) {
+          setSaving(false);
+          toast("تعذّر حفظ بيانات المريض على الخادم — تحقق من الاتصال وحاول التسجيل مرة أخرى", "error");
+          return;
+        }
+        effectiveId = String((created as any).id);
+        mockPatients.push({ id: effectiveId, name: form.name, age: Number(form.age), phone: form.phone, blood: form.blood || "غير معروف", insurance: !!form.insuranceCompany, dept, date: joinDateDisplay, debt: 0, gender: form.gender, address: form.address, chronic: form.chronic ? form.chronicDetail : "", allergy: form.allergy ? form.allergyDetail : "" });
         _syncPatients();
-        api.patients.create({ id: fileId, name: form.name, age: Number(form.age), phone: form.phone, gender: form.gender, address: form.address, email: form.email, national_id: form.id, blood_type: form.blood || "غير معروف", has_insurance: !!form.insuranceCompany, insurance_company: form.insuranceCompany, dept, date: form.joinDate || _localISO(), has_allergy: form.allergy, allergy_detail: form.allergyDetail, has_chronic: form.chronic, chronic_detail: form.chronicDetail, debt: 0, notes: form.notes });
       }
       // ── Create session record (so diagnoses/medications/labs/rads are not lost) ──
       const sessionTotal = isLab ? testTotalNP : isRad ? imgTotalNP : basePrice;
@@ -2750,7 +2824,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       if (sessionPaid > 0) doDeposit(dept, sessionPaid, `دفعة مريض — ${form.name}`, "إيراد مريض");
       if (setSessions && sessionTotal > 0) {
         const autoDoc = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
-        const deptInfo = DEPARTMENTS.find(d => d.id === dept) || DEPARTMENTS[0];
+        const deptInfo = findDeptInfo(dept);
         const sessionDiag = isRehab
           ? [rehabDiagnosis].filter(Boolean)
           : selDiagIds.map(xid => availDiag.find(d => d.id === xid)?.name).filter(Boolean) as string[];
@@ -2789,6 +2863,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           if (isLab && sessionLabR.length > 0) {
             api.queues.create({
               dept: "lab",
+              patient_id: effectiveId,
               patient_name: form.name,
               items: selTestsDataNP.map(t => t.name),
               queue_time: _nowHHMM(),
@@ -2799,6 +2874,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           if (isRad && sessionRadR.length > 0) {
             api.queues.create({
               dept: "radiology",
+              patient_id: effectiveId,
               patient_name: form.name,
               items: sessionRadR,
               queue_time: _nowHHMM(),
@@ -2808,7 +2884,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
         }).catch(() => { });
       }
       if (sessionDebt > 0 && setDebts) {
-        const deptInfo = DEPARTMENTS.find(d => d.id === dept) || DEPARTMENTS[0];
+        const deptInfo = findDeptInfo(dept);
         const nd: DebtRow = { id: Date.now(), patient: form.name, pid: effectiveId, dept: deptInfo.short, amount: sessionDebt, date: today, days: 0, phone: form.phone };
         setDebts(prev => [nd, ...prev]);
         api.finance.debts.create({ patient: form.name, patient_id: effectiveId, dept: deptInfo.short, amount: sessionDebt, date: form.joinDate || _localISO(), phone: form.phone }).then(r => { if (r && (r as any).id && setDebts) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
@@ -3072,7 +3148,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
                   <label key={t.id} onClick={() => toggleTestNP(t.id)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${selTests.includes(t.id) ? "bg-[#E6F4F4] border-[#0D7377]" : "bg-[#FAFAFA] border-[#E0E0E0] hover:border-[#0D7377]"}`} style={{ border: "1px solid" }}>
                     <input type="checkbox" readOnly checked={selTests.includes(t.id)} className="accent-[#0D7377] flex-shrink-0" />
                     <div className="flex-1 min-w-0"><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-[#999]">{t.code} · {t.cat} · {t.time}</p></div>
-                    <div className="text-left flex-shrink-0"><p className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</p>{t.kitQty > 0 && t.kitQty <= t.kitThreshold && <p className="text-xs text-[#FF8F00]">⚠️ مخزون منخفض</p>}</div>
+                    <div className="text-left flex-shrink-0"><p className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</p></div>
                   </label>
                 ))}
               </div>
@@ -3441,7 +3517,7 @@ function PatientSearchScreen({ onNavigate, debts, customDepts = [] }: { onNaviga
 
 // ─── PATIENT FILE ──────────────────────────────────────────────────────────────
 
-function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, sessionFiles, setSessionFiles }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>> }) {
+function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, sessionFiles, setSessionFiles, setReceiptVouchers }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>> }) {
   const isAdmin = loggedUser?.type === "admin";
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
   const handleDeleteSession = async (id: number) => {
@@ -3456,7 +3532,8 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   const [tab, setTab] = useState<"clinic" | "lab" | "radiology" | "rehab" | "prescriptions" | "referrals" | "finance">("clinic");
   const [labEntries, setLabEntries] = useState<{ id: number; patient: string; tests: string[]; time: string; status: "pending" | "done"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> }[]>([]);
   const [labLoading, setLabLoading] = useState(false);
-  const [expanded, setExpanded] = useState<number | null>(null);
+  // ── عرض الملف الكامل: كل الجلسات تُعرض مفصَّلة بالكامل مباشرة بدون اختصار
+  //    أو حاجة للنقر — لا حالة "طي/فرد" فردية بعد الآن (طلب صريح من المستخدم). ──
   const [debtModal, setDebtModal] = useState(false);
   const [debtAmt, setDebtAmt] = useState("");
   const [patDelModal, setPatDelModal] = useState(false);
@@ -3474,8 +3551,11 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
     setLabLoading(true);
     api.queues.getAll("lab").then(rows => {
       if (!rows) { setLabLoading(false); return; }
-      const all = (rows as any[]).map((r: any) => ({ id: r.id, patient: r.patient_name, tests: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", results: r.results || undefined }));
-      setLabEntries(all.filter(e => e.patient === p.name));
+      const all = (rows as any[]).map((r: any) => ({ id: r.id, patientId: r.patient_id || null, patient: r.patient_name, tests: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", results: r.results || undefined }));
+      // نفضّل المطابقة برقم ملف المريض (patientId) على مطابقة الاسم — لتجنّب
+      // خلط بيانات مريضين يحملان نفس الاسم (نحتفظ بمطابقة الاسم للسجلات
+      // القديمة التي أُنشئت قبل ربط الطابور برقم الملف).
+      setLabEntries(all.filter(e => e.patientId ? e.patientId === patientId : e.patient === p.name));
     }).catch(() => { }).finally(() => setLabLoading(false));
   }, [p?.name]);
 
@@ -3486,8 +3566,8 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
     setRadLoading(true);
     api.queues.getAll("radiology").then(rows => {
       if (!rows) { setRadLoading(false); return; }
-      const all = (rows as any[]).map((r: any) => ({ id: r.id, patient: r.patient_name, images: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", reports: r.results || undefined }));
-      setRadEntries(all.filter(e => e.patient === p.name));
+      const all = (rows as any[]).map((r: any) => ({ id: r.id, patientId: r.patient_id || null, patient: r.patient_name, images: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", reports: r.results || undefined }));
+      setRadEntries(all.filter(e => e.patientId ? e.patientId === patientId : e.patient === p.name));
     }).catch(() => { }).finally(() => setRadLoading(false));
   }, [p?.name]);
   const loadFilesForSession = (sessionId: number) => {
@@ -3498,6 +3578,12 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
       }
     }).catch(() => { });
   };
+  // ── عرض الملف الكامل بدون اختصار: نحمّل المرفقات لكل جلسات العيادة تلقائياً
+  //    فور توفر بيانات المريض، بدلاً من الانتظار لنقر المستخدم على كل جلسة. ──
+  useEffect(() => {
+    if (!p?.id) return;
+    sessions.filter(s => s.patientId === p.id).forEach(s => loadFilesForSession(s.id));
+  }, [p?.id, sessions.length]);
   if (!p) return <div className="flex items-center justify-center h-64 flex-col gap-3"><div className="w-10 h-10 rounded-full bg-[#EBF3FB] flex items-center justify-center"><User size={20} className="text-[#1B3A6B]" /></div><p className="text-sm text-[#999]">جارٍ تحميل بيانات المريض...</p></div>;
   const setEF2 = (fn: (p: PatientRecord) => PatientRecord) => setEditForm(p => p ? fn(p) : p);
   const handleEditSave = () => {
@@ -3511,23 +3597,30 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   };
   const existDelReq = (patientDeleteRequests || []).find(r => r.patientId === p.id && r.status === "pending");
   const pSess = sessions.filter(s => s.patientId === p.id).sort((a, b) => b.id - a.id);
+  const deptShort = (dId: string) => DEPARTMENTS.find(d => d.id === dId)?.short || customDepts.find(d => d.id === dId)?.short || dId;
   // ── Financial segregation by department (Unified Medical File / Isolated Financial File) ──
   // Admin: full visibility across all departments. Staff: financial figures (invoices/paid/debt)
   // are visible only for the department they are currently working in — medical data (diagnoses,
   // medications, referrals) stays unified across departments as before.
   const canSeeFinance = (sessDept: string) => isAdmin || sessDept === dept;
   const finSess = pSess.filter(s => canSeeFinance(s.dept));
-  const liveDebt = debts.filter(d => d.pid === p.id && canSeeFinance(d.dept)).reduce((s, d) => s + d.amount, 0);
+  // debts.dept is stored as the department's SHORT label (not its id) — compare
+  // against deptShort(dept) instead of the raw id, otherwise this always evaluates
+  // false for non-admin staff and the patient's file silently shows 0 debt even
+  // though the patient list (which sums with no per-department restriction) shows
+  // the real amount. This is what kept the two screens out of sync.
+  const liveDebt = debts.filter(d => d.pid === p.id && (isAdmin || d.dept === deptShort(dept))).reduce((s, d) => s + d.amount, 0);
   const lastVisit = pSess[0]?.date || p.date;
   const initials = (n: string) => n.split(" ").slice(0, 2).map(w => w[0]).join("");
-  const deptShort = (dId: string) => DEPARTMENTS.find(d => d.id === dId)?.short || customDepts.find(d => d.id === dId)?.short || dId;
   const totalAmt = finSess.reduce((s, x) => s + x.amount, 0);
   const totalPaid = finSess.reduce((s, x) => s + x.paid, 0);
   const clinicSessions = pSess.filter(s => s.dept === "surgery" || customDepts.some(cd => cd.id === s.dept));
   const allMeds = pSess.flatMap(s => s.medications.map(m => ({ ...m, date: s.date, dept: deptShort(s.dept), rawDept: s.dept })));
-  const filteredMeds = isAdmin ? allMeds : allMeds.filter(m => m.rawDept === dept);
+  // ── الملف الطبي موحّد لكل الأقسام (الأدوية/التحويلات) — العزل يقتصر على
+  //    المعلومات المالية فقط (الديون/الإيرادات/السداد)، وليس البيانات الطبية. ──
+  const filteredMeds = allMeds;
   const allRefs = pSess.flatMap(s => [...s.labRefs.map(r => ({ type: "lab" as const, name: r, date: s.date, dept: deptShort(s.dept), rawDept: s.dept })), ...s.radRefs.map(r => ({ type: "rad" as const, name: r, date: s.date, dept: deptShort(s.dept), rawDept: s.dept }))]);
-  const filteredRefs = isAdmin ? allRefs : allRefs.filter(r => r.rawDept === dept);
+  const filteredRefs = allRefs;
   const pRehab = (rehabQueueEntries || []).filter(e => e.patientId === p.id).sort((a, b) => b.id - a.id);
   const visibleSessionsCount = isAdmin
     ? pSess.length
@@ -3540,14 +3633,30 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
           : dept === "rehab"
             ? pRehab.length
             : 0;
-  const handleDebtPayment = () => {
+  const handleDebtPayment = async () => {
     const amt = parseFloat(debtAmt) || 0;
     if (amt <= 0 || amt > liveDebt) return;
-    if (doDeposit) doDeposit(dept, amt, `سداد دين — ${p.name}`, "سند قبض — دفعة نقدية");
+    // ── الملف المالي المعزول: السداد من هنا يجب أن يمس فقط ديون القسم الحالي
+    //    (نفس تصفية liveDebt) — موظف فاتح ملف المريض من قسم معيّن لا يجوز أن
+    //    يُسدِّد أو يعدّل ديناً يخص قسماً آخر، حتى لو كان المبلغ كافياً لتغطيته. ──
+    const myDeptShort = deptShort(dept);
+    try {
+      const rvBody = {
+        date: _localISO(), amount: amt,
+        received_from_type: "patient" as const,
+        received_from_id: p.id, received_from_name: p.name,
+        reason: `تسديد دين مريض — ${p.name}`,
+        dept, notes: `تسديد دين من ملف المريض — ${myDeptShort}`, approved_by: "",
+      };
+      const r = await api.finance.receiptVouchers.create(rvBody);
+      if (r && setReceiptVouchers) setReceiptVouchers(prev => [{ ...(r as any), amount: Number((r as any).amount) }, ...prev]);
+    } catch { /* still proceed with the deposit + debt update even if the RV call fails */ }
+    if (doDeposit) doDeposit(dept, amt, `سداد دين — ${p.name}`, "سند قبض");
     if (setDebts) setDebts(prev => {
       let rem = amt;
       return prev.map(d => {
         if (d.pid !== p.id || rem <= 0) return d;
+        if (!isAdmin && d.dept !== myDeptShort) return d;
         if (d.amount <= rem) { rem -= d.amount; api.finance.debts.delete(d.id); return null as any; }
         const nd = { ...d, amount: d.amount - rem }; rem = 0; api.finance.debts.update(d.id, { amount: nd.amount }); return nd;
       }).filter(Boolean) as DebtRow[];
@@ -3773,8 +3882,8 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
       {tab === "clinic" && <Card title="السجل الطبي — زيارات العيادة" action={<Btn small variant="secondary" onClick={() => onNavigate({ screen: "new-session", dept, patientId: p.id })}><Plus size={13} />جلسة جديدة</Btn>}>
         {clinicSessions.length === 0 ? <EmptyState msg="لا توجد زيارات عيادية مسجَّلة" /> :
           <div className="space-y-3">{clinicSessions.map(s => (
-            <div key={s.id} className="rounded-xl overflow-hidden transition-shadow hover:shadow-sm" style={{ border: `1px solid ${expanded === s.id ? "#0D7377" : "#E0E0E0"}` }}>
-              <button className="w-full flex items-center justify-between p-4 text-right" onClick={() => { const target = expanded === s.id ? null : s.id; setExpanded(target); if (target) loadFilesForSession(s.id); }}>
+            <div key={s.id} className="rounded-xl overflow-hidden transition-shadow hover:shadow-sm" style={{ border: "1px solid #0D7377" }}>
+              <div className="w-full flex items-center justify-between p-4 text-right">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-[#EBF3FB] flex items-center justify-center flex-shrink-0"><Calendar size={15} className="text-[#1B3A6B]" /></div>
                   <div>
@@ -3788,10 +3897,9 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                   ) : (
                     <div className="text-left"><p className="text-xs text-[#BBB] flex items-center gap-1"><Lock size={10} />قسم آخر</p></div>
                   )}
-                  {expanded === s.id ? <ChevronUp size={16} className="text-[#999]" /> : <ChevronDown size={16} className="text-[#999]" />}
                 </div>
-              </button>
-              {expanded === s.id && <div className="px-4 pb-4 pt-3 space-y-3" style={{ borderTop: "1px solid #F0F0F0", backgroundColor: "#FAFAFA" }}>
+              </div>
+              <div className="px-4 pb-4 pt-3 space-y-3" style={{ borderTop: "1px solid #F0F0F0", backgroundColor: "#FAFAFA" }}>
                 {/* التشخيصات */}
                 {s.diagnoses.length > 0 && <div><p className="text-xs font-bold text-[#555] mb-1.5">التشخيص</p><div className="flex flex-wrap gap-1.5">{s.diagnoses.map((d, i) => <Badge key={i} color="warning">{d}</Badge>)}</div></div>}
                 {/* الملاحظات والتوصيات */}
@@ -3861,7 +3969,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                     </button>
                   </div>
                 )}
-              </div>}
+              </div>
             </div>
           ))}</div>
         }
@@ -4066,7 +4174,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                     <TRow key={s.id} i={i}>
                       <TD className="text-[#999]">{s.date}</TD>
                       <TD><Badge color="info">{deptShort(s.dept)}</Badge></TD>
-                      <TD className="text-[#555]">{s.diagnoses.slice(0, 2).join(" · ") || "—"}</TD>
+                      <TD className="text-[#555]">{s.diagnoses.join(" · ") || "—"}</TD>
                       <TD className="font-bold text-[#1B3A6B]">{fmt(s.amount)}</TD>
                       <TD className="text-[#388E3C] font-medium">{fmt(s.paid)}</TD>
                       <TD>{s.debt > 0 ? <span className="font-bold text-[#D32F2F]">{fmt(s.debt)}</span> : <span className="text-[#388E3C]">مسدد ✓</span>}</TD>
@@ -4110,15 +4218,17 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
 
 // ─── NEW SESSION ────────────────────────────────────────────────────────────────
 
-function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs, setSessionFiles }: {
+function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs, setSessionFiles, customDepts = [] }: {
   dept: string; patientId: string; sessions: PatientSession[]; setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
   doDeposit: (dept: string, amount: number, title: string, type: string) => void; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>;
   debts: DebtRow[]; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; diagnoses: DiagnosisEntry[]; setDiagnoses: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;
   loggedUser?: LoggedUser | null; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>;
   setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>;
+  customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>;
 }) {
   const p = mockPatients.find(x => x.id === patientId) || mockPatients[0];
-  const deptInfo = DEPARTMENTS.find(d => d.id === dept) || DEPARTMENTS[0];
+  // ── نفس إصلاح NewPatientScreen: قسم مخصص يجب ألا يسقط احتياطياً على "الجراحة" ──
+  const deptInfo = DEPARTMENTS.find(d => d.id === dept) || customDepts.find(d => d.id === dept) || DEPARTMENTS[0];
   const initials = (n: string) => n.split(" ").slice(0, 2).map(w => w[0]).join("");
   const today = _today();
   const autoDoctor = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
@@ -4446,9 +4556,10 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
   const [selTests, setSelTests] = useState<string[]>([]);
   const [testSearch, setTestSearch] = useState(""); const [catFilter, setCatFilter] = useState("الكل");
   const [labTypeFilter, setLabTypeFilter] = useState<"internal" | "external">("internal");
-  const [board, setBoard] = useState<{ id: number; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> }[]>([]);
-  const [resultsModal, setResultsModal] = useState<{ id: number; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> } | null>(null);
-  useEffect(() => { api.queues.getAll("lab").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patient: r.patient_name, tests: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", labType: typeof r.notes === "string" && r.notes.includes("lab_type:external") ? "external" as const : "internal" as const, results: r.results || undefined }))); }).catch(() => { }); }, []);
+  const [saving, setSaving] = useState(false);
+  const [board, setBoard] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> }[]>([]);
+  const [resultsModal, setResultsModal] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> } | null>(null);
+  useEffect(() => { api.queues.getAll("lab").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patientId: r.patient_id || null, patient: r.patient_name, tests: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", labType: typeof r.notes === "string" && r.notes.includes("lab_type:external") ? "external" as const : "internal" as const, results: r.results || undefined }))); }).catch(() => { }); }, []);
   const [resultVals, setResultVals] = useState<Record<string, string>>({});
   const today = _today();
   const LAB_FILTER_CATS = ["الكل", ...LAB_CATS];
@@ -4467,29 +4578,47 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
   const totalAllDebts = debts.reduce((s, d) => s + d.amount, 0);
   const toggle = (code: string) => setSelTests(p => p.includes(code) ? p.filter(x => x !== code) : [...p, code]);
   const reset = () => { if (!patientId) { setStep(0); setSelPat(null); } else { setStep(2); setSelPat(preselected); } setSelTests([]); setDiscount(""); setPaid(""); setPayMode("cash"); setLabTypeFilter("internal"); };
-  const handleSave = () => {
+  const handleSave = async () => {
     const today = _today(); const labTime = _nowHHMM();
     if (!patName.trim() || selTests.length === 0) return;
     if (mode === "new" && newPat.pid.trim() && mockPatients.find(p => p.id === newPat.pid.trim())) { toast("رقم الهوية مستخدم مسبقاً — اختر رقم آخر أو اتركه فارغاً للتوليد التلقائي", "error"); return; }
+    if (saving) return;
+    setSaving(true);
+    // ── لا نثق بـ patId المحسوب محلياً كنهائي إلا بعد تأكيد الخادم — الخادم يحل أي
+    //    تعارض بأرقام الملفات تلقائياً (سباق بين موظفين يسجّلان مريضين جديدين بنفس
+    //    اللحظة) ويعيد الرقم الفعلي المحفوظ؛ وبذلك لا يتم إنشاء أي طلب فحص/دين
+    //    مرتبط بمريض غير موجود فعلياً في قاعدة البيانات. ──
+    let effectivePatId = patId;
     if (mode === "new" && !mockPatients.find(p => p.id === patId)) {
-      mockPatients.push({ id: patId, name: patName, age: 30, phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "lab", date: today, debt: 0 });
+      const created = await api.patients.create({ id: patId, name: patName, age: 30, phone: newPat.phone || "", blood_type: newPat.blood || "A+", has_insurance: newPat.insurance, dept: "lab", date: api.parseDateISO(today), debt: 0 });
+      if (!created || !(created as any).id) {
+        setSaving(false);
+        toast("تعذّر حفظ بيانات المريض على الخادم — تحقق من الاتصال وحاول التسجيل مرة أخرى", "error");
+        return;
+      }
+      effectivePatId = String((created as any).id);
+      mockPatients.push({ id: effectivePatId, name: patName, age: 30, phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "lab", date: today, debt: 0 });
       _syncPatients();
-      api.patients.create({ id: patId, name: patName, age: 30, phone: newPat.phone || "", blood_type: newPat.blood || "A+", has_insurance: newPat.insurance, dept: "lab", date: api.parseDateISO(today), debt: 0 });
     }
     if (paidAmt > 0) doDeposit("lab", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
-    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: patId, dept: "المختبر", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: patId, dept: "المختبر", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "المختبر", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "المختبر", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
 
-    // ── خصم الكيتات تلقائياً لكل فحص مُختار ──────────────────────────────
-    const selectedTestNames = selTests.map(c => _labTests.find(t => t.code === c)?.name).filter(Boolean) as string[];
+    // ── خصم الكيتات تلقائياً لكل فحص مُختار — عبر الربط الحقيقي (kitInventoryId)
+    //    المسجَّل بدليل الفحوصات، وليس مطابقة اسم نصية بين الفحص وصنف المستلزمات
+    //    (كانت هذه المطابقة النصية غير موجودة أصلاً كخيار بالواجهة، فما كان في
+    //    خصم تلقائي إطلاقاً مهما عبّيت خانة "اسم الكيت" بالفحص). ──────────────
+    const selectedTestObjs = selTests.map(c => _labTests.find(t => t.code === c)).filter(Boolean) as LabTest[];
     const deductedKits: string[] = [];
     const emptyKits: string[] = [];
     const deductedKitsInfo: { name: string; newQty: number; threshold: number }[] = [];
-    if (setInventory && computeKitStatus) {
+    const linkedInventoryIds = selectedTestObjs.map(t => t.kitInventoryId).filter((id): id is number => id != null);
+    if (setInventory && computeKitStatus && linkedInventoryIds.length > 0) {
       setInventory(prev => prev.map(kit => {
-        const needed = selectedTestNames.some(n => kit.tests.includes(n));
-        if (!needed) return kit;
+        const timesNeeded = linkedInventoryIds.filter(id => id === kit.id).length;
+        if (timesNeeded === 0) return kit;
         if (kit.qty <= 0) { emptyKits.push(kit.name); return kit; }
-        const newQty = kit.qty - 1;
+        const deductAmt = Math.min(timesNeeded, kit.qty);
+        const newQty = kit.qty - deductAmt;
         deductedKits.push(kit.name);
         deductedKitsInfo.push({ name: kit.name, newQty, threshold: kit.threshold });
         api.lab.inventory.update(kit.id, { name: kit.name, item_type: kit.itemType, qty: newQty, threshold: kit.threshold, unit: kit.unit, notes: kit.notes });
@@ -4504,7 +4633,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
     const labTestNames = selTests.map(c => _labTests.find(t => t.code === c)?.name || c);
     const labLid = Date.now();
     setBoard(p => [{ id: labLid, patient: patName, tests: labTestNames, time: labTime, status: "pending" as const, labType: labTypeFilter }, ...p]);
-    api.queues.create({ dept: "lab", patient_name: patName, items: labTestNames, queue_time: labTime, status: "pending", notes: labTypeFilter === "external" ? "lab_type:external" : "lab_type:internal" }).then(r => { if (r) setBoard(p => p.map(s => s.id === labLid ? { ...s, id: r.id } : s)); }).catch(() => { });
+    api.queues.create({ dept: "lab", patient_id: effectivePatId, patient_name: patName, items: labTestNames, queue_time: labTime, status: "pending", notes: labTypeFilter === "external" ? "lab_type:external" : "lab_type:internal" }).then(r => { if (r) setBoard(p => p.map(s => s.id === labLid ? { ...s, id: r.id } : s)); }).catch(() => { });
 
     // إشعار موحد بنتيجة الجلسة والخصم
     let msg = `تم تسجيل ${selTests.length} فحص لـ ${patName}${debtAmt > 0 ? " — دين: " + fmt(debtAmt) : creditAmt > 0 ? " — رصيد: " + fmt(creditAmt) : " ✓"}`;
@@ -4512,6 +4641,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
     if (emptyKits.length > 0) toast(`تحذير: ${emptyKits.join("، ")} — الكمية صفر، لم يُخصم`, "warning");
     toast(msg, "success");
     setLastSaved({ name: patName, tests: selTests.length, debtAmt });
+    setSaving(false);
     reset(); setView("board");
   };
   const buildLabResultsSnapshot = () => {
@@ -4521,8 +4651,10 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
     });
     return snap;
   };
-  const buildLabReportHtml = (patientName: string, results: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> | undefined) => {
-    const pt = mockPatients.find(p => p.name === patientName);
+  const buildLabReportHtml = (patientName: string, results: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> | undefined, patId?: string | null) => {
+    // نفضّل المطابقة برقم ملف المريض على الاسم — لتفادي طباعة بيانات مريض
+    // آخر يحمل نفس الاسم (رقم ملف/عمر/فصيلة دم خاطئة على تقرير رسمي).
+    const pt = patId ? mockPatients.find(p => p.id === patId) : mockPatients.find(p => p.name === patientName);
     const infoItems: string[] = [];
     infoItems.push(`<div class="pt-field"><b>المريض:</b> ${patientName}</div>`);
     if (pt) infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
@@ -4552,21 +4684,25 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
     body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الأخصائي</div><div class="sig-box"><div class="sig-line"></div>مراجعة الطبيب</div><div class="sig-box"><div class="sig-line"></div>ختم المختبر</div></div>`;
     return `<div class="pt-card">${body}</div>`;
   };
-  const printLabReport = (patientName: string, results: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> | undefined) => {
-    printHtml(buildLabReportHtml(patientName, results), `تقرير مخبري رسمي — ${patientName}`);
+  const printLabReport = (patientName: string, results: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> | undefined, patId?: string | null) => {
+    printHtml(buildLabReportHtml(patientName, results, patId), `تقرير مخبري رسمي — ${patientName}`, undefined, undefined, true, "lab");
   };
-  // ── حفظ النتائج فقط: يبقى الفحص "قيد الإنجاز" ولا يُعتبر مكتملاً إلا بعد طباعة التقرير فعلياً ──
+  // ── حفظ النتائج فقط: يحافظ على حالة الفحص كما هي (قيد الإنجاز يبقى قيد
+  //    الإنجاز، ومكتمل يبقى مكتمل — مهم لزر "تعديل" على فحص مكتمل: تعديل
+  //    النتائج ما يجوز يرجّع الفحص "قيد إنجاز" تلقائياً بقاعدة البيانات). ──
   const saveResultsOnly = (id: number) => {
     const snapshot = buildLabResultsSnapshot();
+    const current = board.find(s => s.id === id);
+    const status = current?.status || "pending";
     setBoard(p => p.map(s => s.id === id ? { ...s, results: snapshot } : s));
-    api.queues.updateStatus(id, "pending", snapshot).catch(() => { });
-    toast("تم حفظ النتائج — يبقى الفحص قيد الإنجاز حتى طباعة التقرير الرسمي", "success");
+    api.queues.updateStatus(id, status, snapshot).catch(() => { });
+    toast(status === "done" ? "تم تحديث النتائج ✓" : "تم حفظ النتائج — يبقى الفحص قيد الإنجاز حتى طباعة التقرير الرسمي", "success");
   };
   // ── طباعة التقرير الرسمي هي ما يُنهي الفحص فعلياً وينقله إلى "مكتمل" ──
   const printAndComplete = (id: number, patientName: string) => {
     const snapshot = buildLabResultsSnapshot();
     setBoard(p => p.map(s => s.id === id ? { ...s, status: "done" as const, results: snapshot } : s));
-    printLabReport(patientName, snapshot);
+    printLabReport(patientName, snapshot, board.find(s => s.id === id)?.patientId);
     api.queues.updateStatus(id, "done", snapshot).catch(() => { });
     setResultsModal(null);
     toast("تم طباعة التقرير واعتماد الفحص كمكتمل ✓");
@@ -4577,9 +4713,19 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
   const [modalParams, setModalParams] = useState<Record<string, KitParam[]>>({});
   const [semenInfo, setSemenInfo] = useState<{ site: string; examTime: string; abstinence: string }>({ site: "", examTime: "", abstinence: "" });
   const openResults = (s: typeof labSessions[0]) => {
-    setResultsModal(s); setResultVals({});
+    setResultsModal(s);
     const p: Record<string, KitParam[]> = {};
+    const vals: Record<string, string> = {};
     s.tests.forEach(testName => {
+      // ── إذا كانت نتائج هذا الفحص محفوظة مسبقاً (من "حفظ النتائج" السابق)،
+      //    حمّلها بدل إعادة تعبئة القيم الافتراضية الفارغة — هذا ما كان ناقصاً
+      //    وبيخلي أي نتيجة محفوظة "تختفي" عند إعادة فتح شاشة إدخال النتائج. ──
+      const saved = s.results?.[testName];
+      if (saved && saved.length > 0) {
+        p[testName] = saved.map(r => ({ name: r.name, unit: r.unit, min: r.min, max: r.max }));
+        saved.forEach(r => { vals[`${testName}-${r.name}`] = r.value || ""; });
+        return;
+      }
       const isL2L = s.labType === "external";
       const t = _labTests.find(x => x.name === testName && x.isL2L === isL2L) || _labTests.find(x => x.name === testName);
       const defaults = t ? DEFAULT_TEST_PARAMS[t.code] : undefined;
@@ -4590,6 +4736,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
       }
     });
     setModalParams(p);
+    setResultVals(vals);
   };
   return (
     <div className="space-y-4">
@@ -4599,8 +4746,8 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
           <p className="text-xs text-[#888] mt-0.5">تظهر هنا الفحوصات الطبية المطلوبة لكي يتم إدخال نتائجها.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s => s.status === "pending").map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`; printHtml(html, "طلبات المختبر"); }}><Printer size={14} />طباعة</Btn>
-          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s => s.status === "pending").map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "طلبات المختبر"); }}><FileDown size={14} />PDF</Btn>
+          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s => s.status === "pending").map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`; printHtml(html, "طلبات المختبر", undefined, undefined, true, "lab"); }}><Printer size={14} />طباعة</Btn>
+          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات المختبر</h2><table><thead><tr><th>#</th><th>المريض</th><th>الفحوصات المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.filter(s => s.status === "pending").map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.tests.join("، ")}</td><td>${s.time}</td><td>⏳ قيد الإنجاز</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "طلبات المختبر", undefined, undefined, true, "lab"); }}><FileDown size={14} />PDF</Btn>
         </div>
       </div>
       {view === "register" && (
@@ -4692,7 +4839,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
                         <div className="flex-1 min-w-0"><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-[#999]">{t.code} · {t.cat} · {t.time}</p></div>
                         <div className="text-left flex-shrink-0">
                           <p className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</p>
-                          {t.kitQty > 0 && t.kitQty <= t.kitThreshold && <p className="text-xs text-[#FF8F00]">⚠️ مخزون منخفض</p>}
+                          {(() => { const linked = t.kitInventoryId != null ? inventory.find(i => i.id === t.kitInventoryId) : null; return linked && linked.qty <= linked.threshold ? <p className="text-xs text-[#FF8F00]">⚠️ {linked.qty <= 0 ? "الكيت نفد" : "مخزون الكيت منخفض"}</p> : null; })()}
                         </div>
                       </label>
                     ))}
@@ -4756,7 +4903,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
                   </div>
                 </div>
               </Card>
-              <div className="flex gap-3"><Btn variant="outline" onClick={() => setStep(2)}>رجوع للفحوصات</Btn><Btn variant="success" onClick={handleSave}><Save size={16} />حفظ الطلب وإرساله للمختبر</Btn></div>
+              <div className="flex gap-3"><Btn variant="outline" onClick={() => setStep(2)}>رجوع للفحوصات</Btn><Btn variant="success" loading={saving} onClick={handleSave}><Save size={16} />حفظ الطلب وإرساله للمختبر</Btn></div>
             </div>
           )}
         </div>
@@ -4803,7 +4950,10 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
                         <div className="flex gap-1 mt-1 flex-wrap">{s.tests.map(t => <Badge key={t} color="success">{t}</Badge>)}</div>
                         <span className="text-xs text-[#999] flex items-center gap-1 mt-1"><Clock size={11} />{s.time}</span>
                       </div>
-                      <Btn small variant="ghost" onClick={() => printLabReport(s.patient, s.results)}><Printer size={14} /></Btn>
+                      <div className="flex items-center gap-1">
+                        <Btn small variant="ghost" onClick={() => openResults(s)} title="تعديل النتائج"><Pencil size={14} /></Btn>
+                        <Btn small variant="ghost" onClick={() => printLabReport(s.patient, s.results, s.patientId)}><Printer size={14} /></Btn>
+                      </div>
                     </div>
                   </div>
                 ))}</div>
@@ -4814,8 +4964,9 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
       )}
       {view === "inventory" && setInventory && computeKitStatus && <InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} />}
       {resultsModal && (
-        <Modal open={true} onClose={() => setResultsModal(null)} title={`إدخال نتائج: ${resultsModal.patient}`} wide
-          footer={<><Btn variant="outline" onClick={() => saveResultsOnly(resultsModal.id)}><Save size={16} />حفظ النتائج (يبقى قيد الإنجاز)</Btn><Btn variant="success" onClick={() => printAndComplete(resultsModal.id, resultsModal.patient)}><Printer size={16} />طباعة التقرير وإتمام الفحص</Btn><Btn variant="outline" onClick={() => setResultsModal(null)}>إغلاق</Btn></>}>
+        <Modal open={true} onClose={() => setResultsModal(null)} title={`${resultsModal.status === "done" ? "تعديل" : "إدخال"} نتائج: ${resultsModal.patient}`} wide
+          footer={<><Btn variant="outline" onClick={() => saveResultsOnly(resultsModal.id)}><Save size={16} />{resultsModal.status === "done" ? "حفظ التعديلات" : "حفظ النتائج (يبقى قيد الإنجاز)"}</Btn><Btn variant="success" onClick={() => printAndComplete(resultsModal.id, resultsModal.patient)}><Printer size={16} />طباعة التقرير{resultsModal.status === "done" ? "" : " وإتمام الفحص"}</Btn><Btn variant="outline" onClick={() => setResultsModal(null)}>إغلاق</Btn></>}>
+
           <div className="space-y-5">
             <p className="text-xs text-[#999] flex items-center gap-1"><AlertTriangle size={12} className="text-[#FF8F00]" />يمكنك إضافة أو حذف معاملات للنتيجة الحالية فقط — لن يؤثر على البيانات الأساسية</p>
             {resultsModal.tests.map(testName => {
@@ -4916,9 +5067,10 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const [selImgs, setSelImgs] = useState<number[]>([]);
   const [deviceFilter, setDeviceFilter] = useState("الكل");
   const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
-  type RadBoardItem = { id: number; patient: string; images: string[]; time: string; status: "pending" | "done"; reports?: Record<string, { text: string; doctor: string; verdict: string }> };
+  const [saving, setSaving] = useState(false);
+  type RadBoardItem = { id: number; patient: string; patientId?: string | null; images: string[]; time: string; status: "pending" | "done"; reports?: Record<string, { text: string; doctor: string; verdict: string }> };
   const [board, setBoard] = useState<RadBoardItem[]>([]);
-  useEffect(() => { api.queues.getAll("radiology").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patient: r.patient_name, images: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", reports: r.results || undefined }))); }).catch(() => { }); }, []);
+  useEffect(() => { api.queues.getAll("radiology").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patient: r.patient_name, patientId: r.patient_id || null, images: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", reports: r.results || undefined }))); }).catch(() => { }); }, []);
   const [reportModal, setReportModal] = useState<RadBoardItem | null>(null);
   const [imgReports, setImgReports] = useState<Record<string, { text: string; doctor: string; verdict: string }>>({});
   const openReportModal = (s: RadBoardItem) => {
@@ -4939,26 +5091,43 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const totalAllDebts = debts.reduce((s, d) => s + d.amount, 0);
   const toggleImg = (id: number) => setSelImgs(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
   const reset = () => { if (!patientId) { setStep(0); setSelPat(null); } else { setStep(2); setSelPat(preselected); } setSelImgs([]); setDiscount(""); setPaid(""); setPayMode("cash"); };
-  const handleSave = () => {
+  const handleSave = async () => {
     const today = _today(); const radTime = _nowHHMM();
     if (!patName.trim() || selImgs.length === 0) return;
     if (mode === "new" && newPat.pid.trim() && mockPatients.find(p => p.id === newPat.pid.trim())) { toast("رقم الهوية مستخدم مسبقاً — اختر رقم آخر أو اتركه فارغاً للتوليد التلقائي", "error"); return; }
+    if (saving) return;
+    setSaving(true);
+    // ── كانت هذه الشاشة تضيف المريض الجديد محلياً فقط دون أي استدعاء لحفظه على
+    //    الخادم (خلافاً لشاشتي العيادة والمختبر) — فيختفي ملف المريض نهائياً لأي
+    //    جلسة أخرى (وحتى لنفس المتصفح بعد إعادة تحميل الصفحة) رغم أن طلب الأشعة
+    //    والدين المرتبطين به كانا يُحفظان فعلياً. الآن نحفظ المريض على الخادم أولاً
+    //    ونستخدم رقم الملف الذي يؤكده الخادم (يحل أي تعارض أرقام تلقائياً) قبل
+    //    إنشاء أي طلب أو دين مرتبط به. ──
+    let effectivePatId = patId;
     if (mode === "new" && !mockPatients.find(p => p.id === patId)) {
-      mockPatients.push({ id: patId, name: patName, age: 30, phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "radiology", date: today, debt: 0 });
+      const created = await api.patients.create({ id: patId, name: patName, age: 30, phone: newPat.phone || "", blood_type: newPat.blood || "A+", has_insurance: newPat.insurance, dept: "radiology", date: api.parseDateISO(today), debt: 0 });
+      if (!created || !(created as any).id) {
+        setSaving(false);
+        toast("تعذّر حفظ بيانات المريض على الخادم — تحقق من الاتصال وحاول التسجيل مرة أخرى", "error");
+        return;
+      }
+      effectivePatId = String((created as any).id);
+      mockPatients.push({ id: effectivePatId, name: patName, age: 30, phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "radiology", date: today, debt: 0 });
       _syncPatients();
     }
     if (paidAmt > 0) doDeposit("radiology", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
-    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: patId, dept: "الأشعة", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: patId, dept: "الأشعة", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "الأشعة", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "الأشعة", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
     const radImgNames = selImgsData.map(t => t.name);
     const radLid = Date.now();
-    setBoard(p => [{ id: radLid, patient: patName, images: radImgNames, time: radTime, status: "pending" as const }, ...p]);
-    api.queues.create({ dept: "radiology", patient_name: patName, items: radImgNames, queue_time: radTime, status: "pending" }).then(r => { if (r) setBoard(p => p.map(s => s.id === radLid ? { ...s, id: r.id } : s)); }).catch(() => { });
+    setBoard(p => [{ id: radLid, patient: patName, patientId: effectivePatId, images: radImgNames, time: radTime, status: "pending" as const }, ...p]);
+    api.queues.create({ dept: "radiology", patient_id: effectivePatId, patient_name: patName, items: radImgNames, queue_time: radTime, status: "pending" }).then(r => { if (r) setBoard(p => p.map(s => s.id === radLid ? { ...s, id: r.id } : s)); }).catch(() => { });
     toast(`تم تسجيل ${selImgs.length} صورة لـ ${patName}${debtAmt > 0 ? " — دين: " + fmt(debtAmt) : creditAmt > 0 ? " — رصيد: " + fmt(creditAmt) : " ✓"}`, "success");
+    setSaving(false);
     reset(); setView("board");
   };
   const deliver = (id: number) => { setBoard(p => p.map(s => s.id === id ? { ...s, status: "done" as const } : s)); api.queues.updateStatus(id, "done"); toast("تم تسليم نتائج الأشعة ✓"); };
   const buildRadReportHtml = (s: RadBoardItem, reports: Record<string, { text: string; doctor: string; verdict: string }>) => {
-    const pt = mockPatients.find(p => p.name === s.patient);
+    const pt = (s.patientId && mockPatients.find(p => p.id === s.patientId)) || mockPatients.find(p => p.name === s.patient);
     const infoItems: string[] = [];
     infoItems.push(`<div class="pt-field"><b>المريض:</b> ${s.patient}</div>`);
     if (pt) infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
@@ -4976,7 +5145,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     return `<div class="pt-card">${body}</div>`;
   };
   const printRadReport = (s: RadBoardItem) => {
-    printHtml(buildRadReportHtml(s, s.reports || {}), `تقرير أشعة تشخيصية — ${s.patient}`);
+    printHtml(buildRadReportHtml(s, s.reports || {}), `تقرير أشعة تشخيصية — ${s.patient}`, undefined, undefined, true, "radiology");
   };
   const saveReportAndDeliver = () => {
     if (!reportModal) return;
@@ -5195,7 +5364,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
                   </div>
                 </div>
               </Card>
-              <div className="flex gap-3"><Btn variant="outline" onClick={() => setStep(2)}>رجوع للصور</Btn><Btn variant="success" onClick={handleSave}><Save size={16} />حفظ الجلسة وإرسالها للتجهيز</Btn></div>
+              <div className="flex gap-3"><Btn variant="outline" onClick={() => setStep(2)}>رجوع للصور</Btn><Btn variant="success" loading={saving} onClick={handleSave}><Save size={16} />حفظ الجلسة وإرسالها للتجهيز</Btn></div>
             </div>
           )}
         </div>
@@ -5207,8 +5376,8 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
             <p className="text-sm text-[#555]">لوحة متابعة حالة الأشعة</p>
             <div className="flex gap-2">
               <Btn small variant="ghost" onClick={() => toast("جارٍ التصدير...", "info")}><Download size={14} />تصدير</Btn>
-              <Btn small variant="ghost" onClick={() => { const html = `<h2>لوحة متابعة الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد التجهيز</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد التجهيز"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, "لوحة متابعة الأشعة التشخيصية"); }}><Printer size={14} />طباعة</Btn>
-              <Btn small variant="ghost" onClick={() => { const html = `<h2>لوحة متابعة الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد التجهيز</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد التجهيز"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "لوحة متابعة الأشعة التشخيصية"); }}><FileDown size={14} />حفظ PDF</Btn>
+              <Btn small variant="ghost" onClick={() => { const html = `<h2>لوحة متابعة الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد التجهيز</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد التجهيز"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, "لوحة متابعة الأشعة التشخيصية", undefined, undefined, true, "radiology"); }}><Printer size={14} />طباعة</Btn>
+              <Btn small variant="ghost" onClick={() => { const html = `<h2>لوحة متابعة الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد التجهيز</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد التجهيز"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "لوحة متابعة الأشعة التشخيصية", undefined, undefined, true, "radiology"); }}><FileDown size={14} />حفظ PDF</Btn>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-5">
@@ -5317,8 +5486,8 @@ function RadResultsScreen({ toast }: { toast: (m: string, t?: any) => void }) {
         </div>
         <div className="flex gap-2">
           <Btn small variant="ghost" onClick={() => toast("جارٍ التصدير...", "info")}><Download size={14} />تصدير</Btn>
-          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">بانتظار النتائج</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ بانتظار النتائج"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, "طلبات الأشعة وتعبئة النتائج"); }}><Printer size={14} />طباعة</Btn>
-          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">بانتظار النتائج</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ بانتظار النتائج"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "طلبات الأشعة وتعبئة النتائج"); }}><FileDown size={14} />حفظ PDF</Btn>
+          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">بانتظار النتائج</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ بانتظار النتائج"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, "طلبات الأشعة وتعبئة النتائج", undefined, undefined, true, "radiology"); }}><Printer size={14} />طباعة</Btn>
+          <Btn small variant="ghost" onClick={() => { const html = `<h2>قائمة طلبات الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">بانتظار النتائج</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ بانتظار النتائج"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "طلبات الأشعة وتعبئة النتائج", undefined, undefined, true, "radiology"); }}><FileDown size={14} />حفظ PDF</Btn>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-5">
@@ -5344,7 +5513,7 @@ function RadResultsScreen({ toast }: { toast: (m: string, t?: any) => void }) {
               <div key={s.id} className="p-3 rounded-xl" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
                 <div className="flex items-center justify-between">
                   <div><p className="text-sm font-semibold">{s.patient}</p><div className="flex gap-1 mt-1 flex-wrap">{s.images.map(img => <Badge key={img} color="success">{img}</Badge>)}</div></div>
-                  <div className="flex items-center gap-2"><Badge color="success"><CheckCircle size={12} />مكتمل</Badge><Btn small variant="ghost" onClick={() => printHtml(s.images.map(img => { const r = s.reports?.[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${s.patient}`)}><Printer size={14} /></Btn></div>
+                  <div className="flex items-center gap-2"><Badge color="success"><CheckCircle size={12} />مكتمل</Badge><Btn small variant="ghost" onClick={() => printHtml(s.images.map(img => { const r = s.reports?.[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${s.patient}`, undefined, undefined, true, "radiology")}><Printer size={14} /></Btn></div>
                 </div>
               </div>
             ))}</div>
@@ -5353,7 +5522,7 @@ function RadResultsScreen({ toast }: { toast: (m: string, t?: any) => void }) {
       </div>
       {modal && (
         <Modal open={true} onClose={() => setModal(null)} title={`رفع نتائج: ${modal.patient}`} wide
-          footer={<><Btn variant="primary" onClick={() => printHtml(modal.images.map(img => { const r = imgReports[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${modal.patient}`)}><Printer size={16} />طباعة التقرير</Btn><Btn variant="success" onClick={() => deliver(modal.id)}><Check size={16} />حفظ وإتمام الطلب</Btn><Btn variant="outline" onClick={() => setModal(null)}>إغلاق</Btn></>}>
+          footer={<><Btn variant="primary" onClick={() => printHtml(modal.images.map(img => { const r = imgReports[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${modal.patient}`, undefined, undefined, true, "radiology")}><Printer size={16} />طباعة التقرير</Btn><Btn variant="success" onClick={() => deliver(modal.id)}><Check size={16} />حفظ وإتمام الطلب</Btn><Btn variant="outline" onClick={() => setModal(null)}>إغلاق</Btn></>}>
           <div className="space-y-5">
             <p className="text-xs text-[#999] flex items-center gap-1"><AlertTriangle size={12} className="text-[#FF8F00]" />أدخل تقرير ووصف لكل صورة أشعة</p>
             {modal.images.map(img => (
@@ -5715,7 +5884,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
     return `<div class="pt-card">${body}</div>`;
   };
   const printRehabReport = (entry: RehabQueueEntry) => {
-    printHtml(buildRehabReportHtml(entry, getPlan(entry.planId)), `تقرير جلسة تأهيل — ${entry.patientName}`);
+    printHtml(buildRehabReportHtml(entry, getPlan(entry.planId)), `تقرير جلسة تأهيل — ${entry.patientName}`, undefined, undefined, true, "rehab");
   };
   const deliver = (id: number) => {
     const entry = (rehabQueueEntries || []).find(e => e.id === id);
@@ -5743,8 +5912,8 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
         </div>
         <div className="flex gap-2">
           <Btn small variant="ghost" onClick={() => toast("جارٍ التصدير...", "info")}><Download size={14} />تصدير</Btn>
-          <Btn small variant="ghost" onClick={() => { const all = rehabQueueEntries || []; const html = `<h2>قائمة طلبات العلاج التأهيلي</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${all.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد الإنجاز</div><div class="kpi-v out">${pending.length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${done.length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>التشخيص</th><th>الأخصائي</th><th>الجلسة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${all.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patientName}</td><td>${s.diagnosis}</td><td>${s.specialist}</td><td>${s.sessionNumber}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد الإنجاز"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, "طلبات العلاج التأهيلي وتعبئة النتائج"); }}><Printer size={14} />طباعة</Btn>
-          <Btn small variant="ghost" onClick={() => { const all = rehabQueueEntries || []; const html = `<h2>قائمة طلبات العلاج التأهيلي</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${all.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد الإنجاز</div><div class="kpi-v out">${pending.length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${done.length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>التشخيص</th><th>الأخصائي</th><th>الجلسة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${all.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patientName}</td><td>${s.diagnosis}</td><td>${s.specialist}</td><td>${s.sessionNumber}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد الإنجاز"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "طلبات العلاج التأهيلي وتعبئة النتائج"); }}><FileDown size={14} />حفظ PDF</Btn>
+          <Btn small variant="ghost" onClick={() => { const all = rehabQueueEntries || []; const html = `<h2>قائمة طلبات العلاج التأهيلي</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${all.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد الإنجاز</div><div class="kpi-v out">${pending.length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${done.length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>التشخيص</th><th>الأخصائي</th><th>الجلسة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${all.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patientName}</td><td>${s.diagnosis}</td><td>${s.specialist}</td><td>${s.sessionNumber}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد الإنجاز"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, "طلبات العلاج التأهيلي وتعبئة النتائج", undefined, undefined, true, "rehab"); }}><Printer size={14} />طباعة</Btn>
+          <Btn small variant="ghost" onClick={() => { const all = rehabQueueEntries || []; const html = `<h2>قائمة طلبات العلاج التأهيلي</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${all.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد الإنجاز</div><div class="kpi-v out">${pending.length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${done.length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>التشخيص</th><th>الأخصائي</th><th>الجلسة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${all.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patientName}</td><td>${s.diagnosis}</td><td>${s.specialist}</td><td>${s.sessionNumber}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد الإنجاز"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "طلبات العلاج التأهيلي وتعبئة النتائج", undefined, undefined, true, "rehab"); }}><FileDown size={14} />حفظ PDF</Btn>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-5">
@@ -5999,35 +6168,75 @@ function RehabQueueScreen({ isAdmin = false, perms }: { isAdmin?: boolean; perms
   );
 }
 
-function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavigate, toast, doDeposit }: { patientId?: string; dept: string; rehabPlans: RehabPlan[]; setRehabPlans: React.Dispatch<React.SetStateAction<RehabPlan[]>>; onNavigate: (r: Route) => void; toast: (m: string, t?: any) => void; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void }) {
+function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavigate, toast, doDeposit, setDebts, rehabServices = [], insurances = [] }: { patientId?: string; dept: string; rehabPlans: RehabPlan[]; setRehabPlans: React.Dispatch<React.SetStateAction<RehabPlan[]>>; onNavigate: (r: Route) => void; toast: (m: string, t?: any) => void; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; rehabServices?: RehabServiceItem[]; insurances?: InsuranceCo[] }) {
+  // ── نفس شاشة "التشخيص والعلاج" + "التفاصيل المالية للكشفية" المستخدَمة عند
+  //    تسجيل مريض جديد بقسم التأهيل (NewPatientScreen) — لتوحيد التجربة بين
+  //    "مريض جديد" و"خطة علاجية جديدة" لمريض مسجَّل مسبقاً، بدل شاشة قديمة
+  //    مبسّطة منفصلة تماماً. ──
   const patient = mockPatients.find(p => p.id === patientId);
   const today = _today();
-  const [diagSearch, setDiagSearch] = useState("");
-  const [selectedDiag, setSelectedDiag] = useState("");
-  const [showDiagDrop, setShowDiagDrop] = useState(false);
-  const [totalSessions, setTotalSessions] = useState("10");
-  const [pricingMode, setPricingMode] = useState<"per-session" | "plan">("per-session");
-  const [pricePerSession, setPricePerSession] = useState("");
-  const [planPrice, setPlanPrice] = useState("");
+  const [step, setStep] = useState(2);
+  // ── التقييم الفيزيائي والحركي ──
+  const [rehabChiefComplaint, setRehabChiefComplaint] = useState("");
+  const [rehabDiagnosis, setRehabDiagnosis] = useState("");
+  const [rehabPainScale, setRehabPainScale] = useState(5);
+  const [rehabROM, setRehabROM] = useState("");
+  const [rehabGrossMotor, setRehabGrossMotor] = useState("");
+  const [rehabFineMotor, setRehabFineMotor] = useState("");
+  const [rehabSensory, setRehabSensory] = useState("");
+  const [rehabAdl, setRehabAdl] = useState("");
+  // ── الخطة العلاجية والجلسات ──
+  const [rehabServiceId, setRehabServiceId] = useState<number | null>(null);
+  const [rehabSessionCount, setRehabSessionCount] = useState(1);
+  const [rehabRecommendations, setRehabRecommendations] = useState("");
   const [specialist, setSpecialist] = useState("");
-  const [depositNow, setDepositNow] = useState(false);
-  const [depositAmount, setDepositAmount] = useState("");
-  const filteredDiags = REHAB_DIAGNOSES.filter(d => d.name.includes(diagSearch));
-  const totalSessNum = parseInt(totalSessions) || 0;
-  const pricePs = parseFloat(pricePerSession) || 0;
-  const planPr = parseFloat(planPrice) || 0;
-  const totalVal = pricingMode === "per-session" ? pricePs * totalSessNum : planPr;
-  const sessionVal = pricingMode === "plan" && totalSessNum > 0 ? Math.round(planPr / totalSessNum) : pricePs;
+  const selRehabService = rehabServices.find(s => s.id === rehabServiceId) || null;
+  const rehabTotal = selRehabService ? (selRehabService.price * rehabSessionCount) : 0;
+  // ── التفاصيل المالية للكشفية (نفس منطق NewPatientScreen بالضبط) ──
+  const [priceStr, setPriceStr] = useState("");
+  const [discount, setDiscount] = useState("");
+  const [discountType, setDiscountType] = useState<"amount" | "percent">("amount");
+  const [paidStr, setPaidStr] = useState("");
+  const [insuranceCompany, setInsuranceCompany] = useState("");
+  useEffect(() => { if (rehabTotal > 0) setPriceStr(String(rehabTotal)); }, [rehabTotal]);
+  const basePrice = parseFloat(priceStr) || 0;
+  const discAmt = discountType === "percent" ? basePrice * (parseFloat(discount) || 0) / 100 : (parseFloat(discount) || 0);
+  const paidAmt = parseFloat(paidStr) || 0;
+  const remaining = basePrice - discAmt - paidAmt;
+  const insComp = insurances.find(c => c.name === insuranceCompany);
+  const insDiscPct = insComp ? insComp.discountClinic : 0;
+  const insDiscAmt = basePrice * insDiscPct / 100;
+
+  const step2Valid = () => {
+    if (!rehabDiagnosis.trim()) { toast("أدخل التشخيص التأهيلي / الفيزيائي", "error"); return false; }
+    if (!rehabServiceId) { toast("اختر نوع الخدمة التأهيلية", "error"); return false; }
+    if (!specialist.trim()) { toast("أدخل اسم الأخصائي المعالج", "error"); return false; }
+    return true;
+  };
   const handleSave = () => {
-    const today = _today();
-    if (!selectedDiag.trim()) { toast("أدخل التشخيص التأهيلي", "error"); return; }
-    if (!totalSessNum) { toast("أدخل عدد الجلسات", "error"); return; }
-    if (!specialist.trim()) { toast("أدخل اسم الأخصائي", "error"); return; }
+    if (basePrice <= 0) { toast("أدخل المبلغ الإجمالي للكشفية", "error"); return; }
     try {
-      const newPlan: RehabPlan = { id: Date.now(), patientId: patientId || "", patientName: patient?.name || "", diagnosis: selectedDiag, totalSessions: totalSessNum, completedSessions: 0, pricePerSession: sessionVal, planPrice: totalVal, pricingMode, specialist, status: "active", startDate: today };
+      const sessionVal = rehabSessionCount > 0 ? Math.round((basePrice - discAmt) / rehabSessionCount) : 0;
+      const clinicalNotes = [
+        rehabChiefComplaint && `الشكوى الرئيسية: ${rehabChiefComplaint}`,
+        `مستوى الألم: ${rehabPainScale}/10`,
+        rehabROM && `المدى الحركي والقوة العضلية: ${rehabROM}`,
+        rehabGrossMotor && `المهارات الحركية الكبرى: ${rehabGrossMotor}`,
+        rehabFineMotor && `المهارات الحركية الدقيقة: ${rehabFineMotor}`,
+        rehabSensory && `الحالة الحسية: ${rehabSensory}`,
+        rehabAdl && `أنشطة الحياة اليومية: ${rehabAdl}`,
+        rehabRecommendations && `توصيات: ${rehabRecommendations}`,
+      ].filter(Boolean).join(" | ");
+      const newPlan: RehabPlan = { id: Date.now(), patientId: patientId || "", patientName: patient?.name || "", diagnosis: rehabDiagnosis, totalSessions: rehabSessionCount, completedSessions: 0, pricePerSession: sessionVal, planPrice: basePrice - discAmt, pricingMode: "plan", specialist, status: "active", startDate: today };
       setRehabPlans(prev => [...(prev || []), newPlan]);
-      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: selectedDiag, total_sessions: totalSessNum, completed_sessions: 0, price_per_session: sessionVal, plan_price: totalVal, pricing_mode: pricingMode, specialist, status: "active", start_date: today }).then(r => { if (r) setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: (r as any).id } : p)); }).catch(() => { });
-      if (depositNow && doDeposit) { const dep = parseFloat(depositAmount) || 0; if (dep > 0) doDeposit("rehab", dep, `دفعة مقدمة — ${patient?.name || ""} — خطة تأهيلية`, "إيراد مريض"); }
+      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: sessionVal, plan_price: basePrice - discAmt, pricing_mode: "plan", specialist, status: "active", start_date: today, clinical_notes: clinicalNotes }).then(r => { if (r) setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: (r as any).id } : p)); }).catch(() => { });
+      if (paidAmt > 0 && doDeposit) doDeposit("rehab", paidAmt, `دفعة خطة علاجية — ${patient?.name || ""}`, "إيراد مريض");
+      // ── نفس مبدأ NewPatientScreen: أي مبلغ متبقٍ يُسجَّل كدين على المريض تلقائياً ──
+      if (remaining > 0 && setDebts && patientId) {
+        const nd: DebtRow = { id: Date.now() + 1, patient: patient?.name || "", pid: patientId, dept: "التأهيلي", amount: remaining, date: today, days: 0, phone: patient?.phone || "" };
+        setDebts(prev => [nd, ...prev]);
+        api.finance.debts.create({ patient: patient?.name || "", patient_id: patientId, dept: "التأهيلي", amount: remaining, date: _localISO(), phone: patient?.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
+      }
       toast(`تم إنشاء الخطة العلاجية لـ ${patient?.name || "المريض"} ✓`, "success");
       onNavigate({ screen: "open-patient", dept });
     } catch (e) {
@@ -6042,54 +6251,146 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
         <div><h2 className="text-base font-bold text-[#1B3A6B] flex items-center gap-2"><Dumbbell size={16} />إنشاء خطة علاجية تأهيلية جديدة</h2>
           {patient && <p className="text-sm text-[#555]">المريض: <strong>{patient.name}</strong> · {patient.age} سنة · {patient.phone}</p>}</div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <Card title="🩺 التشخيص التأهيلي">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#555]">التشخيص التأهيلي العام <span className="text-red-500">*</span></label>
-            <div className="relative">
-              <Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]" />
-              <input type="text" placeholder="ابحث أو اكتب التشخيص..." value={diagSearch || selectedDiag}
-                onChange={e => { setDiagSearch(e.target.value); setSelectedDiag(e.target.value); setShowDiagDrop(true); }}
-                onFocus={() => setShowDiagDrop(true)} onBlur={() => setTimeout(() => setShowDiagDrop(false), 200)}
-                className="w-full h-10 pr-8 pl-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
-              {showDiagDrop && filteredDiags.length > 0 && (<div className="absolute z-50 w-full mt-1 rounded-xl shadow-lg overflow-hidden" style={{ border: "1px solid #E0E0E0", backgroundColor: "#FFF", maxHeight: 200, overflowY: "auto" }}>
-                {filteredDiags.map(d => <button key={d.id} onMouseDown={() => { setSelectedDiag(d.name); setDiagSearch(d.name); setShowDiagDrop(false); }} className="w-full text-right px-4 py-2.5 text-sm hover:bg-[#EBF3FB] flex items-center gap-2"><Activity size={12} className="text-[#7B1FA2]" />{d.name}</button>)}
-              </div>)}
+
+      {/* ── Step indicator — نفس تصميم NewPatientScreen، خطوة 1 "بيانات المريض" مكتملة مسبقاً ── */}
+      <div className="flex items-center justify-center gap-4">
+        {[{ n: 1, l: "بيانات المريض" }, { n: 2, l: "التشخيص والعلاج" }, { n: 3, l: "التفاصيل المالية للكشفية" }].map(({ n, l }) => (
+          <div key={n} className="flex items-center gap-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${n < step ? "bg-[#388E3C] text-white" : n === step ? "bg-[#0D7377] text-white" : "bg-[#E0E0E0] text-[#999]"}`}>{n < step ? <Check size={14} /> : n}</div>
+            <span className={`text-sm ${n === step ? "font-semibold text-[#1B3A6B]" : "text-[#999]"}`}>{l}</span>
+            {n < 3 && <ChevronRight size={16} className="text-[#CCC]" />}
+          </div>
+        ))}
+      </div>
+
+      {step === 2 && (
+        <div className="space-y-4">
+          <Card title="التقييم الفيزيائي والحركي">
+            <div className="space-y-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">الشكوى الرئيسية</label>
+                <textarea rows={2} value={rehabChiefComplaint} onChange={e => setRehabChiefComplaint(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} placeholder="اكتب الشكوى الحركية الرئيسية (مثال: ألم في أسفل الظهر يزداد عند الجلوس لفترات طويلة)..." />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">التشخيص التأهيلي / الفيزيائي <span className="text-[#D32F2F]">*</span></label>
+                <input value={rehabDiagnosis} onChange={e => setRehabDiagnosis(e.target.value)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} placeholder="مثال: ديسك رقبي، تأهيل ما بعد كسر، شلل عصب وجهي..." />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">مستوى الألم <span className="text-[#999] font-normal">(Pain Scale: {rehabPainScale}/10)</span></label>
+                <div className="flex items-center gap-3">
+                  <input type="range" min={1} max={10} value={rehabPainScale} onChange={e => setRehabPainScale(Number(e.target.value))} className="flex-1 accent-[#1B3A6B]" />
+                  <span className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 ${rehabPainScale <= 3 ? "bg-[#388E3C]" : rehabPainScale <= 6 ? "bg-[#F57C00]" : "bg-[#D32F2F]"}`}>{rehabPainScale}</span>
+                </div>
+                <div className="flex justify-between text-xs text-[#999]"><span>بدون ألم (1)</span><span>ألم متوسط (5)</span><span>ألم شديد (10)</span></div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">المدى الحركي والقوة العضلية <span className="text-[#999] font-normal">(ROM & Muscle Strength)</span></label>
+                <textarea rows={2} value={rehabROM} onChange={e => setRehabROM(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} placeholder="مثال: ثني الركبة 90°، قوة عضلية 3/5، محدودية حركة الكتف عند الرفع..." />
+              </div>
+              <div className="pt-2 pb-1 border-t border-[#E0E0E0]">
+                <p className="text-xs font-bold text-[#7B1FA2] mb-3">📋 تقييم المهارات الحركية والحسية (Rehabilitation Evaluation)</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#555]">المهارات الحركية الكبرى <span className="text-[#999] font-normal">(Gross Motor Skills)</span></label>
+                    <textarea rows={3} value={rehabGrossMotor} onChange={e => setRehabGrossMotor(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CE93D8", backgroundColor: "#FCF5FF" }} placeholder="مثال: المشي مستقل، الجلوس والوقوف بمساعدة جزئية، التوازن جيد..." />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#555]">المهارات الحركية الدقيقة ووظائف اليد <span className="text-[#999] font-normal">(Fine Motor Skills / Hand Function)</span></label>
+                    <textarea rows={3} value={rehabFineMotor} onChange={e => setRehabFineMotor(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CE93D8", backgroundColor: "#FCF5FF" }} placeholder="مثال: الإمساك بالأشياء الصغيرة، التنسيق بين اليد والعين..." />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#555]">الحالة الحسية <span className="text-[#999] font-normal">(Sensory Condition)</span></label>
+                    <textarea rows={3} value={rehabSensory} onChange={e => setRehabSensory(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CE93D8", backgroundColor: "#FCF5FF" }} placeholder="مثال: إحساس طبيعي، خدر في الأطراف، فرط حساسية للمس..." />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#555]">أنشطة الحياة اليومية <span className="text-[#999] font-normal">(ADL's — Activities of Daily Living)</span></label>
+                    <textarea rows={3} value={rehabAdl} onChange={e => setRehabAdl(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CE93D8", backgroundColor: "#FCF5FF" }} placeholder="مثال: الاستحمام بمساعدة، الأكل بشكل مستقل، اللباس بصعوبة..." />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+          <Card title="الخطة العلاجية والجلسات">
+            <div className="space-y-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">الخدمة / نوع التأهيل <span className="text-[#D32F2F]">*</span></label>
+                <select value={rehabServiceId ?? ""} onChange={e => setRehabServiceId(e.target.value ? Number(e.target.value) : null)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}>
+                  <option value="">— اختر نوع الخدمة التأهيلية —</option>
+                  {rehabServices.length === 0 && <option disabled>لا توجد خدمات — أضفها من دليل التأهيل</option>}
+                  {rehabServices.map(s => <option key={s.id} value={s.id}>{s.name} — {fmt(s.price)} / جلسة</option>)}
+                </select>
+                {selRehabService && <p className="text-xs text-[#388E3C] p-2 bg-[#E8F5E9] rounded-lg">سعر الجلسة: <strong>{fmt(selRehabService.price)}</strong> — الفئة: {selRehabService.cat}</p>}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">عدد الجلسات المقررة <span className="text-[#D32F2F]">*</span></label>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => setRehabSessionCount(c => Math.max(1, c - 1))} className="w-10 h-10 rounded-lg bg-[#F5F5F5] flex items-center justify-center text-[#555] hover:bg-[#E0E0E0] transition-colors font-bold text-lg flex-shrink-0">−</button>
+                  <input type="number" min={1} max={100} value={rehabSessionCount} onChange={e => setRehabSessionCount(Math.max(1, parseInt(e.target.value) || 1))} className="flex-1 h-10 px-3 rounded-lg text-sm text-center outline-none font-bold" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                  <button type="button" onClick={() => setRehabSessionCount(c => Math.min(100, c + 1))} className="w-10 h-10 rounded-lg bg-[#F5F5F5] flex items-center justify-center text-[#555] hover:bg-[#E0E0E0] transition-colors font-bold text-lg flex-shrink-0">+</button>
+                </div>
+              </div>
+              {selRehabService && rehabSessionCount > 0 && (
+                <div className="p-3 rounded-xl flex items-center gap-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+                  <Dumbbell size={16} className="text-[#1B3A6B]" />
+                  <span className="text-sm text-[#1B3A6B]">إجمالي تكلفة الخطة: <strong>{fmt(rehabTotal)}</strong> ({rehabSessionCount} جلسة × {fmt(selRehabService.price)} / جلسة)</span>
+                </div>
+              )}
+              <InputField label="اسم الأخصائي / المعالج الفيزيائي *" placeholder="اسم الأخصائي المعالج" value={specialist} onChange={setSpecialist} />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">ملاحظات وتوصيات الخطة العلاجية</label>
+                <textarea rows={3} value={rehabRecommendations} onChange={e => setRehabRecommendations(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} placeholder="مثال: تمارين منزلية يومية، تجنب رفع الأوزان الثقيلة، الراحة التامة بين الجلسات..." />
+              </div>
+            </div>
+          </Card>
+          <div className="flex justify-between">
+            <Btn variant="outline" onClick={() => onNavigate({ screen: "open-patient", dept })}>إلغاء</Btn>
+            <Btn variant="secondary" onClick={() => { if (step2Valid()) setStep(3); }}>التالي: التفاصيل المالية <ChevronRight size={16} /></Btn>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <Card title="التفاصيل المالية للكشفية">
+          {selRehabService && <div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}><Dumbbell size={16} className="text-[#1B3A6B]" /><span className="text-sm text-[#1B3A6B]">الخطة التأهيلية: <strong>{selRehabService.name}</strong> × {rehabSessionCount} جلسة = <strong>{fmt(rehabTotal)}</strong></span></div>}
+          {insurances.length > 0 && (
+            <div className="flex flex-col gap-1.5 mb-4">
+              <label className="text-xs font-semibold text-[#555]">شركة التأمين (اختياري)</label>
+              <select value={insuranceCompany} onChange={e => setInsuranceCompany(e.target.value)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}>
+                <option value="">— بدون تأمين —</option>
+                {insurances.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
+          {insComp && insDiscPct > 0 && (
+            <div className="mb-4 p-3 rounded-xl flex items-start gap-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+              <Shield size={16} className="text-[#1B3A6B] mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-[#1B3A6B]">تأمين: {insComp.name} — خصم {insDiscPct}%</p>
+                <p className="text-xs text-[#555] mt-0.5">قيمة الخصم <strong className="text-[#1B3A6B]">{fmt(insDiscAmt)}</strong> ستُسجَّل تلقائياً كدين على شركة التأمين في نظام الفواتير</p>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            <InputField label="المبلغ الإجمالي الكشفية (₪)" required type="number" placeholder="0" value={priceStr} onChange={setPriceStr} />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">الخصم {insComp && insDiscPct > 0 && <span className="text-[#0D7377] font-normal">(محدَّد من شركة التأمين)</span>}</label>
+              <div className="flex gap-2"><input type="number" placeholder="0" value={discount} onChange={e => setDiscount(e.target.value)} className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: `1px solid ${insComp && insDiscPct > 0 ? "#0D7377" : "#CCCCCC"}`, backgroundColor: "#FAFAFA" }} /><select value={discountType} onChange={e => setDiscountType(e.target.value as "amount" | "percent")} className="h-10 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}><option value="amount">₪</option><option value="percent">%</option></select></div>
+            </div>
+            <InputField label="المبلغ المدفوع (₪)" required type="number" placeholder="0" value={paidStr} onChange={setPaidStr} />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">{remaining > 0 ? "الباقي / الدين على المريض (₪)" : remaining < 0 ? "رصيد لصالح المريض (₪)" : "الحالة"}</label>
+              <div className={`h-10 px-3 rounded-lg flex items-center text-xl font-bold ${remaining > 0 ? "bg-[#FFEBEE] text-[#D32F2F]" : "bg-[#E8F5E9] text-[#388E3C]"}`} style={{ border: `1px solid ${remaining > 0 ? "#FFCDD2" : "#C8E6C9"}` }}>
+                {remaining > 0 ? fmt(remaining) : remaining < 0 ? fmt(-remaining) : "مسدد ✓"}
+              </div>
             </div>
           </div>
+          {insComp && insDiscAmt > 0 && <div className="mt-3 p-2 rounded-lg flex items-center gap-2 text-xs text-[#1B3A6B]" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}><Shield size={12} />دين على شركة التأمين ({insComp.name}): <strong>{fmt(insDiscAmt)}</strong></div>}
+          {remaining > 0 && <p className="text-xs text-[#D32F2F] mt-2 p-2 bg-[#FFEBEE] rounded-lg">⚠️ {fmt(remaining)} سيُضاف كدين على المريض</p>}
+          {remaining === 0 && basePrice > 0 && <p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">✓ مسدد بالكامل</p>}
+          {remaining < 0 && basePrice > 0 && <p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">رصيد لصالح المريض: {fmt(-remaining)} ₪ — لا يُسجَّل دين</p>}
+          <div className="flex justify-between mt-6"><Btn variant="outline" onClick={() => setStep(2)}><ChevronDown className="rotate-90" size={16} />رجوع للتشخيص والعلاج</Btn><Btn variant="success" onClick={handleSave}><Save size={16} />إنشاء الخطة العلاجية</Btn></div>
         </Card>
-        <Card title="📅 عدد الجلسات">
-          <div className="space-y-3">
-            <InputField label="عدد الجلسات الإجمالي *" type="number" placeholder="10" value={totalSessions} onChange={setTotalSessions} />
-            <p className="text-xs text-[#999]">مثال: 10 جلسات علاج طبيعي — يتم تتبع كل جلسة تلقائياً وخصمها من الرصيد</p>
-          </div>
-        </Card>
-        <Card title="💰 طريقة المحاسبة">
-          <div className="space-y-4">
-            <div className="flex gap-2">{([{ k: "per-session" as const, l: "سعر الجلسة الواحدة" }, { k: "plan" as const, l: "سعر الخطة الإجمالي" }]).map(opt => (
-              <button key={opt.k} onClick={() => setPricingMode(opt.k)} className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${pricingMode === opt.k ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`} style={{ border: "1px solid #E0E0E0" }}>{opt.l}</button>
-            ))}</div>
-            {pricingMode === "per-session" ? (<InputField label="سعر الجلسة الواحدة (د.ع)" type="number" placeholder="15000" value={pricePerSession} onChange={setPricePerSession} />) : (<InputField label="سعر الخطة الإجمالية (د.ع)" type="number" placeholder="150000" value={planPrice} onChange={setPlanPrice} />)}
-            {totalSessNum > 0 && (pricePs > 0 || planPr > 0) && (<div className="p-3 rounded-lg text-center" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
-              {pricingMode === "per-session" ? <p className="text-sm text-[#388E3C] font-semibold">الإجمالي: {fmt(totalVal)} د.ع</p> : <p className="text-sm text-[#388E3C] font-semibold">سعر الجلسة: {fmt(sessionVal)} د.ع</p>}
-            </div>)}
-          </div>
-        </Card>
-        <Card title="👤 الأخصائي المعالج">
-          <div className="space-y-3">
-            <InputField label="اسم الأخصائي / المعالج الفيزيائي *" placeholder="اسم الأخصائي المعالج" value={specialist} onChange={setSpecialist} />
-            <div className="flex items-center gap-2 p-3 rounded-xl" style={{ backgroundColor: "#F5F5F5", border: "1px solid #E0E0E0" }}>
-              <input type="checkbox" id="dep-now-chk" checked={depositNow} onChange={e => setDepositNow(e.target.checked)} className="w-4 h-4 accent-[#1B3A6B]" />
-              <label htmlFor="dep-now-chk" className="text-sm text-[#555] cursor-pointer">تسجيل دفعة مقدمة الآن</label>
-            </div>
-            {depositNow && (<InputField label="مبلغ الدفعة المقدمة (د.ع)" type="number" placeholder="0" value={depositAmount} onChange={setDepositAmount} />)}
-          </div>
-        </Card>
-      </div>
-      <div className="flex gap-3 justify-end">
-        <Btn variant="outline" onClick={() => onNavigate({ screen: "open-patient", dept })}>إلغاء</Btn>
-        <Btn variant="primary" onClick={handleSave}><CheckCircle size={16} />إنشاء الخطة العلاجية</Btn>
-      </div>
+      )}
     </div>
   );
 }
@@ -6098,7 +6399,7 @@ const LAB_COLS_AR = ["اسم الفحص بالعربي", "اسم الفحص با
 function downloadLabTemplate() { const ws = XLSX.utils.aoa_to_sheet([LAB_COLS_AR]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "فحوصات"); XLSX.writeFile(wb, "نموذج_فحوصات_المختبر.xlsx"); }
 function exportLabTests(tests: LabTest[]) { const rows = tests.map(t => [t.name, t.nameEn, t.code, t.cat, t.priceOfficial, t.price, t.consumablesCost || 0, t.priceCost || 0, t.isL2L ? "خارجي" : "داخلي", t.kit, t.kitQty || 0, t.kitThreshold || 10, t.time, t.timeUnit || "ساعة"]); const ws = XLSX.utils.aoa_to_sheet([LAB_COLS_AR, ...rows]); ws["!cols"] = [{ wch: 20 }, { wch: 20 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 20 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 10 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "فحوصات"); XLSX.writeFile(wb, "فحوصات_المختبر.xlsx"); }
 function parseLabExcel(file: File): Promise<Partial<LabTest>[]> { return new Promise((res, rej) => { const r = new FileReader(); r.onload = e => { try { const wb = XLSX.read(e.target?.result, { type: "array" }); const ws = wb.Sheets[wb.SheetNames[0]]; const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }); const data = rows.slice(1).filter(r => r[0] || r[2]).map(r => ({ name: String(r[0] || ""), nameEn: String(r[1] || ""), code: String(r[2] || ""), cat: String(r[3] || "تحاليل الدم"), priceOfficial: parseFloat(r[4]) || 0, price: parseFloat(r[5]) || 0, consumablesCost: parseFloat(r[6]) || 0, priceCost: parseFloat(r[7]) || 0, isL2L: String(r[8] || "").includes("خارجي"), kit: String(r[9] || ""), kitQty: parseInt(r[10]) || 0, kitThreshold: parseInt(r[11]) || 10, time: String(r[12] || ""), timeUnit: String(r[13] || "ساعة"), normalRanges: [] })); res(data); } catch (err) { rej(err); } }; r.onerror = rej; r.readAsArrayBuffer(file); }); }
-function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, perms }: { toast: (m: string, t?: any) => void; labTests?: LabTest[]; setLabTests?: React.Dispatch<React.SetStateAction<LabTest[]>>; perms?: DeptPermissions }) {
+function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, perms, inventory = [] }: { toast: (m: string, t?: any) => void; labTests?: LabTest[]; setLabTests?: React.Dispatch<React.SetStateAction<LabTest[]>>; perms?: DeptPermissions; inventory?: typeof initialInventory }) {
   const canAdd = !perms || perms.canCatalogAdd !== false;
   const canEdit = !perms || perms.canCatalogEdit !== false;
   const canDelete = !perms || perms.canCatalogDelete !== false;
@@ -6114,9 +6415,8 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
   const [importLoading, setImportLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [normalRanges, setNormalRanges] = useState<NormalRange[]>([{ param: "", unit: "", min: "", max: "", note: "" }]);
-  const [addQtyModal, setAddQtyModal] = useState<LabTest | null>(null); const [addQtyAmt, setAddQtyAmt] = useState("");
   const [tableTab, setTableTab] = useState<"internal" | "external">("internal");
-  const [form, setForm] = useState({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" });
+  const [form, setForm] = useState({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitInventoryId: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" });
   const filtered = tests.filter(t => t.name.includes(search) || t.code.toLowerCase().includes(search.toLowerCase()) || t.nameEn.toLowerCase().includes(search.toLowerCase()));
   const filtInternal = filtered.filter(t => !t.isL2L);
   const filtExternal = filtered.filter(t => t.isL2L);
@@ -6127,12 +6427,13 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
     catch { toast("خطأ في قراءة الملف — تأكد أنه xlsx أو xls", "error"); }
     finally { setImportLoading(false); };
   };
-  const openAdd = () => { setForm({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" }); setNormalRanges([{ param: "", unit: "", min: "", max: "", note: "" }]); setEditItem(null); setAddModal(true) };
-  const openEdit = (t: LabTest) => { setForm({ code: t.code, name: t.name, nameEn: t.nameEn, cat: t.cat, priceOfficial: String(t.priceOfficial || 0), price: String(t.price), consumablesCost: String(t.consumablesCost || 0), priceCost: String(t.priceCost || 0), isL2L: String(t.isL2L || false), kit: t.kit, kitQty: String(t.kitQty || 0), kitUnit: t.kitUnit || "وحدة", kitThreshold: String(t.kitThreshold || 10), time: t.time, timeUnit: "ساعة", desc: "", notes: "" }); setNormalRanges(t.normalRanges || [{ param: "", unit: "", min: "", max: "", note: "" }]); setEditItem(t); setAddModal(true) };
+  const openAdd = () => { setForm({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitInventoryId: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" }); setNormalRanges([{ param: "", unit: "", min: "", max: "", note: "" }]); setEditItem(null); setAddModal(true) };
+  const openEdit = (t: LabTest) => { setForm({ code: t.code, name: t.name, nameEn: t.nameEn, cat: t.cat, priceOfficial: String(t.priceOfficial || 0), price: String(t.price), consumablesCost: String(t.consumablesCost || 0), priceCost: String(t.priceCost || 0), isL2L: String(t.isL2L || false), kit: t.kit, kitInventoryId: t.kitInventoryId != null ? String(t.kitInventoryId) : "", kitQty: String(t.kitQty || 0), kitUnit: t.kitUnit || "وحدة", kitThreshold: String(t.kitThreshold || 10), time: t.time, timeUnit: "ساعة", desc: "", notes: "" }); setNormalRanges(t.normalRanges || [{ param: "", unit: "", min: "", max: "", note: "" }]); setEditItem(t); setAddModal(true) };
   const handleSave = () => {
     if (!form.name.trim() || !form.code.trim() || !form.price) return;
-    const base = { code: form.code, name: form.name, nameEn: form.nameEn, cat: form.cat, priceOfficial: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumablesCost: parseFloat(form.consumablesCost) || 0, priceCost: parseFloat(form.priceCost) || 0, isL2L: form.isL2L === "true", kit: form.kit, kitQty: parseInt(form.kitQty) || 0, kitUnit: form.kitUnit, kitThreshold: parseInt(form.kitThreshold) || 10, time: form.time, normalRanges };
-    const dbPayload = { code: form.code, name: form.name, name_en: form.nameEn, category: form.cat, price_official: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumables_cost: parseFloat(form.consumablesCost) || 0, price_cost: parseFloat(form.priceCost) || 0, is_l2l: form.isL2L === "true", kit: form.kit, kit_qty: parseInt(form.kitQty) || 0, kit_unit: form.kitUnit, kit_threshold: parseInt(form.kitThreshold) || 10, time_estimate: form.time, normalRanges };
+    const kitInventoryId = form.kitInventoryId ? Number(form.kitInventoryId) : null;
+    const base = { code: form.code, name: form.name, nameEn: form.nameEn, cat: form.cat, priceOfficial: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumablesCost: parseFloat(form.consumablesCost) || 0, priceCost: parseFloat(form.priceCost) || 0, isL2L: form.isL2L === "true", kit: form.kit, kitInventoryId, kitQty: parseInt(form.kitQty) || 0, kitUnit: form.kitUnit, kitThreshold: parseInt(form.kitThreshold) || 10, time: form.time, normalRanges };
+    const dbPayload = { code: form.code, name: form.name, name_en: form.nameEn, category: form.cat, price_official: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumables_cost: parseFloat(form.consumablesCost) || 0, price_cost: parseFloat(form.priceCost) || 0, is_l2l: form.isL2L === "true", kit: form.kit, kit_inventory_id: kitInventoryId, kit_qty: parseInt(form.kitQty) || 0, kit_unit: form.kitUnit, kit_threshold: parseInt(form.kitThreshold) || 10, time_estimate: form.time, normalRanges };
     if (editItem) {
       const updated = tests.map(t => t.id === editItem.id ? { ...t, ...base } : t);
       initialLabTests.splice(0, initialLabTests.length, ...updated);
@@ -6392,25 +6693,26 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
             </div>
           </div>
           <p className="text-xs font-bold text-[#555] uppercase tracking-wider border-b border-[#E0E0E0] pb-2 pt-2">المخزون والكيت</p>
-          <div className="grid grid-cols-2 gap-3">
-            <InputField label="اسم الكيت (Kit)" placeholder="CBC Kit" value={form.kit} onChange={v => setForm(p => ({ ...p, kit: v }))} />
-            <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">وحدة الكمية</label><select value={form.kitUnit} onChange={e => setForm(p => ({ ...p, kitUnit: e.target.value }))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>{"وحدة علبة كيس لتر مل".split(" ").map(u => <option key={u}>{u}</option>)}</select></div>
-            <InputField label="الكمية المتوفرة الحالية" type="number" placeholder="0" value={form.kitQty} onChange={v => setForm(p => ({ ...p, kitQty: v }))} />
-            <InputField label="حد التنبيه (أقل كمية)" type="number" placeholder="10" value={form.kitThreshold} onChange={v => setForm(p => ({ ...p, kitThreshold: v }))} />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-[#555]">ربط الفحص بصنف من المستلزمات (للخصم التلقائي عند التسجيل)</label>
+            <select value={form.kitInventoryId} onChange={e => { const v = e.target.value; const invItem = inventory.find(i => String(i.id) === v); setForm(p => ({ ...p, kitInventoryId: v, kit: invItem ? invItem.name : p.kit })); }} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+              <option value="">— بدون ربط (لن يتم خصم أي مخزون تلقائياً) —</option>
+              {inventory.map(i => <option key={i.id} value={i.id}>{i.name} — متوفر: {i.qty} {i.unit || "وحدة"}</option>)}
+            </select>
+            {form.kitInventoryId ? (() => {
+              const linked = inventory.find(i => String(i.id) === form.kitInventoryId);
+              return linked ? (
+                <p className="text-xs text-[#0D7377]">✓ عند تسجيل هذا الفحص لمريض، سيتم خصم وحدة واحدة تلقائياً من "{linked.name}" — الكمية الحالية بالمستلزمات: <strong>{linked.qty} {linked.unit || "وحدة"}</strong>{linked.qty <= linked.threshold ? " (منخفضة)" : ""}. لإضافة كمية أو تعديل حد التنبيه، من شاشة "مستلزمات المختبر".</p>
+              ) : null;
+            })() : (
+              <p className="text-xs text-[#F57C00]">⚠️ بدون ربط، لن ينخصم أي مخزون تلقائياً عند تسجيل هذا الفحص — اربطه بصنف من "مستلزمات المختبر" لتفعيل الخصم التلقائي.</p>
+            )}
           </div>
           <p className="text-xs font-bold text-[#555] uppercase tracking-wider border-b border-[#E0E0E0] pb-2 pt-2">التوقيت</p>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">وقت الإنجاز <span className="text-[#D32F2F]">*</span></label><div className="flex gap-2"><input type="text" placeholder="مثال: 2" value={form.time} onChange={e => setForm(p => ({ ...p, time: e.target.value }))} className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /><select value={form.timeUnit} onChange={e => setForm(p => ({ ...p, timeUnit: e.target.value }))} className="h-10 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option>ساعة</option><option>يوم</option><option>فوري</option></select></div></div>
             <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">وصف الفحص</label><textarea rows={2} value={form.desc} onChange={e => setForm(p => ({ ...p, desc: e.target.value }))} className="px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
           </div>
-          {editItem && <div className="mt-1 p-4 rounded-xl" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
-            <div className="flex items-center gap-2 mb-3"><Package size={15} className="text-[#1B3A6B]" /><p className="text-sm font-bold text-[#1B3A6B]">إضافة كمية جديدة للكيت</p></div>
-            <p className="text-xs text-[#555] mb-2">الكمية الحالية: <strong className="text-[#1B3A6B]">{editItem.kitQty} {editItem.kitUnit}</strong></p>
-            <div className="flex gap-2 items-end">
-              <div className="flex-1"><label className="text-xs font-semibold text-[#555]">الكمية المُضافة</label><input type="number" value={addQtyAmt} onChange={e => setAddQtyAmt(e.target.value)} placeholder="0" className="w-full h-9 px-3 rounded-lg text-sm outline-none mt-1" style={{ border: "1px solid #CCC", backgroundColor: "white" }} /></div>
-              <Btn small variant="secondary" onClick={() => { if (!addQtyAmt || !editItem) return; const q = parseInt(addQtyAmt) || 0; setTests(p => p.map(t => t.id === editItem.id ? { ...t, kitQty: t.kitQty + q } : t)); setAddQtyAmt(""); toast(`تمت إضافة ${q} ${editItem.kitUnit} لكيت ${editItem.kit} ✓`); }}>تسجيل الإضافة</Btn>
-            </div>
-          </div>}
           {/* Normal Ranges */}
           <div className="border-t border-[#E0E0E0] pt-4">
             <div className="flex items-center justify-between mb-3"><p className="text-sm font-bold text-[#1B3A6B]">قيم المرجع / المعدلات الطبيعية</p><Btn small variant="outline" onClick={addRange}><Plus size={12} />إضافة معامل</Btn></div>
@@ -6929,7 +7231,7 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
               <p><b>الرواتب</b> = الرواتب الأصلية - قيمة السلف المقبولة - سندات الصرف (مصروفات شخصية)</p>
             </div>
             <h2>تفاصيل الإيرادات</h2><table><thead><tr><th>البند</th><th>المبلغ</th></tr></thead><tbody><tr><td>الدخل من المرضى</td><td class="in">${fmt(patientRevenue)}</td></tr><tr><td>سندات القبض</td><td class="in">${fmt(receiptVoucherRev)}</td></tr><tr style="font-weight:bold"><td>إجمالي الإيرادات</td><td class="in">${fmt(rangeRevenue)}</td></tr></tbody></table>
-            <h2>تفاصيل المصروفات والرواتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ</th></tr></thead><tbody><tr><td>المصروفات</td><td>طلبات الشراء المسددة</td><td class="out">${fmt(purchasesOut)}</td></tr><tr><td>الرواتب</td><td>الرواتب الأصلية الموزعة (${fmt(grossSalaryOut)}) ناقصاً السلف (${fmt(advancesOut)}) والمصروفات الشخصية (${fmt(paymentVoucherOut)})</td><td class="out">${fmt(salariesOut)}</td></tr><tr style="font-weight:bold"><td>إجمالي الخصومات</td><td></td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table>`; printHtml(html, `تقرير الربح والخسارة — ${periodLabel}`, dateFrom, dateTo);
+            <h2>تفاصيل المصروفات والرواتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ</th></tr></thead><tbody><tr><td>المصروفات</td><td>طلبات الشراء المسددة</td><td class="out">${fmt(purchasesOut)}</td></tr><tr><td>الرواتب</td><td>الرواتب الأصلية الموزعة (${fmt(grossSalaryOut)}) ناقصاً السلف (${fmt(advancesOut)}) والمصروفات الشخصية (${fmt(paymentVoucherOut)})</td><td class="out">${fmt(salariesOut)}</td></tr><tr style="font-weight:bold"><td>إجمالي الخصومات</td><td></td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table>`; printHtml(html, `تقرير الربح والخسارة — ${periodLabel}`, dateFrom, dateTo, true, dept);
           }}><Printer size={14} />طباعة</Btn>
         </div>
       </div>
@@ -7013,11 +7315,15 @@ function FinExpensesScreen({ drawers, purchaseRequests = [], employeeAdvances = 
         <DateRangePicker from={dateFrom} to={dateTo} onFrom={setDateFrom} onTo={setDateTo} onClear={() => { setDateFrom(""); setDateTo(""); }} />
         <div className="flex gap-2 mr-auto">
           <Btn small variant="ghost" onClick={() => { const rows = outTxs.map(t => [t.date || "", t.title, t.category || "", t.amount]); const ws = XLSX.utils.aoa_to_sheet([["التاريخ", "البيان", "التصنيف", "المبلغ"], ...rows, [], ["", "رواتب", "", salariesTotal], ["", "سلف موظفين", "", advancesTotal], ["", "مشتريات", "", purchasesTxTotal], ["", "سندات صرف", "", paymentVoucherTotal], ["", "مصروف شخصي/عمومي", "", personalTotal], ["", "أخرى", "", otherExpenses], ["", "الإجمالي", "", rangeOut]]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "المصروفات"); XLSX.writeFile(wb, `تقرير_المصروفات_${periodLabel}.xlsx`); }}><Download size={14} />تصدير</Btn>
-          <Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">إجمالي التكاليف</div><div class="kpi-v out">${fmt(rangeOut)}</div></div></div><h2>تصنيف المصروفات — ${periodLabel}</h2><table><thead><tr><th>البند</th><th>المبلغ</th></tr></thead><tbody>${[["رواتب موظفين", salariesTotal], ["سلف موظفين", advancesTotal], ["مشتريات", purchasesTxTotal], ["سندات صرف", paymentVoucherTotal], ["مصروف شخصي/عمومي", personalTotal], ["أخرى", otherExpenses]].filter(r => Number(r[1]) > 0).map(r => `<tr><td>${r[0]}</td><td class="out">${fmt(Number(r[1]))}</td></tr>`).join("")}<tr style="font-weight:bold"><td>الإجمالي</td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table><h2>تفاصيل المعاملات</h2><table><thead><tr><th>التاريخ</th><th>البيان</th><th>التصنيف</th><th>المبلغ</th></tr></thead><tbody>${outTxs.map(t => `<tr><td>${t.date || ""}</td><td>${t.title}</td><td>${t.category || ""}</td><td class="out">${fmt(t.amount)}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `تقرير المصروفات — ${periodLabel}`, dateFrom, dateTo); }}><Printer size={14} />طباعة</Btn>
+          <Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">إجمالي التكاليف</div><div class="kpi-v out">${fmt(rangeOut)}</div></div></div><h2>تصنيف المصروفات — ${periodLabel}</h2><table><thead><tr><th>البند</th><th>المبلغ</th></tr></thead><tbody>${[["رواتب موظفين", salariesTotal], ["سلف موظفين", advancesTotal], ["مشتريات", purchasesTxTotal], ["سندات صرف", paymentVoucherTotal], ["مصروف شخصي/عمومي", personalTotal], ["أخرى", otherExpenses]].filter(r => Number(r[1]) > 0).map(r => `<tr><td>${r[0]}</td><td class="out">${fmt(Number(r[1]))}</td></tr>`).join("")}<tr style="font-weight:bold"><td>الإجمالي</td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table><h2>تفاصيل المعاملات</h2><table><thead><tr><th>التاريخ</th><th>البيان</th><th>التصنيف</th><th>المبلغ</th></tr></thead><tbody>${outTxs.map(t => `<tr><td>${t.date || ""}</td><td>${t.title}</td><td>${t.category || ""}</td><td class="out">${fmt(t.amount)}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `تقرير المصروفات — ${periodLabel}`, dateFrom, dateTo, true, dept); }}><Printer size={14} />طباعة</Btn>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        {[{ label: `إجمالي التكاليف — ${periodLabel}`, value: engExpTotal, color: "#E65100", bg: "#FFF3E0", border: "#FFCC80" }, { label: "منها رواتب", value: engSalaryCost, color: "#7B1FA2", bg: "#F3E5F5", border: "#CE93D8" }, { label: "منها مشتريات", value: purchasesTxTotal, color: "#1565C0", bg: "#E3F2FD", border: "#90CAF9" }, { label: "منها سندات صرف", value: paymentVoucherTotal, color: "#E65100", bg: "#FBE9E7", border: "#FFAB91" }].filter(c => c.value > 0 || c.label.includes("الإجمالي")).slice(0, 2).map(c => (
+        {/* بطاقة "منها سندات صرف" أُخفيت من الواجهة فقط بناءً على طلب صريح —
+            paymentVoucherTotal يبقى محسوباً كما هو ومستخدماً بالتصدير/الطباعة،
+            هذا فقط يمنع عرضها كبطاقة KPI هنا (بكل شاشات المصروفات: الأقسام
+            الرئيسية + النظام المالي العام، لأنها تستخدم نفس هذا المكوّن). */}
+        {[{ label: `إجمالي التكاليف — ${periodLabel}`, value: engExpTotal, color: "#E65100", bg: "#FFF3E0", border: "#FFCC80" }, { label: "منها رواتب", value: engSalaryCost, color: "#7B1FA2", bg: "#F3E5F5", border: "#CE93D8" }, { label: "منها مشتريات", value: purchasesTxTotal, color: "#1565C0", bg: "#E3F2FD", border: "#90CAF9" }].filter(c => c.value > 0 || c.label.includes("الإجمالي")).slice(0, 2).map(c => (
           <div key={c.label} className="rounded-xl p-4 text-center" style={{ backgroundColor: c.bg, border: `1px solid ${c.border}` }}>
             <p className="text-xs text-[#555] mb-1">{c.label}</p>
             <p className="text-2xl font-bold" style={{ color: c.color }}>{fmt(c.value)}</p>
@@ -7226,7 +7532,12 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const totalRevenue = engFinSum.revenue;
   const netProfit = engFinSum.profit;
   const totalReceiptVouchersAll = engFinSum.breakdown.revenue.receiptVouchers;
-  const totalWithdrawals = engFinSum.breakdown.expenses.personalExpenseVouchers;
+  // ── "إجمالي السحوبات" يجب أن يساوي كل ما يُخصم فعلياً بمعادلة "صافي الربح"
+  //    (مشتريات + سندات صرف شخصية + رواتب صافية) — كانت مربوطة فقط بسندات
+  //    الصرف الشخصية، فكانت تظهر 0 حتى لو صافي الربح سالب بشكل كبير بسبب
+  //    مصروف تاني (زي الرواتب) غير ظاهر بأي مكان بهاي البطاقات. الآن:
+  //    totalRevenue - totalWithdrawals = netProfit دايماً، بالضبط. ──
+  const totalWithdrawals = engFinSum.expenses + engFinSum.salaryCost;
   const totalPurchases = engFinSum.breakdown.expenses.purchaseRequests;
 
   const periodLabel = dateFrom || dateTo ? `${dateFrom || "..."} → ${dateTo || "..."}` : new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
@@ -7557,7 +7868,12 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
 
 // ─── DEBTS ─────────────────────────────────────────────────────────────────────
 
-function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, customDepts = [] }: { debts: DebtRow[]; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; drawers: Record<string, DrawerState>; doDeposit: (dept: string, amount: number, title: string, type: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }> }) {
+function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, customDepts = [], setReceiptVouchers }: { debts: DebtRow[]; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; drawers: Record<string, DrawerState>; doDeposit: (dept: string, amount: number, title: string, type: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>;
+  // ── ضروري لضمان أن تسديد الدين يُسجَّل كسند قبض حقيقي في جدول السندات، وليس
+  //    مجرد إيداع في الصندوق — بدونه لا يظهر التسديد بأي معادلة مالية موحّدة
+  //    بالنظام (لوحة التحكم، النظام المالي، إلخ) رغم أن رصيد الصندوق يتغيّر. ──
+  setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
+}) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [search, setSearch] = useState(""); const [deptFilter, setDeptFilter] = useState(""); const [ageFilter, setAgeFilter] = useState<"all" | "<30" | "30-90" | ">90">("all");
   const [debtFrom, setDebtFrom] = useState(""); const [debtTo, setDebtTo] = useState("");
@@ -7587,11 +7903,38 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
       toast("تعذّر إرسال الرسالة — خطأ في الاتصال", "error");
     }
   };
-  const handleSettle = () => {
+  const handleSettle = async () => {
     if (!settleModal || !settleAmount) return; const paid = parseFloat(settleAmount);
-    const deptMap: Record<string, string> = { الجراحة: "surgery", المختبر: "lab", الأشعة: "radiology", التأهيلي: "rehab" };
+    // ── كان هذا مقتصراً على 4 أقسام ثابتة فقط (الجراحة/المختبر/الأشعة/التأهيلي)
+    //    — أي دين لقسم مخصَّص (زي "الاستقبال" أو أي قسم أضافه المدير) كان
+    //    يسقط تلقائياً على "surgery" لأنه القيمة الاحتياطية hardcoded، فيتراكم
+    //    فيه رصيد لا يخصه فعلياً. الآن نطابق بالاعتماد على allDepts (كل الأقسام
+    //    الثابتة + المخصصة) بدل قائمة يدوية ناقصة. ──
+    const matchedDept = allDepts.find(d => d.short === settleModal.dept);
+    const deptId = matchedDept?.id || settleModal.dept || "surgery";
     setSettling(true);
-    setTimeout(() => { doDeposit(deptMap[settleModal.dept] || "surgery", paid, `تسديد دين — ${settleModal.patient}`, "سند قبض — دفعة نقدية"); setDebts(p => p.map(d => { if (d.id !== settleModal.id) return d; const n = d.amount - paid; if (n <= 0) { api.finance.debts.delete(d.id); return null; } api.finance.debts.update(d.id, { amount: n }); return { ...d, amount: n }; }).filter(Boolean) as DebtRow[]); setSettling(false); setSettleModal(null); setSettleAmount(""); toast(`تم تسجيل دفعة ${fmt(paid)} من ${settleModal.patient}`) }, 700);
+    try {
+      // ── تسجيل السداد كسند قبض حقيقي (وليس فقط إيداع خام بالصندوق) — هذا ما
+      //    يجعله يدخل تلقائياً بكل المعادلات المالية الموحّدة بالنظام (لوحة
+      //    التحكم، النظام المالي العام، إلخ) تماماً مثل أي سند قبض آخر يُنشأ
+      //    يدوياً من شاشة "السندات وحساباتها". ──
+      const rvBody = {
+        date: _localISO(), amount: paid,
+        received_from_type: "patient" as const,
+        received_from_id: settleModal.pid, received_from_name: settleModal.patient,
+        reason: `تسديد دين مريض — ${settleModal.patient}`,
+        dept: deptId, notes: "تسديد دين من شاشة إدارة الديون", approved_by: "",
+      };
+      const r = await api.finance.receiptVouchers.create(rvBody);
+      if (r && setReceiptVouchers) setReceiptVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
+      doDeposit(deptId, paid, `تسديد دين — ${settleModal.patient}`, "سند قبض");
+      setDebts(p => p.map(d => { if (d.id !== settleModal.id) return d; const n = d.amount - paid; if (n <= 0) { api.finance.debts.delete(d.id); return null; } api.finance.debts.update(d.id, { amount: n }); return { ...d, amount: n }; }).filter(Boolean) as DebtRow[]);
+      toast(`تم تسجيل دفعة ${fmt(paid)} من ${settleModal.patient} كسند قبض ✓`);
+    } catch {
+      toast("تعذّر تسجيل السداد — حاول مجدداً", "error");
+    } finally {
+      setSettling(false); setSettleModal(null); setSettleAmount("");
+    }
   };
   return (
     <div className="space-y-5">
@@ -7676,10 +8019,13 @@ function EmployeeAdvancesScreen({ employeeAdvances, setEmployeeAdvances, drawers
     if (!form.empName.trim() || amt <= 0) { toast("اسم الموظف والمبلغ إلزاميان", "error"); return; }
     const drawer = drawers[form.dept];
     if (!drawer || drawer.balance < amt) { toast("⚠️ رصيد الصندوق غير كافٍ لهذه السلفة", "warning"); return; }
-    const newAdv: EmployeeAdvance = { id: Date.now(), empName: form.empName.trim(), dept: form.dept, amount: amt, date: form.date || _today(), note: form.note, repaid: false };
+    // ── نربط السلفة بحساب الموظف الحقيقي (staffId) وقت الإنشاء، مش بمطابقة
+    //    الاسم كل مرة لاحقاً — نفس مبدأ إصلاح تكرار سجلات الرواتب ──
+    const matchedStaffId = staffList.find(s => s.name === form.empName.trim())?.id ?? null;
+    const newAdv: EmployeeAdvance = { id: Date.now(), staffId: matchedStaffId, empName: form.empName.trim(), dept: form.dept, amount: amt, date: form.date || _today(), note: form.note, repaid: false };
     setEmployeeAdvances(p => [newAdv, ...p]);
     doWithdraw(form.dept, amt, `سلفة — ${form.empName.trim()}`, "سلف موظفين", form.empName.trim());
-    api.staff.advances.create({ emp_name: form.empName.trim(), dept: form.dept, amount: amt, date: api.parseDateISO(form.date || today), note: form.note || "", repaid: false }).then(r => { if (r) setEmployeeAdvances(p => p.map(a => a.id === newAdv.id ? { ...a, id: (r as any).id } : a)); }).catch(() => { });
+    api.staff.advances.create({ emp_name: form.empName.trim(), staff_id: matchedStaffId, dept: form.dept, amount: amt, date: api.parseDateISO(form.date || today), note: form.note || "", repaid: false }).then(r => { if (r) setEmployeeAdvances(p => p.map(a => a.id === newAdv.id ? { ...a, id: (r as any).id } : a)); }).catch(() => { });
     setAddModal(false); setForm({ empName: "", dept: "lab", amount: "", date: _today(), note: "" });
     toast(`تم تسجيل سلفة ${fmt(amt)} لـ ${form.empName.trim()} وخصمها من الصندوق ✓`);
   };
@@ -7916,13 +8262,13 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const curMonthStart = (() => { const d = _jlmNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; })();
   const [payslipModal, setPayslipModal] = useState<{ emp: Employee; from: string; to: string } | null>(null);
   const getPayslipData = (e: Employee, from: string, to: string) => {
-    const sm = getStaffMember(e.name);
+    const sm = getStaffMember(e);
     const pDepts = sm?.percentageDepts || [];
     const isFix = !sm || sm.salaryType === "fixed";
     const rangeSessions = sessions.filter(s => s.doctor === e.name && (pDepts.length === 0 || pDepts.includes(s.dept)) && inRangeDDMMYYYY(s.date, from, to));
     const rangeRevenue = rangeSessions.reduce((sum, s) => sum + s.paid, 0);
     const commission = isFix ? 0 : Math.round(rangeRevenue * ((sm!.percentageValue || 0) / 100));
-    const pendingAdvances = employeeAdvances.filter(a => a.empName === e.name && !a.repaid);
+    const pendingAdvances = employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid);
     const totalAdvances = pendingAdvances.reduce((s, a) => s + a.amount, 0);
     const rangeExpVouchers = paymentVouchers
       .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name && inRangeDDMMYYYY(v.date, from, to));
@@ -7938,27 +8284,32 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${e.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${sm?.jobTitle || e.role || "—"}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptLabel}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody><tr><td>الراتب الأساسي</td><td>${salaryTypeLabel}</td><td class="in">${fmt(e.salary)}</td></tr>${commission > 0 ? `<tr><td>نسبة الإيرادات الفردية</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${sm?.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${rangeExpenses > 0 ? `<tr><td>خصومات</td><td>مصروفات شخصية مسجَّلة بالفترة</td><td class="out">−${fmt(rangeExpenses)}</td></tr>` : ""}${pendingAdvances.map(a => `<tr><td>سلفة (${a.date})</td><td>${a.note || "سلفة موظف"}</td><td class="out">−${fmt(a.amount)}</td></tr>`).join("")}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(net)}</td></tr></tbody></table>${rangeSessions.length > 0 ? `<h2>سجل الجلسات — ${rangeSessions.length} جلسة (إجمالي الإيرادات: ${fmt(rangeRevenue)})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>المبلغ الكلي</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${rangeSessions.slice(0, 30).map(s => `<tr><td>${s.date}</td><td>${s.dept}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : ""}">${s.debt > 0 ? "−" + fmt(s.debt) : "—"}</td></tr>`).join("")}${rangeSessions.length > 30 ? `<tr><td colspan="5" style="text-align:center;color:#666;font-style:italic">... و${rangeSessions.length - 30} جلسة أخرى</td></tr>` : ""}</tbody></table>` : ""}<div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">مسؤول الرواتب</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
     printHtml(html, `قسيمة راتب — ${e.name} — ${periodLabel}`, from, to);
   };
-  const getStaffMember = (name: string) => staffList.find(s => s.name === name);
+  // ── مطابقة موظف الرواتب بحساب الموظف: نفضّل الربط الحقيقي عبر staffId
+  //    (متوفر الآن بفضل عمود employees.staff_id) بدل مطابقة الاسم النصية —
+  //    مطابقة الاسم وحدها كانت السبب في ظهور مسمى وظيفي غير صحيح أحياناً
+  //    (سجل راتب قديم/مكرر بالاسم نفسه لكن ببيانات قديمة) ──
+  const getStaffMember = (e: { name: string; staffId?: number | null }) =>
+    (e.staffId != null ? staffList.find(s => s.id === e.staffId) : undefined) || staffList.find(s => s.name === e.name);
   // ── الخصومات الفعلية = سندات الصرف المسجَّلة للموظف من "السندات وحساباتها"
   //    (وليس حقل employees.expenses الساكن الذي لا يتحدث تلقائياً عند صرف أي سند) ──
   const getExpenses = (e: Employee) => paymentVouchers
     .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name)
     .reduce((s, v: any) => s + (Number(v.amount) || 0), 0);
   const getCommission = (e: Employee) => {
-    const sm = getStaffMember(e.name);
+    const sm = getStaffMember(e);
     if (!sm || sm.salaryType === "fixed") return 0;
     const pDepts = sm.percentageDepts || [];
     const empRevenue = sessions.filter(s => s.doctor === e.name && (pDepts.length === 0 || pDepts.includes(s.dept))).reduce((sum, s) => sum + s.paid, 0);
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
-  const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => a.empName === e.name && !a.repaid).reduce((s, a) => s + a.amount, 0);
+  const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).reduce((s, a) => s + a.amount, 0);
   const calcNet = (e: Employee) => Math.max(0, e.salary + getCommission(e) - getExpenses(e) - getTotalAdvances(e));
   // If the employee's payroll config lists more than one drawer to deduct from, split the net
   // salary proportionally to how much revenue he actually generated in each of those departments.
   // Falls back to a single-department withdrawal (unchanged legacy behavior) otherwise.
   const getPaySplit = (e: Employee): { dept: string; amount: number }[] => {
     const net = calcNet(e);
-    const sm = getStaffMember(e.name);
+    const sm = getStaffMember(e);
     const payDepts = (sm?.payFromDepts || []).filter(Boolean);
     if (payDepts.length <= 1) return [{ dept: payDepts[0] || e.dept, amount: net }];
     const revenueByDept = payDepts.map(d => sessions.filter(s => s.doctor === e.name && s.dept === d).reduce((s, x) => s + x.paid, 0));
@@ -8126,8 +8477,11 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
   const canAdd = !perms || perms.canInventoryAdd !== false;
   const canEdit = !perms || perms.canInventoryEdit !== false;
   const canDelete = !perms || perms.canInventoryDelete !== false;
-  type ItemForm = { name: string; itemType: string; unit: string; tests: string; qty: string; threshold: string; notes: string; params: KitParam[] };
-  const emptyForm: ItemForm = { name: "", itemType: "مستلزم طبي", unit: "عدد", tests: "", qty: "", threshold: "", notes: "", params: [] };
+  // ── حقل "الفحوصات المرتبطة" النصي القديم أُزيل: الربط الحقيقي بين الفحص
+  //    والصنف صار من دليل الفحوصات نفسه (kitInventoryId)، وهاد الحقل النصي هون
+  //    كان أصلاً غير محفوظ بقاعدة البيانات إطلاقاً (يُصفَّر مع كل تحديث). ──
+  type ItemForm = { name: string; itemType: string; unit: string; qty: string; threshold: string; notes: string; params: KitParam[] };
+  const emptyForm: ItemForm = { name: "", itemType: "مستلزم طبي", unit: "عدد", qty: "", threshold: "", notes: "", params: [] };
   const [itemModal, setItemModal] = useState<{ open: boolean; mode: "add" | "edit" | "addQty"; id: number; f: ItemForm; addAmt: string }>({ open: false, mode: "add", id: 0, f: emptyForm, addAmt: "" });
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -8135,16 +8489,15 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
   const [statusFilter, setStatusFilter] = useState("");
   const isKit = (type: string) => ["كيت تشخيصي", "كاشف كيميائي"].includes(type);
   const openAdd = () => setItemModal({ open: true, mode: "add", id: 0, f: { ...emptyForm }, addAmt: "" });
-  const openEdit = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "edit", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", tests: (item.tests || []).join("، "), qty: String(item.qty), threshold: String(item.threshold), notes: item.notes || "", params: [...(item.params || [])] }, addAmt: "" });
-  const openAddQty = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "addQty", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", tests: "", qty: String(item.qty), threshold: String(item.threshold), notes: "", params: [] }, addAmt: "" });
+  const openEdit = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "edit", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", qty: String(item.qty), threshold: String(item.threshold), notes: item.notes || "", params: [...(item.params || [])] }, addAmt: "" });
+  const openAddQty = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "addQty", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", qty: String(item.qty), threshold: String(item.threshold), notes: "", params: [] }, addAmt: "" });
   const saveItem = () => {
     const qty = parseInt(itemModal.f.qty) || 0;
     const threshold = parseInt(itemModal.f.threshold) || 0;
     if (!itemModal.f.name.trim() || !threshold) { toast("اسم الصنف وحد التنبيه إلزاميان", "error"); return; }
-    const tests = itemModal.f.tests.split(/[،,]+/).map(s => s.trim()).filter(Boolean);
     const status = computeKitStatus(qty, threshold);
     const params = itemModal.f.params.filter(p => p.name.trim());
-    const record = { name: itemModal.f.name.trim(), itemType: itemModal.f.itemType, unit: itemModal.f.unit, tests, qty, threshold, status, params, notes: itemModal.f.notes.trim() };
+    const record = { name: itemModal.f.name.trim(), itemType: itemModal.f.itemType, unit: itemModal.f.unit, tests: [] as string[], qty, threshold, status, params, notes: itemModal.f.notes.trim() };
     if (itemModal.mode === "add") {
       const newId = Math.max(0, ...inventory.map(i => i.id)) + 1;
       setInventory(p => [...p, { id: newId, ...record }]);
@@ -8217,7 +8570,6 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
                   <TD>
                     <div className="font-bold text-[#1B3A6B]">{item.name}</div>
                     {(item.notes) && <div className="text-xs text-[#999] mt-0.5">{item.notes}</div>}
-                    {isKit(item.itemType) && item.tests.length > 0 && <div className="flex gap-1 flex-wrap mt-1">{item.tests.map(t => <Badge key={t} color="info">{t}</Badge>)}</div>}
                   </TD>
                   <TD><Badge color="secondary">{item.itemType}</Badge></TD>
                   <TD><span className="text-xl font-bold" style={{ color: sColor(s) }}>{item.qty}</span></TD>
@@ -8269,7 +8621,6 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
                 <span className="text-xs font-semibold text-[#555]">معاملات الفحص <span className="font-normal text-[#999]">— اختياري</span></span>
                 <button onClick={() => setItemModal(m => ({ ...m, f: { ...m.f, params: [...m.f.params, { name: "", unit: "", min: "", max: "" }] } }))} className="flex items-center gap-1 text-xs text-[#0D7377] hover:underline"><Plus size={11} />إضافة معامل</button>
               </div>
-              {itemModal.f.tests !== undefined && <InputField label="الفحوصات المرتبطة" placeholder="فصل بفاصلة — مثال: تعداد الدم، وظائف الكبد" value={itemModal.f.tests} onChange={v => setF("tests", v)} />}
               {itemModal.f.params.length > 0 ? (
                 <div className="space-y-2 mt-2">
                   {itemModal.f.params.map((p, i) => (
@@ -9186,79 +9537,19 @@ function BackupScreen({ toast }: { toast: (m: string, t?: any) => void }) {
 // ─── PRINT SETTINGS ────────────────────────────────────────────────────────────
 
 function PrintSettingsScreen({ toast }: { toast: (m: string, t?: any) => void }) {
-  const [margins, setMargins] = useState({ top: 25, right: 15, bottom: 20, left: 15 });
-  const [paperSize, setPaperSize] = useState("A4"); const [orientation, setOrientation] = useState("portrait");
-  const [customEnabled, setCustomEnabled] = useState(false);
   type PatPrintSettings = typeof gPatientPrintSettings;
   const [pps, setPps] = useState<PatPrintSettings>({ ...gPatientPrintSettings });
   const togglePps = (k: keyof PatPrintSettings, v: any) => setPps(p => ({ ...p, [k]: v }));
-  const [customMargins, setCustomMargins] = useState({ lab: { top: 30, right: 15, bottom: 25, left: 15 }, invoice: { top: 25, right: 15, bottom: 25, left: 15 }, statement: { top: 25, right: 15, bottom: 25, left: 15 }, radiology: { top: 25, right: 15, bottom: 25, left: 15 }, financial: { top: 25, right: 15, bottom: 25, left: 15 } });
-  const [previewModal, setPreviewModal] = useState("");
-  const setM = (k: keyof typeof margins, v: string) => setMargins(p => ({ ...p, [k]: parseInt(v) || 0 }));
-  const A4_W = 210; const A4_H = 297; const SCALE = 0.7;
-  const previewStyle = { width: A4_W * SCALE, height: A4_H * SCALE, position: "relative" as const, backgroundColor: "white", border: "1px solid #CCC", margin: "0 auto", overflow: "hidden" };
-  const topH = `${(margins.top / A4_H) * 100}%`; const botH = `${(margins.bottom / A4_H) * 100}%`;
-  const printTypes = [{ k: "lab", l: "نتائج المختبر" }, { k: "invoice", l: "الفواتير والإيصالات" }, { k: "statement", l: "كشوفات الحسابات" }, { k: "radiology", l: "تقرير الأشعة" }, { k: "financial", l: "تقرير مالي" }];
   return (
     <div className="space-y-6">
-      <div><h2 className="text-lg font-bold text-[#1B3A6B]">إعدادات الطباعة</h2><p className="text-sm text-[#555] mt-1">حدد الهوامش لكل نوع مطبوعة حتى لا يتداخل الطباعة مع ترويسة الورق</p></div>
-      <div className="p-4 rounded-xl bg-[#E3F2FD]" style={{ border: "1px solid #BBDEFB" }}><p className="text-sm text-[#1565C0]">ℹ️ المركز يطبع على ورق مطبوع مسبقاً بترويسة رأسية وتذييل. قم بتحديد هوامش كافية لكل نوع من المطبوعات لتجنب الطباعة فوق الترويسة الموجودة.</p></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-        {/* Margin Controls */}
-        <Card title="الهوامش الافتراضية (لجميع المطبوعات)">
-          <div className="space-y-4">
-            <div className="flex flex-col items-center gap-3">
-              <div className="flex flex-col items-center gap-1 w-full max-w-xs">
-                <div className="flex items-center gap-2"><label className="text-xs font-semibold text-[#555] w-28">الهامش العلوي (mm)</label><input type="number" value={margins.top} onChange={e => setM("top", e.target.value)} className="w-20 h-8 px-2 rounded text-sm text-center outline-none" style={{ border: "1px solid #CCC" }} /></div>
-                <div className="flex items-center gap-2 my-1">
-                  <div className="flex items-center gap-2"><label className="text-xs font-semibold text-[#555] w-28">الهامش الأيمن (mm)</label><input type="number" value={margins.right} onChange={e => setM("right", e.target.value)} className="w-20 h-8 px-2 rounded text-sm text-center outline-none" style={{ border: "1px solid #CCC" }} /></div>
-                </div>
-                <div className="flex items-center gap-2"><label className="text-xs font-semibold text-[#555] w-28">الهامش الأيسر (mm)</label><input type="number" value={margins.left} onChange={e => setM("left", e.target.value)} className="w-20 h-8 px-2 rounded text-sm text-center outline-none" style={{ border: "1px solid #CCC" }} /></div>
-                <div className="flex items-center gap-2 mt-1"><label className="text-xs font-semibold text-[#555] w-28">الهامش السفلي (mm)</label><input type="number" value={margins.bottom} onChange={e => setM("bottom", e.target.value)} className="w-20 h-8 px-2 rounded text-sm text-center outline-none" style={{ border: "1px solid #CCC" }} /></div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">حجم الورق</label><select value={paperSize} onChange={e => setPaperSize(e.target.value)} className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="A4">A4 (قياسي)</option><option value="Letter">Letter</option><option value="Legal">Legal</option></select></div>
-              <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الاتجاه</label><div className="flex gap-2">{[["portrait", "عمودي"], ["landscape", "أفقي"]].map(([v, l]) => <button key={v} onClick={() => setOrientation(v)} className={`flex-1 h-9 rounded-lg text-xs font-medium transition-colors ${orientation === v ? "bg-[#1B3A6B] text-white" : "bg-white text-[#555]"}`} style={{ border: "1px solid #E0E0E0" }}>{l}</button>)}</div></div>
-            </div>
-          </div>
-        </Card>
-        {/* A4 Live Preview */}
-        <Card title="معاينة الصفحة">
-          <div className="flex flex-col items-center">
-            <div style={previewStyle}>
-              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: topH, backgroundColor: "#E0E0E0", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: "1px dashed #999" }}>
-                <span style={{ fontSize: 8, color: "#999" }}>منطقة الترويسة — {margins.top}mm</span>
-              </div>
-              <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: botH, backgroundColor: "#E0E0E0", display: "flex", alignItems: "center", justifyContent: "center", borderTop: "1px dashed #999" }}>
-                <span style={{ fontSize: 8, color: "#999" }}>منطقة التذييل — {margins.bottom}mm</span>
-              </div>
-              <div style={{ position: "absolute", top: topH, bottom: botH, left: `${(margins.left / A4_W) * 100}%`, right: `${(margins.right / A4_W) * 100}%`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <p style={{ fontSize: 8, color: "#1B3A6B", textAlign: "center", fontWeight: 600 }}>منطقة الطباعة الآمنة</p>
-              </div>
-            </div>
-            <div className="flex gap-6 mt-3 text-xs text-[#555]">
-              <span>↕ علوي: {margins.top}mm</span><span>↕ سفلي: {margins.bottom}mm</span>
-            </div>
-            <div className="flex gap-6 text-xs text-[#555]"><span>↔ أيمن: {margins.right}mm</span><span>↔ أيسر: {margins.left}mm</span></div>
-          </div>
-        </Card>
-      </div>
-      {/* Custom per-doc margins */}
-      <Card title="هوامش مخصصة لكل نوع مطبوعة" action={<div className="flex items-center gap-3"><span className="text-xs text-[#555]">تفعيل هوامش مخصصة</span><button onClick={() => setCustomEnabled(!customEnabled)} className={`w-11 h-6 rounded-full transition-colors relative ${customEnabled ? "bg-[#388E3C]" : "bg-[#CCC]"}`}><span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${customEnabled ? "right-0.5" : "left-0.5"}`} /></button></div>}>
-        {!customEnabled ? <p className="text-sm text-[#999] py-4 text-center">فعّل الخيار أعلاه لتحديد هوامش مختلفة لكل نوع مطبوعة</p> : (
-          <div className="space-y-3">
-            {printTypes.map(pt => (
-              <div key={pt.k} className="p-4 rounded-xl" style={{ backgroundColor: "#FAFAFA", border: "1px solid #E0E0E0" }}>
-                <div className="flex items-center justify-between mb-3"><p className="text-sm font-semibold text-[#1B3A6B]">{pt.l}</p><Btn small variant="ghost" onClick={() => setPreviewModal(pt.l)}><Eye size={14} />معاينة الطباعة</Btn></div>
-                <div className="grid grid-cols-4 gap-3">
-                  {(["top", "right", "bottom", "left"] as const).map(side => (<div key={side} className="flex flex-col gap-1"><label className="text-[10px] font-semibold text-[#999]">{{ top: "العلوي", right: "الأيمن", bottom: "السفلي", left: "الأيسر" }[side]} (mm)</label><input type="number" value={(customMargins as any)[pt.k][side]} onChange={e => setCustomMargins(p => ({ ...p, [pt.k]: { ...(p as any)[pt.k], [side]: parseInt(e.target.value) || 0 } }))} className="h-8 px-2 rounded text-xs text-center outline-none" style={{ border: "1px solid #CCC" }} /></div>))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+      <div><h2 className="text-lg font-bold text-[#1B3A6B]">إعدادات الطباعة العامة</h2><p className="text-sm text-[#555] mt-1">ترويسة وهوامش موحّدة تُطبَّق على كل زر طباعة في النظام، ما عدا الأقسام الأربعة (المختبر، الجراحة، العلاج التأهيلي، الأشعة) — لكل منها إعدادات طباعة خاصة بها من داخل صفحة القسم نفسه</p></div>
+      {/* ── Unified print settings (letterhead + margins + font + signature) — general scope ── */}
+      <UnifiedPrintComponent
+        compact
+        departmentId="general"
+        departmentName="عام — كل النظام (ما عدا الأقسام الخاصة)"
+        onSaved={row => { gAllPrintSettings = { ...gAllPrintSettings, [row.scope]: row }; toast("تم حفظ إعدادات الطباعة العامة ✓ — ستُطبَّق فوراً على كل مطبوعات النظام", "success"); }}
+      />
       {/* ── Patient File Print Settings ── */}
       <Card title="إعدادات طباعة ملف المريض" action={<span className="text-xs text-[#999]">تُطبَّق عند الطباعة من ملف المريض</span>}>
         <div className="space-y-5">
@@ -9302,22 +9593,10 @@ function PrintSettingsScreen({ toast }: { toast: (m: string, t?: any) => void })
           </div>
         </div>
       </Card>
-      {/* Save button */}
+      {/* Save button (patient-file print field toggles only — letterhead/margins save inside the panel above) */}
       <div className="sticky bottom-0 bg-[#F5F5F5] pt-3 pb-4">
-        <Btn variant="primary" full onClick={() => { gPrintSettings = { ...margins, paperSize, orientation }; gPatientPrintSettings = { ...pps }; toast("تم حفظ إعدادات الطباعة ✓ — ستُطبَّق على جميع المطبوعات", "success"); }}><Save size={16} />حفظ إعدادات الطباعة</Btn>
+        <Btn variant="primary" full onClick={() => { gPatientPrintSettings = { ...pps }; toast("تم حفظ إعدادات طباعة ملف المريض ✓", "success"); }}><Save size={16} />حفظ إعدادات طباعة ملف المريض</Btn>
       </div>
-      {/* Print preview modal */}
-      <Modal open={!!previewModal} onClose={() => setPreviewModal("")} title={`معاينة طباعة — ${previewModal}`}
-        footer={<><Btn variant="outline"><Printer size={16} />طباعة صفحة اختبار</Btn><Btn variant="outline" onClick={() => setPreviewModal("")}>إغلاق</Btn></>}>
-        <div className="flex flex-col items-center py-4">
-          <div style={{ width: 160, height: 226, border: "1px solid #CCC", position: "relative", backgroundColor: "white" }}>
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "12%", backgroundColor: "#E8E8E8", borderBottom: "1px dashed #999", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 7, color: "#777" }}>ترويسة المركز</span></div>
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "9%", backgroundColor: "#E8E8E8", borderTop: "1px dashed #999", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 7, color: "#777" }}>تذييل المركز</span></div>
-            <div style={{ position: "absolute", top: "12%", bottom: "9%", left: "8%", right: "8%", padding: 6 }}><div className="space-y-1">{[1, 2, 3, 4].map(i => <div key={i} className="h-1.5 bg-[#E0E0E0] rounded" style={{ width: `${60 + i * 8}%` }} />)}</div></div>
-          </div>
-          <p className="text-xs text-[#999] mt-2">المناطق الرمادية = ترويسة وتذييل الورق المطبوع مسبقاً</p>
-        </div>
-      </Modal>
     </div>
   );
 }
@@ -10553,7 +10832,12 @@ function StaffManagementScreen({
     ...DEPARTMENTS.map(d => ({ id: d.id, name: d.name })),
     ...customDepts.filter(d => d.id !== "reception" && d.name !== "قسم الاستقبال").map(d => ({ id: d.id, name: d.name })),
   ];
-  const allPermOn: DeptPermissions = { canView: true, canOpenPatient: true, canLabSession: true, canLabCatalog: true, canRadSession: true, canRadCatalog: true, canPurchaseReqs: true, canLabQueue: true, canLabInventory: true, canRadQueue: true, canRehabSession: true, canRehabCatalog: true, canRehabQueue: true, canPrint: true, canVouchers: true, canDeleteVoucher: true, canDeletePatient: true, canEditPatient: true, canEditDate: true, canViewRevenue: true, canAddDeposit: true, canWithdraw: true, canDrawerView: true, canDrawerViewBalance: true, canDrawerAdjustBalance: true, canDrawerViewHistory: true, canDrawerViewStats: true, canDrawerViewCharts: true, canDrawerViewEmployees: true, canDrawerViewInvoices: true, canDrawerSettleInvoices: true, canRegisterPatient: true, canPrintExport: true, canQueue: true, canQueueAdd: true, canQueueEditStatus: true, canQueueDelete: true, canCatalogAdd: true, canCatalogEdit: true, canCatalogDelete: true, canInventoryAdd: true, canInventoryEdit: true, canInventoryDelete: true, canAttendanceDept: true, canAttendanceView: true, canAttendanceMark: true, canStaffAdvance: true, canStaffAdvanceSubmit: true, canSurgeryClinicInv: true, canDeptProfit: true, canDeptDebts: true, canSettleDebts: true, canDeptRevenue: true, canDeptExpenses: true, canAddExpense: true, canDeletePurchaseReqs: true };
+  // ── canDrawerView (والحقول الفرعية المرتبطة فيها) مقصودة "false" هون عمداً:
+  //    "النظام المالي لـ[القسم]" (صندوق القسم بالكامل: إيداع/سحب مباشر) أُلغيت
+  //    نهائياً من جهة الموظف — لا يجوز أن يعيدها زر "تفعيل كل الأقسام الفرعية"
+  //    تلقائياً، لأنها أصلاً غير موجودة بشاشة الصلاحيات التفصيلية ليختارها
+  //    المدير بنفسه. صندوق القسم الكامل يبقى حصراً لحساب المدير. ──
+  const allPermOn: DeptPermissions = { canView: true, canOpenPatient: true, canLabSession: true, canLabCatalog: true, canRadSession: true, canRadCatalog: true, canPurchaseReqs: true, canLabQueue: true, canLabInventory: true, canRadQueue: true, canRehabSession: true, canRehabCatalog: true, canRehabQueue: true, canPrint: true, canVouchers: true, canDeleteVoucher: true, canDeletePatient: true, canEditPatient: true, canEditDate: true, canViewRevenue: true, canAddDeposit: true, canWithdraw: true, canDrawerView: false, canDrawerViewBalance: false, canDrawerAdjustBalance: false, canDrawerViewHistory: false, canDrawerViewStats: false, canDrawerViewCharts: false, canDrawerViewEmployees: false, canDrawerViewInvoices: false, canDrawerSettleInvoices: false, canRegisterPatient: true, canPrintExport: true, canQueue: true, canQueueAdd: true, canQueueEditStatus: true, canQueueDelete: true, canCatalogAdd: true, canCatalogEdit: true, canCatalogDelete: true, canInventoryAdd: true, canInventoryEdit: true, canInventoryDelete: true, canAttendanceDept: true, canAttendanceView: true, canAttendanceMark: true, canStaffAdvance: true, canStaffAdvanceSubmit: true, canSurgeryClinicInv: true, canDeptProfit: true, canDeptDebts: true, canSettleDebts: true, canDeptRevenue: true, canDeptExpenses: true, canAddExpense: true, canDeletePurchaseReqs: true };
 
   const blankStaff = (): StaffMember => ({
     id: Date.now(), name: "", nationalId: "", dob: "", username: "", jobTitle: "", primaryDept: "",
@@ -10587,6 +10871,24 @@ function StaffManagementScreen({
     setTab("perms");
   };
 
+  // ── مزامنة سجل الرواتب (employees) — أصبحت تتم بشكل ذرّي في الـ backend
+  //    (upsert بمفتاح staff_id ضمن نفس طلب api.staff.create/update)، بدل ما كان
+  //    الكود هون يسوي طلب "إنشاء/تعديل" منفصل خاص فيه لجدول employees بالتوازي
+  //    مع مزامنة الـ backend الداخلية لنفس الجدول — هذا التوازي (سباق) كان
+  //    السبب الفعلي لتكرار الموظف بشاشة "الرواتب" أحياناً. بعد إرجاع النتيجة
+  //    من الـ backend، فقط نعيد تحميل قائمة الرواتب من قاعدة البيانات لضمان
+  //    عرض نسخة واحدة صحيحة دائماً. ──
+  const refreshEmployees = () => {
+    api.staff.employees.getAll().then((rows: any) => {
+      if (rows && Array.isArray(rows) && setEmployees) {
+        setEmployees(rows.map((e: any) => ({
+          id: e.id, staffId: e.staff_id ?? null, name: e.name, dept: e.dept, role: e.role,
+          salary: Number(e.salary) || 0, expenses: Number(e.expenses) || 0,
+          status: e.status, paidDate: e.paid_date || "",
+        })));
+      }
+    }).catch(() => { });
+  };
   const saveStaff = () => {
     if (!form.name.trim() || !form.nationalId.trim()) { toast("يجب إدخال الاسم ورقم الهوية", "error"); return; }
     if (form.nationalId.length < 5) { toast("رقم الهوية يجب أن يكون 5 أرقام على الأقل", "error"); return; }
@@ -10598,34 +10900,17 @@ function StaffManagementScreen({
       // After DB insert returns the real auto-increment ID, replace tempId in-memory
       // so that subsequent permission saves use the correct staff_id.
       (api.staff.create({ name: form.name, national_id: form.nationalId, dob: form.dob ? api.parseDateISO(form.dob) : null, username: form.username, password_hash: form.password, job_title: form.jobTitle, primary_dept: form.primaryDept, assigned_depts: JSON.stringify(form.assignedDepts || []), phone: form.phone, role: form.role, salary_type: form.salaryType, fixed_salary: form.fixedSalary, percentage_dept: form.percentageDept, percentage_depts: JSON.stringify(form.percentageDepts || []), pay_from_depts: JSON.stringify(form.payFromDepts || []), percentage_value: form.percentageValue, shift_start: form.shiftStart, shift_end: form.shiftEnd, shift_amount: form.shiftAmount, status: form.status, join_date: form.joinDate ? api.parseDateISO(form.joinDate) : null, notes: form.notes, can_access_financial: form.canAccessFinancial, can_access_settings: form.canAccessSettings, can_access_reports: form.canAccessReports, can_manage_staff: form.canManageStaff, is_admin_role: form.isAdminRole, can_attendance: form.canAttendance }) as Promise<any>)
-        .then((created: any) => { if (created?.id && created.id !== tempId) setStaffList(p => p.map(s => s.id === tempId ? { ...s, id: created.id } : s)); })
+        .then((created: any) => {
+          if (created?.id && created.id !== tempId) setStaffList(p => p.map(s => s.id === tempId ? { ...s, id: created.id } : s));
+          refreshEmployees();
+        })
         .catch(() => { });
-      // ── إنشاء سجل موظف مطابق بجدول الرواتب تلقائياً — بدون هذا، الموظف الجديد
-      //    ما بيظهر إطلاقاً بشاشة "الرواتب" ولا براتبه الشخصي بحسابه المالي ──
-      if (!employees.find(e => e.name === form.name)) {
-        const tempEmpId = Date.now() + 1;
-        setEmployees?.(p => [...p, { id: tempEmpId, name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending", paidDate: "" }]);
-        api.staff.employees.create({ name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending" })
-          .then((r: any) => { if (r?.id) setEmployees?.(p => p.map(e => e.id === tempEmpId ? { ...e, id: r.id } : e)); })
-          .catch(() => { });
-      }
       toast("تم إضافة الموظف بنجاح", "success");
     } else {
-      const prevName = staffList.find(s => s.id === form.id)?.name;
       setStaffList(p => p.map(s => s.id === form.id ? { ...form } : s));
-      api.staff.update(form.id, { name: form.name, national_id: form.nationalId, dob: form.dob ? api.parseDateISO(form.dob) : null, username: form.username, password_hash: form.password, job_title: form.jobTitle, primary_dept: form.primaryDept, assigned_depts: JSON.stringify(form.assignedDepts || []), phone: form.phone, role: form.role, salary_type: form.salaryType, fixed_salary: form.fixedSalary, percentage_dept: form.percentageDept, percentage_depts: JSON.stringify(form.percentageDepts || []), pay_from_depts: JSON.stringify(form.payFromDepts || []), percentage_value: form.percentageValue, shift_start: form.shiftStart, shift_end: form.shiftEnd, shift_amount: form.shiftAmount, status: form.status, join_date: form.joinDate ? api.parseDateISO(form.joinDate) : null, notes: form.notes, can_access_financial: form.canAccessFinancial, can_access_settings: form.canAccessSettings, can_access_reports: form.canAccessReports, can_manage_staff: form.canManageStaff, is_admin_role: form.isAdminRole, can_attendance: form.canAttendance });
-      // ── مزامنة سجل الرواتب: حدّثه إذا موجود، أنشئه إذا كان ناقص من قبل (موظفين قدامى) ──
-      const existingEmp = employees.find(e => e.name === (prevName || form.name));
-      if (existingEmp) {
-        setEmployees?.(p => p.map(e => e.id === existingEmp.id ? { ...e, name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary } : e));
-        api.staff.employees.update(existingEmp.id, { name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary });
-      } else {
-        const tempEmpId = Date.now() + 1;
-        setEmployees?.(p => [...p, { id: tempEmpId, name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending", paidDate: "" }]);
-        api.staff.employees.create({ name: form.name, dept: form.primaryDept, role: form.jobTitle, salary: form.fixedSalary, expenses: 0, status: "pending" })
-          .then((r: any) => { if (r?.id) setEmployees?.(p => p.map(e => e.id === tempEmpId ? { ...e, id: r.id } : e)); })
-          .catch(() => { });
-      }
+      api.staff.update(form.id, { name: form.name, national_id: form.nationalId, dob: form.dob ? api.parseDateISO(form.dob) : null, username: form.username, password_hash: form.password, job_title: form.jobTitle, primary_dept: form.primaryDept, assigned_depts: JSON.stringify(form.assignedDepts || []), phone: form.phone, role: form.role, salary_type: form.salaryType, fixed_salary: form.fixedSalary, percentage_dept: form.percentageDept, percentage_depts: JSON.stringify(form.percentageDepts || []), pay_from_depts: JSON.stringify(form.payFromDepts || []), percentage_value: form.percentageValue, shift_start: form.shiftStart, shift_end: form.shiftEnd, shift_amount: form.shiftAmount, status: form.status, join_date: form.joinDate ? api.parseDateISO(form.joinDate) : null, notes: form.notes, can_access_financial: form.canAccessFinancial, can_access_settings: form.canAccessSettings, can_access_reports: form.canAccessReports, can_manage_staff: form.canManageStaff, is_admin_role: form.isAdminRole, can_attendance: form.canAttendance })
+        .then(() => refreshEmployees())
+        .catch(() => { });
       toast("تم حفظ التعديلات بنجاح", "success");
     }
     setTab("list");
@@ -11495,10 +11780,10 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   drawers?: Record<string, DrawerState>; sessions?: PatientSession[]; paymentVouchers?: any[];
 }) {
   const salaryLabel: Record<SalaryType, string> = { fixed: "راتب ثابت", percentage: "نسبة من الإيرادات", both: "راتب ثابت + نسبة", daily: "الإيرادات اليومية", shift: "الورديات / الشيفتات" };
-  const myAdvances = employeeAdvances.filter(a => a.empName === staff.name);
+  const myAdvances = employeeAdvances.filter(a => a.staffId != null ? a.staffId === staff.id : a.empName === staff.name);
   const myAttendance = attendance.filter(a => a.empName === staff.name || a.empId === String(staff.id));
   const myRequests = staffAdvanceRequests.filter(r => r.staffId === staff.id);
-  const myEmployee = employees.find(e => e.name === staff.name);
+  const myEmployee = employees.find(e => e.staffId === staff.id) || employees.find(e => e.name === staff.name);
   const pendingAdv = myAdvances.filter(a => !a.repaid);
   const repaidAdv = myAdvances.filter(a => a.repaid);
   const totalPending = pendingAdv.reduce((s, a) => s + a.amount, 0);
@@ -11797,7 +12082,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
 
 function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles,
   setStaffList, setCustomDepts, onAddDeptDrawer, setEmployees, setInsurances, adminAccounts = [], setAdminAccounts,
-  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot }: {
+  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -11861,6 +12146,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   setSidebarSettings?: React.Dispatch<React.SetStateAction<SidebarSettings>>;
   setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>;
   setSuppliersRoot?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>>;
+  setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
 }) {
 
   const customDeptsAsDepts = customDepts.map(d => ({ ...d, Icon: Building2 as React.ElementType }));
@@ -11949,20 +12235,16 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
         if (!screen) continue;
         items.push({ id: si.id, label: si.label, screen });
       }
-      // canDrawerView has no admin-editable slot in the permission catalog yet,
-      // so keep it in its historical position — right after "السندات وحساباتها".
-      if (perms.canDrawerView) {
-        const drawerItem = { id: "dept-drawer", label: `النظام المالي لـ${activeDeptInfo?.name || "القسم"}`, screen: "dept-drawer" };
-        const voucherIdx = items.findIndex(it => it.id === "vouchers");
-        if (voucherIdx >= 0) items.splice(voucherIdx + 1, 0, drawerItem); else items.push(drawerItem);
-      }
+      // ── "النظام المالي لـ[القسم]" (صندوق القسم بالكامل) أُلغيت نهائياً من
+      //    جهة الموظف بناءً على طلب صريح — لا تُضاف بعد الآن حتى لو
+      //    canDrawerView=true بقاعدة البيانات (من حساب قديم). صندوق القسم
+      //    الكامل يبقى حصراً لحساب المدير. ──
       return items;
     }
     // Custom departments: unchanged fallback (not part of this ordering fix).
     if (perms.canOpenPatient) items.push({ id: "open-patient", label: "فتح ملف مريض / تسجيل مريض", screen: "open-patient" });
     if (perms.canPurchaseReqs) items.push({ id: "purchase-reqs", label: "طلبات الشراء", screen: "purchase-reqs" });
     if (perms.canVouchers) items.push({ id: "vouchers", label: "السندات وحساباتها", screen: "vouchers" });
-    if (perms.canDrawerView) items.push({ id: "dept-drawer", label: `النظام المالي لـ${activeDeptInfo?.name || "القسم"}`, screen: "dept-drawer" });
     if (perms.canDeptProfit) items.push({ id: "dept-profit", label: "الربح", screen: "dept-profit" });
     if (perms.canDeptDebts) items.push({ id: "dept-debts", label: "الديون", screen: "dept-debts" });
     if (perms.canDeptRevenue) items.push({ id: "dept-revenue", label: "الإيرادات / الدخل", screen: "dept-revenue" });
@@ -12384,12 +12666,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                         <div><p className="font-semibold text-[#1B3A6B] text-sm">السندات وحساباتها</p><p className="text-xs text-[#999]">سندات القبض والصرف</p></div>
                       </button>
                     )}
-                    {deptPerms?.canDrawerView && (
-                      <button onClick={() => navToScreen(activeDept, "dept-drawer")} className="bg-white rounded-xl p-4 text-right hover:shadow-md transition-all flex items-center gap-3" style={{ border: "1px solid #E0E0E0" }}>
-                        <div className="w-10 h-10 rounded-xl bg-[#E0F7FA] flex items-center justify-center"><Wallet size={18} className="text-[#00838F]" /></div>
-                        <div><p className="font-semibold text-[#1B3A6B] text-sm">صندوق القسم المالي</p><p className="text-xs text-[#999]">إدارة الصندوق</p></div>
-                      </button>
-                    )}
+                    {/* "صندوق القسم المالي" (dept-drawer) أُلغيت نهائياً من جهة الموظف — راجع buildSubItems */}
                     {deptPerms?.canPrintExport && (
                       <button onClick={() => navToScreen(activeDept, "print-export")} className="bg-white rounded-xl p-4 text-right hover:shadow-md transition-all flex items-center gap-3" style={{ border: "1px solid #E0E0E0" }}>
                         <div className="w-10 h-10 rounded-xl bg-[#EDE7F6] flex items-center justify-center"><Printer size={18} className="text-[#5E35B1]" /></div>
@@ -12410,13 +12687,13 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} />
               )}
               {subScreen === "new-patient" && activeDept && (
-                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} />
+                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />
               )}
               {subScreen === "new-session" && activeDept && (
-                <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} />
+                <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />
               )}
               {subScreen === "patient-file" && activeDept && (
-                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} />
+                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} />
               )}
 
               {subScreen === "purchase-reqs" && activeDept && (
@@ -12428,7 +12705,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               {subScreen === "rad-session" && (
                 <RadSessionScreen toast={staffToast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} />
               )}
-              {subScreen === "test-catalog" && <TestCatalogScreen toast={staffToast} labTests={labTests} setLabTests={setLabTests} perms={deptPerms || undefined} />}
+              {subScreen === "test-catalog" && <TestCatalogScreen toast={staffToast} labTests={labTests} setLabTests={setLabTests} perms={deptPerms || undefined} inventory={inventory} />}
               {subScreen === "image-catalog" && <ImageCatalogScreen toast={staffToast} perms={deptPerms || undefined} />}
               {subScreen === "lab-queue" && <LabQueueScreen perms={deptPerms} toast={staffToast} />}
               {subScreen === "rad-queue" && <RadQueueScreen perms={deptPerms} />}
@@ -12443,9 +12720,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               {subScreen === "vouchers" && activeDept && (
                 <DeptVouchersScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={staffToast} loggedUser={{ type: "staff", staff }} perms={deptPerms ?? undefined} />
               )}
-              {subScreen === "dept-drawer" && activeDept && (
-                <DeptDrawerScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} invoices={invoices} setInvoices={setInvoices} perms={deptPerms || undefined} toast={staffToast} />
-              )}
+              {/* "dept-drawer" (صندوق القسم المالي الكامل) أُلغي نهائياً من جهة الموظف */}
               {subScreen === "my-account" && (
                 <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} paymentVouchers={allPaymentVouchers} />
               )}
@@ -12491,6 +12766,9 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                   dept={activeDept}
                   rehabPlans={rehabPlans || []}
                   setRehabPlans={setRehabPlans || ((() => { }) as any)}
+                  setDebts={setDebts}
+                  rehabServices={rehabServices}
+                  insurances={insurances}
                   onNavigate={r => { setRoute(r); setSubScreen(r.screen); }}
                   toast={staffToast}
                   doDeposit={doDeposit}
@@ -12501,7 +12779,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
               {subScreen === "dept-debts" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
-                return <DebtManagementScreen debts={debts.filter(d => d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} />;
+                return <DebtManagementScreen debts={debts.filter(d => d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} setReceiptVouchers={setReceiptVouchers} />;
               })()}
               {subScreen === "dept-revenue" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
@@ -12594,7 +12872,7 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
       toast(`تم حذف سند القبض ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { toast("خطأ في حذف سند القبض — حاول مجدداً", "error"); }
   };
-  const printRv = (v: RV) => { const aw = numToAr(Math.floor(v.amount)); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم السند</div><div class="kpi-v">${v.voucher_no}</div></div><div class="kpi-box"><div class="kpi-l">التاريخ</div><div class="kpi-v">${v.date}</div></div><div class="kpi-box"><div class="kpi-l">المبلغ بالأرقام</div><div class="kpi-v in">₪ ${Number(v.amount).toLocaleString("en-US")}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المبلغ بالحروف</div><div class="kpi-v">${aw} شيكل فقط لا غير</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المقبوض من</div><div class="kpi-v">${v.received_from_name}</div></div><div class="kpi-box"><div class="kpi-l">النوع</div><div class="kpi-v">${v.received_from_type === "patient" ? "مريض" : v.received_from_type === "insurance" ? "شركة تأمين" : "أخرى"}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">سبب القبض</div><div class="kpi-v">${v.reason}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptName}</div></div>${v.notes ? `<div class="kpi-box"><div class="kpi-l">ملاحظات</div><div class="kpi-v">${v.notes}</div></div>` : ""}</div><div style="margin-top:60px;display:flex;justify-content:space-between;"><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">توقيع الموظف</div></div></div>`; printHtml(html, `سند قبض — ${v.voucher_no}`); };
+  const printRv = (v: RV) => { const aw = numToAr(Math.floor(v.amount)); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم السند</div><div class="kpi-v">${v.voucher_no}</div></div><div class="kpi-box"><div class="kpi-l">التاريخ</div><div class="kpi-v">${v.date}</div></div><div class="kpi-box"><div class="kpi-l">المبلغ بالأرقام</div><div class="kpi-v in">₪ ${Number(v.amount).toLocaleString("en-US")}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المبلغ بالحروف</div><div class="kpi-v">${aw} شيكل فقط لا غير</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المقبوض من</div><div class="kpi-v">${v.received_from_name}</div></div><div class="kpi-box"><div class="kpi-l">النوع</div><div class="kpi-v">${v.received_from_type === "patient" ? "مريض" : v.received_from_type === "insurance" ? "شركة تأمين" : "أخرى"}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">سبب القبض</div><div class="kpi-v">${v.reason}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptName}</div></div>${v.notes ? `<div class="kpi-box"><div class="kpi-l">ملاحظات</div><div class="kpi-v">${v.notes}</div></div>` : ""}</div><div style="margin-top:60px;display:flex;justify-content:space-between;"><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">توقيع الموظف</div></div></div>`; printHtml(html, `سند قبض — ${v.voucher_no}`, undefined, undefined, true, dept); };
   const pvDef = { date: today, amount: "", paid_to_type: "staff" as "supplier" | "staff" | "other", paid_to_id: "", paid_to_name: "", reason: "", category: "", notes: "", approved_by: "" };
   const [pvModal, setPvModal] = useState<{ open: boolean; f: typeof pvDef }>({ open: false, f: pvDef });
   const [pvEmpSearch, setPvEmpSearch] = useState(""); const [pvSupSearch, setPvSupSearch] = useState("");
@@ -12628,7 +12906,7 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
       toast(`تم حذف سند الصرف ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { toast("خطأ في حذف سند الصرف — حاول مجدداً", "error"); }
   };
-  const printPv = (v: PV) => { const aw = numToAr(Math.floor(v.amount)); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم السند</div><div class="kpi-v">${v.voucher_no}</div></div><div class="kpi-box"><div class="kpi-l">التاريخ</div><div class="kpi-v">${v.date}</div></div><div class="kpi-box"><div class="kpi-l">المبلغ بالأرقام</div><div class="kpi-v out">₪ ${Number(v.amount).toLocaleString("en-US")}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المبلغ بالحروف</div><div class="kpi-v">${aw} شيكل فقط لا غير</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المصروف له</div><div class="kpi-v">${v.paid_to_name}</div></div><div class="kpi-box"><div class="kpi-l">النوع</div><div class="kpi-v">${v.paid_to_type === "supplier" ? "مورد" : v.paid_to_type === "staff" ? "موظف" : "أخرى"}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">سبب الصرف</div><div class="kpi-v">${v.reason}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptName}</div></div>${v.notes ? `<div class="kpi-box"><div class="kpi-l">ملاحظات</div><div class="kpi-v">${v.notes}</div></div>` : ""}</div><div style="margin-top:60px;display:flex;justify-content:space-between;"><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">المستلِم / الدافِع</div></div><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">${v.approved_by || "المعتمِد"}</div></div></div>`; printHtml(html, `سند صرف — ${v.voucher_no}`); };
+  const printPv = (v: PV) => { const aw = numToAr(Math.floor(v.amount)); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم السند</div><div class="kpi-v">${v.voucher_no}</div></div><div class="kpi-box"><div class="kpi-l">التاريخ</div><div class="kpi-v">${v.date}</div></div><div class="kpi-box"><div class="kpi-l">المبلغ بالأرقام</div><div class="kpi-v out">₪ ${Number(v.amount).toLocaleString("en-US")}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المبلغ بالحروف</div><div class="kpi-v">${aw} شيكل فقط لا غير</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المصروف له</div><div class="kpi-v">${v.paid_to_name}</div></div><div class="kpi-box"><div class="kpi-l">النوع</div><div class="kpi-v">${v.paid_to_type === "supplier" ? "مورد" : v.paid_to_type === "staff" ? "موظف" : "أخرى"}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">سبب الصرف</div><div class="kpi-v">${v.reason}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptName}</div></div>${v.notes ? `<div class="kpi-box"><div class="kpi-l">ملاحظات</div><div class="kpi-v">${v.notes}</div></div>` : ""}</div><div style="margin-top:60px;display:flex;justify-content:space-between;"><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">المستلِم / الدافِع</div></div><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">${v.approved_by || "المعتمِد"}</div></div></div>`; printHtml(html, `سند صرف — ${v.voucher_no}`, undefined, undefined, true, dept); };
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-4">
@@ -12980,30 +13258,12 @@ function DeptPrintExportScreen({ dept, deptName, drawers, sessions, invoices = [
   const deptSessions = sessions.filter(s => s.dept === dept);
   const deptInvoices = invoices.filter(i => i.dept === dept);
 
-  // ── Per-dept print settings ──
-  const _a = _lsGetPrintAdv(dept);
-  const _mg = _lsGetMargins(dept);
-  const [withHeader, setWithHeader] = useState(_a?.withHeader ?? true);
-  const [fontSize, setFontSize] = useState(_a?.fontSize ?? 13);
-  const [fontFamily, setFontFamily] = useState(_a?.fontFamily ?? "Tajawal");
-  const [showSignature, setShowSignature] = useState(_a?.showSignature ?? true);
-  const [margins, setMargins] = useState(_mg || { top: gPrintSettings.top, right: gPrintSettings.right, bottom: gPrintSettings.bottom, left: gPrintSettings.left });
-  const setM = (k: keyof typeof margins, v: string) => setMargins(p => ({ ...p, [k]: parseInt(v) || 0 }));
-  const handleUnifiedSettingsChange = useCallback((s: UnifiedPrintSettings) => {
-    setWithHeader(s.headerEnabled);
-    setMargins({ top: s.marginTop, bottom: s.marginBottom, right: s.marginRight, left: s.marginLeft });
-  }, []);
-  const [settingsSaved, setSettingsSaved] = useState(false);
-  const handleSaveAdv = () => {
-    _lsSavePrintAdv(dept, { fontSize, fontFamily, showSignature, withHeader });
-    _lsSaveMargins(dept, margins);
-    setSettingsSaved(true);
-    toast("تم حفظ إعدادات الطباعة ✓ — ستُطبَّق عند الطباعة من هذا القسم", "success");
-    setTimeout(() => setSettingsSaved(false), 2500);
-  };
-
-  const _applyAdv = () => { gDeptPrintAdv = { ...gDeptPrintAdv, fontSize, fontFamily, showSignature }; gPrintSettings = { ...gPrintSettings, ...margins }; };
-  const _restoreAdv = (prev: { fontSize: number; fontFamily: string; showSignature: boolean }, mg: typeof gPrintSettings) => { gDeptPrintAdv = { ...gDeptPrintAdv, ...prev }; gPrintSettings = mg; };
+  // ── إعدادات الطباعة (ترويسة + هوامش + خط + توقيع) لهذا القسم — محفوظة في
+  //    قاعدة البيانات (نطاق موحّد لكل الموظفين والمدير) وتُطبَّق تلقائياً على
+  //    كل زر طباعة داخل هذا القسم عبر `printHtml(..., dept)` أدناه، بدون أي
+  //    حاجة لقراءتها هنا يدوياً — لوحة التحكم فقط تتيح تعديلها وحفظها. ──
+  const scope = _resolvePrintScope(dept);
+  const showSignature = gAllPrintSettings[scope]?.show_signature ?? true;
 
   const exportDrawerCsv = () => {
     const rows: (string | number)[][] = [["النوع", "العنوان", "الفئة", "المستفيد", "المبلغ", "الرصيد بعد الحركة", "التاريخ", "الوقت"]];
@@ -13027,91 +13287,26 @@ function DeptPrintExportScreen({ dept, deptName, drawers, sessions, invoices = [
     const sigHtml = showSignature ? `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع المسؤول</div><div class="sig-box"><div class="sig-line"></div>ختم القسم</div></div>` : "";
     const rowsHtml = (drawer.txs || []).map(t => `<tr><td>${t.type === "in" ? "⬆ وارد" : "⬇ منصرف"}</td><td>${t.title}</td><td>${t.category}</td><td class="${t.type === "in" ? "in" : "out"}">${fmt(t.amount)}</td><td>${t.date}</td></tr>`).join("");
     const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">الرصيد الحالي</div><div class="kpi-v">${fmt(drawer.balance)}</div></div><div class="kpi-box"><div class="kpi-l">عدد الحركات</div><div class="kpi-v">${(drawer.txs || []).length}</div></div></div><table><thead><tr><th>النوع</th><th>العنوان</th><th>الفئة</th><th>المبلغ</th><th>التاريخ</th></tr></thead><tbody>${rowsHtml}</tbody></table>${sigHtml}`;
-    const prevAdv = { fontSize: gDeptPrintAdv.fontSize, fontFamily: gDeptPrintAdv.fontFamily, showSignature: gDeptPrintAdv.showSignature };
-    const prevMg = { ...gPrintSettings };
-    const prevLh = gLetterheadImg;
-    _applyAdv();
-    gLetterheadImg = withHeader ? (_lsGetLetterhead(dept) || _lsGetLetterheadGlobal()) : "";
-    printHtml(html, `تقرير صندوق — ${deptName}`, undefined, undefined, withHeader);
-    setTimeout(() => { _restoreAdv(prevAdv, prevMg); gLetterheadImg = prevLh; }, 1000);
+    printHtml(html, `تقرير صندوق — ${deptName}`, undefined, undefined, true, dept);
   };
   const printSessionsReport = () => {
     const sigHtml = showSignature ? `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الطبيب / الأخصائي</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div><div class="sig-box"><div class="sig-line"></div>ختم القسم</div></div>` : "";
     const rowsHtml = deptSessions.map(s => `<tr><td>${s.id}</td><td>${mockPatients.find(p => p.id === s.patientId)?.name || s.patientId}</td><td>${s.doctor}</td><td>${s.date}</td><td class="in">${fmt(s.amount)}</td><td class="${s.debt > 0 ? "out" : ""}">${fmt(s.debt)}</td></tr>`).join("");
     const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">عدد الجلسات</div><div class="kpi-v">${deptSessions.length}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي الإيرادات</div><div class="kpi-v in">${fmt(deptSessions.reduce((s, x) => s + x.amount, 0))}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي الديون</div><div class="kpi-v out">${fmt(deptSessions.reduce((s, x) => s + x.debt, 0))}</div></div></div><table><thead><tr><th>رقم الملف</th><th>المريض</th><th>الطبيب</th><th>التاريخ</th><th>المبلغ</th><th>الدين</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="4">الإجمالي</td><td class="in">${fmt(deptSessions.reduce((s, x) => s + x.amount, 0))}</td><td class="out">${fmt(deptSessions.reduce((s, x) => s + x.debt, 0))}</td></tr></tfoot></table>${sigHtml}`;
-    const prevAdv = { fontSize: gDeptPrintAdv.fontSize, fontFamily: gDeptPrintAdv.fontFamily, showSignature: gDeptPrintAdv.showSignature };
-    const prevMg = { ...gPrintSettings };
-    const prevLh = gLetterheadImg;
-    _applyAdv();
-    gLetterheadImg = withHeader ? (_lsGetLetterhead(dept) || _lsGetLetterheadGlobal()) : "";
-    printHtml(html, `تقرير جلسات — ${deptName}`, undefined, undefined, withHeader);
-    setTimeout(() => { _restoreAdv(prevAdv, prevMg); gLetterheadImg = prevLh; }, 1000);
+    printHtml(html, `تقرير جلسات — ${deptName}`, undefined, undefined, true, dept);
   };
 
   return (
     <div className="space-y-5">
-      {/* ── Print Settings Panel ── */}
-      <div className="bg-white rounded-2xl p-5 shadow-sm space-y-5" style={{ border: "1px solid #E0E0E0" }}>
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <p className="text-sm font-bold text-[#1B3A6B]">⚙️ إعدادات الطباعة والتصدير — {deptName}</p>
-            <p className="text-[10px] text-[#999] mt-0.5">يُحفظ هذا الإعداد خاصاً بهذا القسم ولا يؤثر على بقية الأقسام</p>
-          </div>
-          <button onClick={handleSaveAdv}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all"
-            style={{ backgroundColor: settingsSaved ? "#388E3C" : "#1B3A6B", color: "white" }}>
-            {settingsSaved ? <><CheckCircle size={14} />تم الحفظ</> : <><Save size={14} />حفظ الإعدادات</>}
-          </button>
-        </div>
-
-        {/* ── Unified print settings (header + margins) ── */}
-        <UnifiedPrintComponent
-          compact
-          departmentId={dept}
-          departmentName={deptName}
-          onSettingsChange={handleUnifiedSettingsChange}
-        />
-
-        {/* 3. نمط الخط + 4. حجم الخط */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs font-semibold text-[#555] mb-2">③ نمط الخط (Font Family)</p>
-            <div className="grid grid-cols-2 gap-2">
-              {PRINT_FONT_FAMILIES.map(f => (
-                <button key={f.id} onClick={() => setFontFamily(f.id)}
-                  className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors ${fontFamily === f.id ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
-                  style={{ border: `1.5px solid ${fontFamily === f.id ? "#1B3A6B" : "#E0E0E0"}`, fontFamily: f.id + ",Arial" }}>
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-[#555] mb-2">④ حجم الخط (Font Size)</p>
-            <div className="grid grid-cols-2 gap-2">
-              {PRINT_FONT_SIZES.map(s => (
-                <button key={s.v} onClick={() => setFontSize(s.v)}
-                  className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors ${fontSize === s.v ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
-                  style={{ border: `1.5px solid ${fontSize === s.v ? "#1B3A6B" : "#E0E0E0"}` }}>
-                  {s.l}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* 5. التوقيع والختم */}
-        <div className="flex items-center justify-between py-3 px-4 rounded-xl" style={{ backgroundColor: "#F9FAFB", border: "1px solid #E0E0E0" }}>
-          <div>
-            <p className="text-xs font-semibold text-[#333]">⑤ التوقيع والختم (Signature & Stamp)</p>
-            <p className="text-[10px] text-[#999] mt-0.5">إظهار خانة توقيع الطبيب / الأخصائي وختم القسم أسفل كل تقرير مطبوع</p>
-          </div>
-          <button onClick={() => setShowSignature(v => !v)}
-            className={`w-12 h-6 rounded-full transition-colors relative flex-shrink-0 ${showSignature ? "bg-[#388E3C]" : "bg-[#CCC]"}`}>
-            <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${showSignature ? "right-0.5" : "left-0.5"}`} />
-          </button>
-        </div>
-      </div>
+      {/* ── إعدادات الطباعة الموحّدة لهذا القسم (ترويسة + هوامش + خط + توقيع) —
+             محفوظة بقاعدة البيانات وتُطبَّق تلقائياً على كل زر طباعة داخل هذا
+             القسم لكل الموظفين والمدير، على أي جهاز ── */}
+      <UnifiedPrintComponent
+        compact
+        departmentId={dept}
+        departmentName={deptName}
+        onSaved={row => { gAllPrintSettings = { ...gAllPrintSettings, [row.scope]: row }; toast("تم حفظ إعدادات الطباعة ✓ — ستُطبَّق على كل مطبوعات هذا القسم فوراً", "success"); }}
+      />
 
       {/* ── Export / Print cards ── */}
       <div className="bg-white rounded-xl p-4 space-y-3" style={{ border: "1px solid #E0E0E0" }}>
@@ -13271,7 +13466,7 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
         </div>
         <div className="flex gap-2">
           {isAdmin && <Badge color="info">{baseRecords.length} سجل إجمالي</Badge>}
-          <Btn variant="outline" small onClick={() => { const html = `<h2>سجل الدوام${isAdmin ? "" : " — " + deptLabel}</h2><table><thead><tr><th>#</th>${isAdmin ? "<th>الموظف</th><th>القسم</th>" : ""}<th>التاريخ</th><th>اليوم</th><th>بدء الدوام</th><th>انتهاء الدوام</th><th>إجمالي الساعات</th><th>الحالة</th></tr></thead><tbody>${records.map((r, i) => { const dur = calcDuration(r.checkIn, r.checkOut); const hrs = r.totalHours != null ? r.totalHours + "س" : dur; const h = r.totalHours ?? 0; return `<tr><td>${i + 1}</td>${isAdmin ? `<td>${r.empName}</td><td>${allDepts.find(d => d.id === r.dept)?.name || r.dept || "—"}</td>` : ""}<td>${r.date}</td><td>${r.dayName}</td><td>${r.checkIn || "—"}</td><td>${r.checkOut || "—"}</td><td>${hrs}</td><td>${h >= 8 ? "كامل" : h >= 4 ? "جزئي" : h > 0 ? "قصير" : "خطأ"}</td></tr>`; }).join("")}</tbody></table>`; printHtml(html, `دوام الموظفين${isAdmin ? "" : " — " + deptLabel}`, filterFrom, filterTo) }}><Printer size={14} />طباعة</Btn>
+          <Btn variant="outline" small onClick={() => { const html = `<h2>سجل الدوام${isAdmin ? "" : " — " + deptLabel}</h2><table><thead><tr><th>#</th>${isAdmin ? "<th>الموظف</th><th>القسم</th>" : ""}<th>التاريخ</th><th>اليوم</th><th>بدء الدوام</th><th>انتهاء الدوام</th><th>إجمالي الساعات</th><th>الحالة</th></tr></thead><tbody>${records.map((r, i) => { const dur = calcDuration(r.checkIn, r.checkOut); const hrs = r.totalHours != null ? r.totalHours + "س" : dur; const h = r.totalHours ?? 0; return `<tr><td>${i + 1}</td>${isAdmin ? `<td>${r.empName}</td><td>${allDepts.find(d => d.id === r.dept)?.name || r.dept || "—"}</td>` : ""}<td>${r.date}</td><td>${r.dayName}</td><td>${r.checkIn || "—"}</td><td>${r.checkOut || "—"}</td><td>${hrs}</td><td>${h >= 8 ? "كامل" : h >= 4 ? "جزئي" : h > 0 ? "قصير" : "خطأ"}</td></tr>`; }).join("")}</tbody></table>`; printHtml(html, `دوام الموظفين${isAdmin ? "" : " — " + deptLabel}`, filterFrom, filterTo, true, isAdmin ? undefined : dept) }}><Printer size={14} />طباعة</Btn>
         </div>
       </div>
 
@@ -13978,35 +14173,19 @@ function PrintExportScreen({ dept, deptLabel, sessions = [], toast }: { dept: st
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   // ── Print options (load from saved or defaults) ──
   const _saved = gPrintExportPerDept[dept];
-  const [withHeader, setWithHeader] = useState(_saved ? _saved.withHeader : true);
   const [fields, setFields] = useState(_saved ? _saved.fields : defaultPrintExportFields());
   const toggleField = (k: keyof typeof fields) => setFields(p => ({ ...p, [k]: !p[k] }));
-  // ── Unified print settings (letterhead + margins) via UnifiedPrintComponent ──
-  const [letterheadImg, setLetterheadImg] = useState<string>(() => _lsGetLetterhead(dept));
-  const [margins, setMargins] = useState<{ top: number; right: number; bottom: number; left: number }>(() => {
-    const ls = _lsGetMargins(dept); if (ls) return ls;
-    if (_saved) return _saved.margins;
-    return { top: gPrintSettings.top, right: gPrintSettings.right, bottom: gPrintSettings.bottom, left: gPrintSettings.left };
-  });
-  const handleUnifiedSettingsChange = useCallback((s: UnifiedPrintSettings) => {
-    setWithHeader(s.headerEnabled);
-    setLetterheadImg(s.headerImageBase64);
-    setMargins({ top: s.marginTop, bottom: s.marginBottom, right: s.marginRight, left: s.marginLeft });
-  }, []);
-  const [settingsSaved, setSettingsSaved] = useState(false);
-  const _advSaved = _lsGetPrintAdv(dept);
-  const [fontSize, setFontSize] = useState(_advSaved?.fontSize ?? 13);
-  const [fontFamily, setFontFamily] = useState(_advSaved?.fontFamily ?? "Tajawal");
-  const [showSignature, setShowSignature] = useState(_advSaved?.showSignature ?? true);
-  const handleSaveSettings = () => {
-    gPrintExportPerDept[dept] = { withHeader, fields: { ...fields }, margins: { ...margins } };
-    _lsSaveMargins(dept, margins);
-    _lsSavePrintAdv(dept, { fontSize, fontFamily, showSignature });
-    setSettingsSaved(true);
-    toast?.("تم حفظ إعدادات الطباعة ✓ — ستُطبَّق على جميع مطبوعات هذا القسم", "success");
-    setTimeout(() => setSettingsSaved(false), 2500);
+  // ── إعدادات الطباعة الموحّدة (ترويسة + هوامش + خط + توقيع) لهذا القسم —
+  //    محفوظة بقاعدة البيانات وتُطبَّق تلقائياً عبر `printHtml(..., dept)` أدناه ──
+  const scope = _resolvePrintScope(dept);
+  const showSignature = gAllPrintSettings[scope]?.show_signature ?? true;
+  const [fieldsSaved, setFieldsSaved] = useState(false);
+  const handleSaveFields = () => {
+    gPrintExportPerDept[dept] = { withHeader: true, fields: { ...fields }, margins: { top: 25, right: 15, bottom: 20, left: 15 } };
+    setFieldsSaved(true);
+    toast?.("تم حفظ الحقول المطبوعة لهذا القسم ✓", "success");
+    setTimeout(() => setFieldsSaved(false), 2500);
   };
-  const setM = (k: keyof typeof margins, v: string) => { const next = { ...margins, [k]: parseInt(v) || 0 }; setMargins(next); _lsSaveMargins(dept, next); };
 
   // ── Filter sessions by dept + date + search ──
   const deptSessions = sessions.filter(s => {
@@ -14067,15 +14246,8 @@ function PrintExportScreen({ dept, deptLabel, sessions = [], toast }: { dept: st
     const chosen = deptSessions.filter(s => selectedIds.includes(s.id));
     const html = chosen.map(buildSessionHtml).join("");
     const title = `تقارير ${deptLabel}`;
-    const prev = { ...gPrintSettings };
-    const prevLh = gLetterheadImg;
-    const prevAdv = { ...gDeptPrintAdv };
-    gPrintSettings = { ...gPrintSettings, ...margins };
-    gLetterheadImg = withHeader ? letterheadImg : "";
-    gDeptPrintAdv = { ...gDeptPrintAdv, fontSize, fontFamily, showSignature };
-    if (pdf) savePdfHtml(html, title, fromDate || undefined, toDate || undefined, withHeader);
-    else printHtml(html, title, fromDate || undefined, toDate || undefined, withHeader);
-    setTimeout(() => { gPrintSettings = prev; gLetterheadImg = prevLh; gDeptPrintAdv = prevAdv; }, 1000);
+    if (pdf) savePdfHtml(html, title, fromDate || undefined, toDate || undefined, true, dept);
+    else printHtml(html, title, fromDate || undefined, toDate || undefined, true, dept);
   };
 
   // ── field config rows ──
@@ -14107,55 +14279,14 @@ function PrintExportScreen({ dept, deptLabel, sessions = [], toast }: { dept: st
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* ── LEFT: Options panel ── */}
         <div className="lg:col-span-1 space-y-4">
-          {/* ── Unified print settings (header + margins) ── */}
+          {/* ── إعدادات الطباعة الموحّدة (ترويسة + هوامش + خط + توقيع) — محفوظة
+                 بقاعدة البيانات وتُطبَّق على كل زر طباعة في هذا القسم ── */}
           <UnifiedPrintComponent
             compact
             departmentId={dept}
             departmentName={deptLabel}
-            onSettingsChange={handleUnifiedSettingsChange}
+            onSaved={row => { gAllPrintSettings = { ...gAllPrintSettings, [row.scope]: row }; toast?.("تم حفظ إعدادات الطباعة ✓", "success"); }}
           />
-
-          {/* ── Advanced print settings ── */}
-          <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4" style={{ border: "1px solid #E0E0E0" }}>
-            <p className="text-sm font-bold text-[#1B3A6B]">إعدادات متقدمة</p>
-            {/* Font family */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-[#555]">نمط الخط (Font Family)</label>
-              <div className="grid grid-cols-2 gap-2">
-                {PRINT_FONT_FAMILIES.map(f => (
-                  <button key={f.id} onClick={() => setFontFamily(f.id)}
-                    className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors text-right ${fontFamily === f.id ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
-                    style={{ border: `1.5px solid ${fontFamily === f.id ? "#1B3A6B" : "#E0E0E0"}` }}>
-                    <span style={{ fontFamily: f.id + ",Arial" }}>{f.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            {/* Font size */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-[#555]">حجم الخط (Font Size)</label>
-              <div className="grid grid-cols-2 gap-2">
-                {PRINT_FONT_SIZES.map(s => (
-                  <button key={s.v} onClick={() => setFontSize(s.v)}
-                    className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors ${fontSize === s.v ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
-                    style={{ border: `1.5px solid ${fontSize === s.v ? "#1B3A6B" : "#E0E0E0"}` }}>
-                    {s.l}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {/* Signature toggle */}
-            <div className="flex items-center justify-between py-2 px-3 rounded-xl" style={{ backgroundColor: "#F9FAFB", border: "1px solid #E0E0E0" }}>
-              <div>
-                <p className="text-xs font-semibold text-[#333]">التوقيع والختم</p>
-                <p className="text-[10px] text-[#999]">إظهار خانة توقيع الطبيب وختم القسم</p>
-              </div>
-              <button onClick={() => setShowSignature(v => !v)}
-                className={`w-11 h-6 rounded-full transition-colors relative flex-shrink-0 ${showSignature ? "bg-[#388E3C]" : "bg-[#CCC]"}`}>
-                <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${showSignature ? "right-0.5" : "left-0.5"}`} />
-              </button>
-            </div>
-          </div>
 
           {/* Fields to print */}
           <div className="bg-white rounded-2xl p-4 shadow-sm" style={{ border: "1px solid #E0E0E0" }}>
@@ -14177,11 +14308,11 @@ function PrintExportScreen({ dept, deptLabel, sessions = [], toast }: { dept: st
             <p>يُضاف اسم الموظف الذي قام بالطباعة تلقائياً في أسفل كل مطبوعة.</p>
           </div>
 
-          {/* Save settings button */}
-          <button onClick={handleSaveSettings}
+          {/* Save fields selection button */}
+          <button onClick={handleSaveFields}
             className="w-full flex items-center justify-center gap-2 h-11 rounded-xl font-bold text-sm transition-all"
-            style={{ backgroundColor: settingsSaved ? "#388E3C" : "#1B3A6B", color: "white", boxShadow: settingsSaved ? "0 2px 8px #388E3C44" : "0 2px 8px #1B3A6B33" }}>
-            {settingsSaved ? <><CheckCircle size={16} />تم الحفظ</> : <><Save size={16} />حفظ التعديلات</>}
+            style={{ backgroundColor: fieldsSaved ? "#388E3C" : "#1B3A6B", color: "white", boxShadow: fieldsSaved ? "0 2px 8px #388E3C44" : "0 2px 8px #1B3A6B33" }}>
+            {fieldsSaved ? <><CheckCircle size={16} />تم الحفظ</> : <><Save size={16} />حفظ الحقول المطبوعة</>}
           </button>
         </div>
 
@@ -14501,9 +14632,9 @@ export default function App() {
     if (req) {
       const targetDept = req.dept || "surgery";
       doWithdraw(targetDept, req.amount, `سلفة موظف — ${req.staffName}`, "سلف موظفين", req.staffName);
-      const newAdv: EmployeeAdvance = { id: Date.now(), empName: req.staffName, dept: targetDept, amount: req.amount, date: rDate, note: req.reason, repaid: false };
+      const newAdv: EmployeeAdvance = { id: Date.now(), staffId: req.staffId, empName: req.staffName, dept: targetDept, amount: req.amount, date: rDate, note: req.reason, repaid: false };
       setEmployeeAdvances(p => [newAdv, ...p]);
-      api.staff.advances.create({ emp_name: req.staffName, dept: targetDept, amount: req.amount, date: api.parseDateISO(rDate), note: req.reason, repaid: false }).then(r => { if (r && (r as any).id) setEmployeeAdvances(p => p.map(a => a.id === newAdv.id ? { ...a, id: (r as any).id } : a)); }).catch(() => { });
+      api.staff.advances.create({ emp_name: req.staffName, staff_id: req.staffId, dept: targetDept, amount: req.amount, date: api.parseDateISO(rDate), note: req.reason, repaid: false }).then(r => { if (r && (r as any).id) setEmployeeAdvances(p => p.map(a => a.id === newAdv.id ? { ...a, id: (r as any).id } : a)); }).catch(() => { });
     }
     setStaffAdvanceRequests(p => p.map(r => r.id === id ? { ...r, status: "approved", reviewedBy: "المدير", reviewDate: rDate } : r));
     api.staff.advanceRequests.review(id, { status: "approved", reviewed_by: "المدير", review_date: api.parseDateISO(rDate) });
@@ -14537,6 +14668,9 @@ export default function App() {
         setSidebarSettings({ hiddenSections: data.hidden_sections || [], hideRevenueFromStaff: !!data.hide_revenue_from_staff, deptCapacity: data.dept_capacity || {} });
       }
     }).catch(() => { });
+    // ── إعدادات الطباعة (الترويسة + الهوامش) لكل الأقسام + العام — تُحمَّل مرة
+    //    واحدة عند فتح النظام وتُخزَّن في ذاكرة مشتركة تستخدمها كل أزرار الطباعة ──
+    loadAllPrintSettings();
   }, []);
   useEffect(() => {
     const _doLoad = async () => {
@@ -14597,20 +14731,38 @@ export default function App() {
         });
       }
       if (dbPatients && (dbPatients as any[]).length > 0) {
-        const existingIds = new Set(mockPatients.map(p => p.id));
+        // ── هذا الاستدعاء يتكرر كل ثانية (poll)، وكان المنطق القديم يضيف فقط
+        //    المرضى الجدد غير الموجودين محلياً — أي تعديل على بيانات مريض موجود
+        //    مسبقاً (من جلسة أخرى: مدير أو موظف آخر) كان لا يصل أبداً لهذه الجلسة
+        //    إلا بإعادة تحميل الصفحة كاملة، فتظهر بيانات مختلفة/قديمة حسب الحساب
+        //    المفتوح. الآن نحدّث كل الحقول من السيرفر (مصدر الحقيقة الوحيد) لكل
+        //    مريض موجود مسبقاً أيضاً، لا فقط نضيف الجدد. ──
+        const byId = new Map(mockPatients.map(p => [p.id, p]));
+        let changed = false;
         (dbPatients as any[]).forEach((p: any) => {
-          if (!existingIds.has(p.id)) {
-            mockPatients.push({ id: p.id, name: p.name, age: Number(p.age) || 0, phone: p.phone || "", blood: p.blood_type || "غير معروف", insurance: !!p.has_insurance, dept: p.dept || "surgery", date: p.date || "", debt: Number(p.debt) || 0, gender: p.gender || "", address: p.address || "", chronic: p.chronic_detail || "", allergy: p.allergy_detail || "" });
-            existingIds.add(p.id);
+          const mapped: PatientRecord = { id: p.id, name: p.name, age: Number(p.age) || 0, phone: p.phone || "", blood: p.blood_type || "غير معروف", insurance: !!p.has_insurance, dept: p.dept || "surgery", date: p.date || "", debt: Number(p.debt) || 0, gender: p.gender || "", address: p.address || "", chronic: p.chronic_detail || "", allergy: p.allergy_detail || "" };
+          const existing = byId.get(p.id);
+          if (!existing) {
+            mockPatients.push(mapped);
+            byId.set(p.id, mapped);
+            changed = true;
+          } else if (
+            existing.name !== mapped.name || existing.age !== mapped.age || existing.phone !== mapped.phone ||
+            existing.blood !== mapped.blood || existing.insurance !== mapped.insurance || existing.dept !== mapped.dept ||
+            existing.date !== mapped.date || existing.gender !== mapped.gender || existing.address !== mapped.address ||
+            existing.chronic !== mapped.chronic || existing.allergy !== mapped.allergy
+          ) {
+            Object.assign(existing, mapped);
+            changed = true;
           }
         });
-        _syncPatients();
+        if (changed) _syncPatients();
       }
       if (dbStaff && (dbStaff as any[]).length > 0) {
         setStaffList((dbStaff as any[]).map((s: any) => ({ id: s.id, name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: s.password_hash || "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) })));
       }
       if (dbEmployees && (dbEmployees as any[]).length > 0) {
-        setEmployees((dbEmployees as any[]).map((e: any) => ({ id: e.id, name: e.name, dept: e.dept || "", role: e.role || "", salary: Number(e.salary) || 0, expenses: Number(e.expenses) || 0, status: e.status || "pending", paidDate: e.paid_date || "" })));
+        setEmployees((dbEmployees as any[]).map((e: any) => ({ id: e.id, staffId: e.staff_id ?? null, name: e.name, dept: e.dept || "", role: e.role || "", salary: Number(e.salary) || 0, expenses: Number(e.expenses) || 0, status: e.status || "pending", paidDate: e.paid_date || "" })));
       }
       if (dbAdvances && (dbAdvances as any[]).length > 0) {
         setStaffAdvanceRequests((dbAdvances as any[]).map((r: any) => ({ id: r.id, staffId: Number(r.staff_id) || 0, staffName: r.staff_name || "", dept: r.dept || "", amount: Number(r.amount) || 0, date: r.date || "", reason: r.reason || "", status: r.status || "pending", reviewedBy: r.reviewed_by || "", reviewDate: r.review_date || "", rejectionReason: r.rejection_reason || "" })));
@@ -14634,7 +14786,7 @@ export default function App() {
         setDebts((dbDebts as any[]).map((d: any) => { const _dRaw = d.date ? String(d.date).slice(0, 10) : ""; const _dDisp = _dRaw ? `${_dRaw.slice(8, 10)}/${_dRaw.slice(5, 7)}/${_dRaw.slice(0, 4)}` : ""; const _days = _dRaw ? Math.floor((Date.now() - new Date(_dRaw).getTime()) / (1000 * 60 * 60 * 24)) : 0; return { id: d.id, patient: d.patient || "", pid: d.patient_id || "", dept: d.dept || "", amount: Number(d.amount) || 0, date: _dDisp, days: _days, phone: d.phone || "", smsSent: !!d.sms_sent }; }));
       }
       if (dbEmployeeAdvances && (dbEmployeeAdvances as any[]).length > 0) {
-        setEmployeeAdvances((dbEmployeeAdvances as any[]).map((a: any) => ({ id: a.id, empName: a.emp_name || "", dept: a.dept || "", amount: Number(a.amount) || 0, date: a.date || "", note: a.note || "", repaid: !!a.repaid, repaidDate: a.repaid_date || "" })));
+        setEmployeeAdvances((dbEmployeeAdvances as any[]).map((a: any) => ({ id: a.id, staffId: a.staff_id ?? null, empName: a.emp_name || "", dept: a.dept || "", amount: Number(a.amount) || 0, date: a.date || "", note: a.note || "", repaid: !!a.repaid, repaidDate: a.repaid_date || "" })));
       }
       if (dbLabTests && (dbLabTests as any[]).length > 0) {
         const mapped = (dbLabTests as any[]).map((t: any) => {
@@ -14659,6 +14811,7 @@ export default function App() {
             priceCost: Number(t.price_cost) || 0,
             isL2L: !!t.is_l2l,
             kit: t.kit || "",
+            kitInventoryId: t.kit_inventory_id != null ? Number(t.kit_inventory_id) : null,
             kitQty: Number(t.kit_qty) || 0,
             kitUnit: t.kit_unit || "وحدة",
             kitThreshold: Number(t.kit_threshold) || 10,
@@ -14905,24 +15058,25 @@ export default function App() {
       setSidebarSettings={setSidebarSettings}
       setLoggedUser={setLoggedUser}
       setSuppliersRoot={setSuppliersRoot}
+      setReceiptVouchers={setReceiptVouchersGlobal}
     />
   );
   const renderScreen = () => {
     switch (route.screen) {
       case "dashboard": return <DashboardScreen drawers={drawers} debts={debts} invoices={invoices} purchaseRequests={purchaseRequests} onNavigate={setRoute} customDepts={customDepts} sessions={sessions} deptCapacity={sidebarSettings.deptCapacity} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} externalDebts={externalDebts} />;
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} />;
-      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} />;
-      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} />;
-      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} />;
+      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
+      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
+      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" />;
       case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} />;
       case "rad-session": return <RadSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} />;
-      case "test-catalog": return <TestCatalogScreen toast={toast} labTests={labTests} setLabTests={setLabTests} />;
+      case "test-catalog": return <TestCatalogScreen toast={toast} labTests={labTests} setLabTests={setLabTests} inventory={inventory} />;
       case "lab-inventory": return <InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "lab-queue": return <LabQueueScreen toast={toast} />;
       case "lab-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="lab" />;
-      case "rehab-new-plan": return <RehabNewPlanScreen patientId={route.patientId} dept={dept} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} onNavigate={setRoute} toast={toast} doDeposit={doDeposit} />;
+      case "rehab-new-plan": return <RehabNewPlanScreen patientId={route.patientId} dept={dept} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} onNavigate={setRoute} toast={toast} doDeposit={doDeposit} setDebts={setDebts} rehabServices={rehabServices} insurances={insurances} />;
       case "rehab-session": return <RehabSessionScreen toast={toast} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} />;
       case "rehab-catalog": return <RehabCatalogScreen toast={toast} rehabServices={rehabServices} setRehabServices={setRehabServices} />;
       case "rehab-queue": return <RehabQueueScreen />;
@@ -14940,15 +15094,15 @@ export default function App() {
 
       case "dept-vouchers": return route.dept ? <DeptVouchersScreen dept={route.dept} deptName={[...DEPARTMENTS, ...customDepts].find((d: any) => d.id === route.dept)?.name || route.dept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={toast} loggedUser={loggedUser} /> : null;
       case "dept-profit": return <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts} />;
-      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={dsh ? debts.filter(d => d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} />; }
+      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={dsh ? debts.filter(d => d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} />; }
       case "dept-revenue": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; const rdw = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const rdb = dsh ? debts.filter(d => d.dept === dsh) : debts; const deptSessions = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRV = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; return <FinRevenueScreen drawers={rdw} debts={rdb} customDepts={customDepts} toast={toast} sessions={deptSessions} receiptVouchers={deptRV} />; }
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
       case "fin-revenue": return <FinRevenueScreen drawers={drawers} debts={debts} customDepts={customDepts} toast={toast} sessions={sessions} receiptVouchers={receiptVouchersGlobal} />;
-      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} />; }
-      case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
+      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} />; }
+      case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
-      case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} />;
+      case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} />;
       case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} />;
       case "attendance": return <AttendanceScreen key={dept || "surgery"} dept={dept || "lab"} attendance={attendance} setAttendance={setAttendance} loggedUser={loggedUser} staffList={staffList} toast={toast} customDepts={customDepts} />;
       case "backup": return <BackupScreen toast={toast} />;

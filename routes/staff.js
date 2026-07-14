@@ -174,15 +174,15 @@ router.post('/', requireAdmin, async (req, res) => {
        is_admin_role ?? false, can_attendance ?? false, notes ?? null]
     );
 
-    if (name) {
-      const { rows: existingEmp } = await pool.query('SELECT 1 FROM employees WHERE name = $1', [name]);
-      if (!existingEmp.length) {
-        await pool.query(
-          `INSERT INTO employees (name, dept, role, salary, status)
-           VALUES ($1, $2, $3, $4, 'pending')`,
-          [name, primary_dept ?? null, job_title ?? role ?? null, fixed_salary ?? 0]
-        );
-      }
+    // ── مزامنة سجل الرواتب (employees) — upsert ذرّي بمفتاح staff_id بدل
+    //    "ابحث بالاسم ثم أضف" (كان عرضة لسباق يُنتج صفّين مكرَّرين لنفس الموظف) ──
+    if (name && rows[0]?.id) {
+      await pool.query(
+        `INSERT INTO employees (staff_id, name, dept, role, salary, status)
+         VALUES ($1, $2, $3, $4, $5, 'pending')
+         ON CONFLICT (staff_id) DO UPDATE SET name=EXCLUDED.name, dept=EXCLUDED.dept, role=EXCLUDED.role, salary=EXCLUDED.salary`,
+        [rows[0].id, name, primary_dept ?? null, job_title ?? role ?? null, fixed_salary ?? 0]
+      );
     }
 
     res.status(201).json(rows[0]);
@@ -280,23 +280,16 @@ router.put('/:id', requireAdmin, async (req, res) => {
     }
 
     const { rows } = await pool.query(sql, fields);
-    
-    // Sync to employees table
+
+    // ── مزامنة سجل الرواتب (employees) — upsert ذرّي بمفتاح staff_id بدل
+    //    "ابحث بالاسم ثم عدّل/أضف" (كان عرضة لسباق يُنتج صفّين مكرَّرين لنفس الموظف) ──
     if (rows.length && resolvedName) {
-      const { rows: existingEmp } = await pool.query('SELECT 1 FROM employees WHERE name = $1', [c.name]);
-      if (existingEmp.length) {
-        await pool.query(
-          `UPDATE employees SET name=$1, dept=$2, role=$3, salary=$4
-           WHERE name=$5`,
-          [resolvedName, resolvedPrimaryDept ?? null, resolvedJobTitle || resolvedRole || null, resolvedFixedSalary ?? 0, c.name]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO employees (name, dept, role, salary, status)
-           VALUES ($1, $2, $3, $4, 'pending')`,
-          [resolvedName, resolvedPrimaryDept ?? null, resolvedJobTitle || resolvedRole || null, resolvedFixedSalary ?? 0]
-        );
-      }
+      await pool.query(
+        `INSERT INTO employees (staff_id, name, dept, role, salary, status)
+         VALUES ($1, $2, $3, $4, $5, 'pending')
+         ON CONFLICT (staff_id) DO UPDATE SET name=EXCLUDED.name, dept=EXCLUDED.dept, role=EXCLUDED.role, salary=EXCLUDED.salary`,
+        [req.params.id, resolvedName, resolvedPrimaryDept ?? null, resolvedJobTitle || resolvedRole || null, resolvedFixedSalary ?? 0]
+      );
     }
 
     res.json(rows[0]);
@@ -307,13 +300,11 @@ router.put('/:id', requireAdmin, async (req, res) => {
 
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
-    const { rows: curr } = await pool.query('SELECT name FROM staff_members WHERE id=$1', [req.params.id]);
-    const name = curr[0]?.name;
     const { rowCount } = await pool.query('DELETE FROM staff_members WHERE id=$1', [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: 'Not found' });
-    if (name) {
-      await pool.query('DELETE FROM employees WHERE name=$1', [name]);
-    }
+    // Matches prior behavior: the linked payroll row is removed too (now matched
+    // reliably via staff_id instead of by name).
+    await pool.query('DELETE FROM employees WHERE staff_id=$1', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -515,11 +506,11 @@ router.get('/advances/:id', async (req, res) => {
 });
 
 router.post('/advances', requireAdmin, async (req, res) => {
-  const { emp_name, dept, amount, date, note } = req.body;
+  const { emp_name, staff_id, dept, amount, date, note } = req.body;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO employee_advances (emp_name,dept,amount,date,note) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [emp_name, dept ?? null, amount, date, note ?? null]
+      `INSERT INTO employee_advances (emp_name,staff_id,dept,amount,date,note) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [emp_name, staff_id ?? null, dept ?? null, amount, date, note ?? null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -532,12 +523,13 @@ router.put('/advances/:id', requireAdmin, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM employee_advances WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { emp_name, dept, amount, date, note, repaid, repaid_date } = req.body;
+    const { emp_name, staff_id, dept, amount, date, note, repaid, repaid_date } = req.body;
     const { rows } = await pool.query(
-      `UPDATE employee_advances SET emp_name=$1,dept=$2,amount=$3,date=$4,note=$5,repaid=$6,repaid_date=$7
-       WHERE id=$8 RETURNING *`,
+      `UPDATE employee_advances SET emp_name=$1,staff_id=$2,dept=$3,amount=$4,date=$5,note=$6,repaid=$7,repaid_date=$8
+       WHERE id=$9 RETURNING *`,
       [
         emp_name    !== undefined ? emp_name    : c.emp_name,
+        staff_id    !== undefined ? staff_id    : c.staff_id,
         dept        !== undefined ? dept        : c.dept,
         amount      !== undefined ? amount      : c.amount,
         date        !== undefined ? date        : c.date,

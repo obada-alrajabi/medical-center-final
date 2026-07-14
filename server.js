@@ -498,6 +498,165 @@ pool
   )
   .catch((e) => console.error("[migration] backup_notifications:", e.message));
 
+// ── Print settings — one row per scope (letterhead image + margins) ─────────
+// Scopes: the 4 departments with their own dedicated print identity (lab,
+// surgery, rehab, radiology) plus "general" which covers every OTHER print
+// button in the system (reception, financial reports, vouchers, payroll,
+// patient-file printouts, etc.) per the admin's "الإعدادات العامة" screen.
+pool
+  .query(
+    `CREATE TABLE IF NOT EXISTS print_settings (
+  scope TEXT PRIMARY KEY,
+  letterhead_image TEXT,
+  margin_top INT NOT NULL DEFAULT 25,
+  margin_right INT NOT NULL DEFAULT 15,
+  margin_bottom INT NOT NULL DEFAULT 20,
+  margin_left INT NOT NULL DEFAULT 15,
+  paper_size TEXT NOT NULL DEFAULT 'A4',
+  orientation TEXT NOT NULL DEFAULT 'portrait',
+  font_size INT NOT NULL DEFAULT 13,
+  font_family TEXT,
+  show_signature BOOLEAN NOT NULL DEFAULT true,
+  with_header BOOLEAN NOT NULL DEFAULT true,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+)`,
+  )
+  .then(() =>
+    pool.query(
+      `INSERT INTO print_settings (scope) VALUES ('lab'),('surgery'),('rehab'),('radiology'),('general')
+       ON CONFLICT (scope) DO NOTHING`,
+    ),
+  )
+  .catch((e) => console.error("[migration] print_settings:", e.message));
+
+// ── Employees ↔ staff_members link (fixes duplicate payroll rows) ───────────
+// Previously the "employees" (payroll) row for a staff member was located by
+// matching on `name` alone, done independently in THREE separate places
+// (client-side in App.tsx, and twice server-side in routes/staff.js) with no
+// database-level safeguard — any race between those meant the same staff
+// member could get two "employees" rows inserted, which is exactly the
+// duplicate-rows-in-payroll bug that was reported. This migration:
+//   1. Adds a nullable, UNIQUE `staff_id` column linking employees → staff_members.
+//   2. Backfills staff_id for existing rows by unambiguous name match.
+//   3. Merges any existing duplicate employees rows for the same person into
+//      one (keeping the most complete data), before the unique constraint is
+//      applied — otherwise the constraint itself would fail to add.
+// Steps 2–3 only ever act on rows that are still duplicated / unlinked, so
+// running this again on every future startup is a safe no-op.
+(async () => {
+  try {
+    await pool.query(
+      `ALTER TABLE employees ADD COLUMN IF NOT EXISTS staff_id INT REFERENCES staff_members(id) ON DELETE SET NULL`
+    );
+    // Backfill: only when the name maps to exactly one staff member, to avoid
+    // mis-linking two different people who happen to share a name.
+    await pool.query(`
+      UPDATE employees e SET staff_id = sm.id
+      FROM staff_members sm
+      WHERE e.staff_id IS NULL AND e.name = sm.name
+        AND (SELECT COUNT(*) FROM staff_members sm2 WHERE sm2.name = e.name) = 1
+    `);
+    // Merge duplicate rows — group by staff_id when known, else by exact name.
+    const { rows: dupGroups } = await pool.query(`
+      SELECT COALESCE(staff_id::text, 'n:' || name) AS gkey, array_agg(id ORDER BY id) AS ids
+      FROM employees
+      GROUP BY gkey
+      HAVING COUNT(*) > 1
+    `);
+    for (const g of dupGroups) {
+      const { rows: dupRows } = await pool.query(
+        `SELECT * FROM employees WHERE id = ANY($1::int[]) ORDER BY id`,
+        [g.ids]
+      );
+      // Winner: prefer a row already linked to staff_id, then the one with the
+      // highest salary (most likely to have been kept up to date), then the
+      // most recently created row.
+      const winner = [...dupRows].sort((a, b) => {
+        if (!!b.staff_id !== !!a.staff_id) return (b.staff_id ? 1 : 0) - (a.staff_id ? 1 : 0);
+        if (Number(b.salary) !== Number(a.salary)) return Number(b.salary) - Number(a.salary);
+        return b.id - a.id;
+      })[0];
+      const merged = {
+        staff_id: winner.staff_id ?? dupRows.find(r => r.staff_id)?.staff_id ?? null,
+        dept: winner.dept ?? dupRows.find(r => r.dept)?.dept ?? null,
+        role: winner.role ?? dupRows.find(r => r.role)?.role ?? null,
+        salary: Math.max(...dupRows.map(r => Number(r.salary) || 0)),
+        expenses: Math.max(...dupRows.map(r => Number(r.expenses) || 0)),
+        status: winner.status ?? "pending",
+        paid_date: winner.paid_date ?? dupRows.find(r => r.paid_date)?.paid_date ?? null,
+      };
+      await pool.query(
+        `UPDATE employees SET staff_id=$1, dept=$2, role=$3, salary=$4, expenses=$5, status=$6, paid_date=$7 WHERE id=$8`,
+        [merged.staff_id, merged.dept, merged.role, merged.salary, merged.expenses, merged.status, merged.paid_date, winner.id]
+      );
+      const loserIds = g.ids.filter((id) => id !== winner.id);
+      if (loserIds.length) {
+        await pool.query(`DELETE FROM employees WHERE id = ANY($1::int[])`, [loserIds]);
+        console.log(`[migration] employees_dedupe: merged ${loserIds.length} duplicate row(s) into id=${winner.id} (${winner.name})`);
+      }
+    }
+    await pool.query(`
+      DO $$ BEGIN
+        ALTER TABLE employees ADD CONSTRAINT employees_staff_id_unique UNIQUE (staff_id);
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+    console.log("[migration] employees_staff_id_link applied");
+  } catch (e) {
+    console.error("[migration] employees_staff_id_link:", e.message);
+  }
+})();
+
+// ── Employee advances ↔ staff_members link ───────────────────────────────────
+// Same class of bug as the employees/payroll table above: advances were only
+// ever matched to a staff member by free-text name (`emp_name`), including in
+// the access-control filter that decides which advances a logged-in staff
+// member is allowed to see for their own "سلف الموظفين" screen. Two staff
+// members sharing a name could therefore see each other's advance records.
+// Adds a nullable staff_id link and best-effort backfills it from existing data.
+(async () => {
+  try {
+    await pool.query(
+      `ALTER TABLE employee_advances ADD COLUMN IF NOT EXISTS staff_id INT REFERENCES staff_members(id) ON DELETE SET NULL`
+    );
+    await pool.query(`
+      UPDATE employee_advances ea SET staff_id = sm.id
+      FROM staff_members sm
+      WHERE ea.staff_id IS NULL AND ea.emp_name = sm.name
+        AND (SELECT COUNT(*) FROM staff_members sm2 WHERE sm2.name = ea.emp_name) = 1
+    `);
+    console.log("[migration] employee_advances_staff_id_link applied");
+  } catch (e) {
+    console.error("[migration] employee_advances_staff_id_link:", e.message);
+  }
+})();
+
+// ── Queues ↔ patients link (fixes wrong-patient data on shared names) ───────
+// The lab/radiology queue only ever stored `patient_name` as free text, with
+// no `patient_id` FK. Screens that look up "this patient's pending lab/rad
+// entries" or build the OFFICIAL printed lab/rad report matched purely by
+// name — so two patients sharing a name could see each other's queue entries,
+// and a printed report could carry the wrong patient's file number/age/phone.
+// Adds a nullable patient_id column; existing rows are left NULL (patients.id
+// is a free-text code, not reliably unique-by-name-only to backfill safely —
+// new queue entries created after this migration always carry the real id).
+pool
+  .query(`ALTER TABLE queues ADD COLUMN IF NOT EXISTS patient_id VARCHAR(50)`)
+  .then(() => console.log("[migration] queues_patient_id applied"))
+  .catch((e) => console.error("[migration] queues_patient_id:", e.message));
+
+// ── Lab tests ↔ lab inventory link (fixes: kit stock never auto-deducted) ────
+// The test catalog's "kit name" field was a free-text label with no real link
+// to any inventory row, and the actual automatic-deduction logic at
+// registration time only ever matched by a SEPARATE free-text list typed
+// manually on the inventory item itself (never even persisted to the DB) — so
+// filling in a test's "kit" name never caused any real stock to be deducted.
+// Adds a real nullable FK from a lab test to the inventory item it consumes.
+pool
+  .query(`ALTER TABLE lab_tests ADD COLUMN IF NOT EXISTS kit_inventory_id INTEGER REFERENCES lab_inventory(id) ON DELETE SET NULL`)
+  .then(() => console.log("[migration] lab_tests_kit_inventory_link applied"))
+  .catch((e) => console.error("[migration] lab_tests_kit_inventory_link:", e.message));
+
 // ── Base path (set APP_BASE_PATH env var on Hostinger, e.g. /45.159.160.11) ──
 const BASE = process.env.APP_BASE_PATH || "";
 

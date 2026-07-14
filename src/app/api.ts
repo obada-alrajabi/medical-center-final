@@ -2,6 +2,21 @@ const BASE = window.location.hostname === 'system.mjcc.ps'
   ? 'https://system.mjcc.ps/api'
   : '/api';
 
+export interface PrintSettingsRow {
+  scope: "lab" | "surgery" | "rehab" | "radiology" | "general";
+  letterhead_image: string | null;
+  margin_top: number;
+  margin_right: number;
+  margin_bottom: number;
+  margin_left: number;
+  paper_size: string;
+  orientation: string;
+  font_size: number;
+  font_family: string | null;
+  show_signature: boolean;
+  with_header: boolean;
+}
+
 // Admin session token — set after admin login, sent with admin-only endpoints
 let _adminToken: string | null = null;
 export function setAdminToken(token: string | null) { _adminToken = token; }
@@ -306,6 +321,13 @@ export const api = {
       get: () => get<unknown>("/settings/sidebar"),
       update: (s: unknown) => put<unknown>("/settings/sidebar", s),
     },
+    print: {
+      // scope: "lab" | "surgery" | "rehab" | "radiology" | "general"
+      getAll: () => get<PrintSettingsRow[]>("/settings/print"),
+      getByScope: (scope: string) => get<PrintSettingsRow>(`/settings/print/${scope}`),
+      update: (scope: string, s: Partial<PrintSettingsRow>) =>
+        put<PrintSettingsRow>(`/settings/print/${scope}`, s),
+    },
     auth: {
       adminLogin: (username: string, password: string) =>
         post<{ id: number; username: string; display_name: string; token?: string } | { error: string }>(
@@ -337,8 +359,8 @@ export const api = {
 
   queues: {
     getAll: (dept?: string) => get<unknown[]>(`/queues${dept ? `?dept=${encodeURIComponent(dept)}` : ""}`),
-    create: (entry: { dept: string; patient_name: string; patient_num?: number; phone?: string; dest_dept?: string; notes?: string; items?: string[]; queue_time?: string; status?: string }) =>
-      post<{ id: number; dept: string; patient_name: string; patient_num: number | null; phone: string | null; dest_dept: string | null; notes: string | null; items: string[]; queue_time: string | null; status: string }>("/queues", entry),
+    create: (entry: { dept: string; patient_id?: string; patient_name: string; patient_num?: number; phone?: string; dest_dept?: string; notes?: string; items?: string[]; queue_time?: string; status?: string }) =>
+      post<{ id: number; dept: string; patient_id: string | null; patient_name: string; patient_num: number | null; phone: string | null; dest_dept: string | null; notes: string | null; items: string[]; queue_time: string | null; status: string }>("/queues", entry),
     updateStatus: (id: number, status: string, results?: unknown) => patch<unknown>(`/queues/${id}`, results !== undefined ? { status, results } : { status }),
     delete: (id: number) => del<unknown>(`/queues/${id}`),
     clearDone: (dept: string) => del<unknown>(`/queues/clear-done/${dept}`),
