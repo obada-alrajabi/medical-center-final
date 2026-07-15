@@ -6950,6 +6950,13 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
   const canEdit = !perms || perms.canCatalogEdit !== false;
   const canDelete = !perms || perms.canCatalogDelete !== false;
   const [tests, setTests] = useState<LabTest[]>(() => labTestsProp.length > 0 ? labTestsProp : initialLabTests);
+  // ── النسخة المحلية (tests) كانت تُهيَّأ مرة واحدة بس عند أول تحميل للشاشة
+  //    (lazy initializer) وما كانت تتزامن أبداً لو تحدّثت البيانات الحقيقية
+  //    القادمة من السيرفر بعد فتح الشاشة (مثلاً لو فُتحت الشاشة قبل ما يخلص
+  //    التحميل الأولي الكامل من قاعدة البيانات). النتيجة: تعديل فحص كان ممكن
+  //    يصير فوق نسخة قديمة/ناقصة من بياناته (مثلاً معامل واحد بس بدل عدة
+  //    معاملات محفوظة فعلياً)، فيُستبدَل كل شي المحفوظ بالنسخة الناقصة المعروضة ──
+  useEffect(() => { if (labTestsProp.length > 0) setTests(labTestsProp); }, [labTestsProp]);
   const [search, setSearch] = useState("");
   const [addModal, setAddModal] = useState(false);
   const [editItem, setEditItem] = useState<LabTest | null>(null);
@@ -7460,7 +7467,7 @@ function ImageCatalogScreen({ toast, perms }: { toast: (m: string, t?: any) => v
 // ─── FIN: ALL DRAWERS (overview + withdrawals) ────────────────────────────────
 
 
-function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, onEditPurchaseRequest, onSettlePayment, toast, customDepts = [], suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; onEditPurchaseRequest?: (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => void; onSettlePayment?: (id: number, amount: number) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
+function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, onEditPurchaseRequest, onSettlePayment, toast, customDepts = [], suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number, opts?: { discountAmount?: number; paidNow?: number }) => Promise<boolean>; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; onEditPurchaseRequest?: (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => void; onSettlePayment?: (id: number, amount: number) => Promise<boolean>; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [deptFilter, setDeptFilter] = useState("all");
   const [searchQ, setSearchQ] = useState("");
@@ -7468,6 +7475,29 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [delConfId, setDelConfId] = useState<number | null>(null);
+  // ── الموافقة على طلب معلّق: المدير بيحدد خصم تحفيزي (إن وُجد) من الشركة
+  //    المورّدة، وقديه بده يسدد الآن (كامل/جزئي/ولا شي) — بدل الموافقة المباشرة
+  //    القديمة اللي كانت تسحب تلقائياً كامل مبلغ الطلب من الصندوق فوراً ──
+  const [approveReq, setApproveReq] = useState<PurchaseRequest | null>(null);
+  const [approveDiscount, setApproveDiscount] = useState("0");
+  const [approvePaidNow, setApprovePaidNow] = useState("");
+  const [approving, setApproving] = useState(false);
+  const approveDiscountNum = Math.max(0, parseFloat(approveDiscount) || 0);
+  const approveTotalAfterDiscount = approveReq ? Math.max(0, approveReq.totalAmount - approveDiscountNum) : 0;
+  const approvePaidNowNum = Math.min(Math.max(0, parseFloat(approvePaidNow) || 0), approveTotalAfterDiscount);
+  const approveRemainingAfter = Math.max(0, approveTotalAfterDiscount - approvePaidNowNum);
+  const openApprove = (req: PurchaseRequest) => { setApproveReq(req); setApproveDiscount("0"); setApprovePaidNow(""); };
+  const confirmApprove = async () => {
+    if (!approveReq) return;
+    setApproving(true);
+    try {
+      const ok = await onApprovePurchaseRequest(approveReq.id, { discountAmount: approveDiscountNum, paidNow: approvePaidNowNum });
+      if (ok) {
+        toast(`✅ تمت الموافقة على طلب شراء #${approveReq.id}${approvePaidNowNum > 0 ? ` — تم تسديد ${fmt(approvePaidNowNum)} الآن` : ""}`, "success");
+        setApproveReq(null); setApproveDiscount("0"); setApprovePaidNow("");
+      }
+    } finally { setApproving(false); }
+  };
   // ── تسديد دفعة (كاملة/جزئية) لطلب شراء مُعتمَد، مع سجل دفعات وملاحظة تلقائية ──
   const [settleReq, setSettleReq] = useState<PurchaseRequest | null>(null);
   const [settleAmt, setSettleAmt] = useState("");
@@ -7481,9 +7511,13 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
     if (settleAmtNum > settleRemaining) { toast("المبلغ أكبر من المتبقي على الطلب", "error"); return; }
     setSettling(true);
     try {
-      onSettlePayment?.(settleReq.id, settleAmtNum);
-      toast(settleNewRemaining <= 0 ? "تم سداد كامل مبلغ طلب الشراء ✓" : `تم تسجيل دفعة ${fmt(settleAmtNum)} — المتبقي ${fmt(settleNewRemaining)} ✓`, "success");
-      setSettleReq(null); setSettleAmt("");
+      const ok = onSettlePayment ? await onSettlePayment(settleReq.id, settleAmtNum) : false;
+      if (ok) {
+        toast(settleNewRemaining <= 0 ? "تم سداد كامل مبلغ طلب الشراء ✓" : `تم تسجيل دفعة ${fmt(settleAmtNum)} — المتبقي ${fmt(settleNewRemaining)} ✓`, "success");
+        setSettleReq(null); setSettleAmt("");
+      }
+      // ── لو فشلت العملية، الهاندلر بالمستوى الأعلى بيعرض توست الخطأ بنفسه —
+      //    وبنترك النافذة مفتوحة والمبلغ كما هو حتى يقدر المستخدم يعيد المحاولة ──
     } finally { setSettling(false); }
   };
   // ── تعديل طلب الشراء (المدير فقط) — كان مفقوداً بالكامل قبل هذا التعديل ──
@@ -7718,8 +7752,9 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                   </div>
 
                   {/* Supplier & payment summary */}
-                  <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className={`grid ${req.discountAmount ? "grid-cols-4" : "grid-cols-3"} gap-2 text-xs`}>
                     <div className="p-2 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><p className="text-[#999]">شركة المورد</p><p className="font-semibold text-[#333]">{req.supplier || "—"}</p></div>
+                    {!!req.discountAmount && <div className="p-2 rounded-lg" style={{ backgroundColor: "#FFF8E1" }}><p className="text-[#999]">خصم تحفيزي</p><p className="font-semibold text-[#F57C00]">-{fmt(req.discountAmount)}</p></div>}
                     <div className="p-2 rounded-lg" style={{ backgroundColor: "#E8F5E9" }}><p className="text-[#999]">مبلغ الدفع</p><p className="font-semibold text-[#388E3C]">{fmt(req.paidAmount || 0)}</p></div>
                     <div className="p-2 rounded-lg" style={{ backgroundColor: "#FFEBEE" }}><p className="text-[#999]">متبقي للشركة</p><p className="font-semibold text-[#D32F2F]">{fmt(Math.max(0, req.totalAmount - (req.paidAmount || 0)))}</p></div>
                   </div>
@@ -7759,7 +7794,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                   {/* Admin actions */}
                   {req.status === "pending" && !isRej && (
                     <div className="flex gap-2 flex-wrap">
-                      <Btn variant="success" small onClick={() => { onApprovePurchaseRequest(req.id); toast(`✅ تمت الموافقة على طلب شراء #${req.id}`, "success"); }}><Check size={13} />موافقة</Btn>
+                      <Btn variant="success" small onClick={() => openApprove(req)}><Check size={13} />موافقة</Btn>
                       <Btn variant="danger" small onClick={() => { setRejectId(req.id); setRejectReason(""); }}><X size={13} />رفض مع ملاحظة</Btn>
                       {onDeletePurchaseRequest && <button onClick={() => setDelConfId(req.id)} title="حذف الطلب" className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors hover:bg-[#FFEBEE]" style={{ color: "#D32F2F", border: "1px solid #FFCDD2" }}><Trash2 size={14} /></button>}
                     </div>
@@ -7795,6 +7830,27 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
         message={`هل أنت متأكد من حذف طلب الشراء #${delConfId}؟ لا يمكن التراجع عن هذا الإجراء.`}
         danger
       />
+
+      {/* ── الموافقة على طلب شراء: خصم تحفيزي + قرار الدفع الآن ── */}
+      <Modal open={!!approveReq} onClose={() => { setApproveReq(null); setApproveDiscount("0"); setApprovePaidNow(""); }} title={`الموافقة على طلب شراء #${approveReq?.id ?? ""}`}
+        footer={<><Btn variant="success" loading={approving} onClick={confirmApprove}><Check size={16} />تأكيد الموافقة</Btn><Btn variant="outline" onClick={() => { setApproveReq(null); setApproveDiscount("0"); setApprovePaidNow(""); }}>إلغاء</Btn></>}>
+        {approveReq && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-2 rounded-lg text-center" style={{ backgroundColor: "#F5F5F5" }}><p className="text-[#999]">إجمالي الطلب (قبل الخصم)</p><p className="font-bold text-[#1B3A6B]">{fmt(approveReq.totalAmount)}</p></div>
+              <div className="p-2 rounded-lg text-center" style={{ backgroundColor: "#E8F5E9" }}><p className="text-[#999]">الإجمالي بعد الخصم</p><p className="font-bold text-[#388E3C]">{fmt(approveTotalAfterDiscount)}</p></div>
+            </div>
+            <InputField label="الخصم التحفيزي من الشركة (₪) — اختياري" type="number" placeholder="0" value={approveDiscount} onChange={setApproveDiscount} />
+            {approveDiscountNum > approveReq.totalAmount && <p className="text-xs text-[#D32F2F]">⚠️ الخصم أكبر من إجمالي الطلب</p>}
+            <InputField label="المبلغ الذي سيتم دفعه الآن (₪) — اتركه فارغاً إن لم تحدد بعد" type="number" placeholder="0" value={approvePaidNow} onChange={setApprovePaidNow} />
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-2 rounded-lg text-center" style={{ backgroundColor: "#EBF3FB" }}><p className="text-[#999]">سيُسدَّد الآن</p><p className="font-bold text-[#1565C0]">{fmt(approvePaidNowNum)}</p></div>
+              <div className="p-2 rounded-lg text-center" style={{ backgroundColor: "#FFEBEE" }}><p className="text-[#999]">الباقي على الشركة بعد الموافقة</p><p className="font-bold text-[#D32F2F]">{fmt(approveRemainingAfter)}</p></div>
+            </div>
+            {approvePaidNowNum <= 0 && <p className="text-xs text-[#F57C00]">⚠️ لن يُسحب أي مبلغ من الصندوق الآن — يمكنك تسديد الدفعة لاحقاً من زر "تسديد" على الطلب بعد الموافقة.</p>}
+          </div>
+        )}
+      </Modal>
 
       {/* ── تسديد دفعة (كاملة/جزئية) لطلب شراء ── */}
       <Modal open={!!settleReq} onClose={() => { setSettleReq(null); setSettleAmt(""); }} title={`تسديد دفعة — طلب شراء #${settleReq?.id ?? ""}`}
@@ -15835,7 +15891,7 @@ export default function App() {
         setAttendance((dbAttendance as any[]).map((r: any) => ({ id: r.id, empId: r.emp_id || "", empName: r.emp_name || "", dept: r.dept || "", date: r.date ? String(r.date).slice(0, 10) : "", dayName: r.day_name || "", checkIn: r.check_in ? String(r.check_in).slice(0, 5) : "", checkOut: r.check_out ? String(r.check_out).slice(0, 5) : "", totalHours: r.total_hours != null ? Number(r.total_hours) : undefined })));
       }
       if (dbPurchaseRequests && (dbPurchaseRequests as any[]).length > 0) {
-        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [] })));
+        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [], discountAmount: Number(r.discount_amount) || 0 })));
       }
       if (dbDiagnoses && (dbDiagnoses as any[]).length > 0) {
         setDiagnoses((dbDiagnoses as any[]).map((d: any) => ({ id: d.id, code: d.code || "", name: d.name || "", category: d.category || "أخرى", dept: d.dept || "surgery" })));
@@ -15945,19 +16001,46 @@ export default function App() {
     const itemsForDb = (req.items || []).map(it => ({ name: it.name, qty: it.qty, unit: it.unit, estimated_price: it.estimatedPrice, note: it.note }));
     api.finance.purchaseRequests.create({ dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), items: itemsForDb, total_amount: req.totalAmount, paid_amount: req.paidAmount || 0, note: req.note, supplier: req.supplier || null }).then(r => { if (r && (r as any).id) setPurchaseRequests(p => p.map(x => x.id === _prId ? { ...x, id: (r as any).id } : x)); }).catch(() => { });
   };
-  const onApprovePurchaseRequest = (id: number) => {
-    const req = purchaseRequests.find(r => r.id === id); if (!req) return;
-    const approvedPaidAmount = req.paidAmount !== undefined ? req.paidAmount : req.totalAmount;
-    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, status: "approved", approvedBy: "المدير", approvedDate: _today() } : r));
-    api.finance.purchaseRequests.update(id, { dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), total_amount: req.totalAmount, paid_amount: approvedPaidAmount, status: "approved", approved_by: "المدير", approved_date: _localISO(), note: req.note });
-    // ── نحفظ رقم حركة السحب الحقيقي على الطلب نفسه (drawer_tx_id)، لنستطيع
-    //    لاحقاً عند حذف الطلب أو تعديل مبلغه حذف/تصحيح هذه الحركة بالتحديد
-    //    بدل تركها معلّقة للأبد في سجل الصندوق ──
-    doWithdraw(req.dept, approvedPaidAmount, `مشتريات مُعتمدة — طلب #${id}`, "مشتريات تشغيلية").then(txId => {
-      if (!txId) return;
-      setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, drawerTxId: txId } : r));
-      api.finance.purchaseRequests.update(id, { drawer_tx_id: txId }).catch(() => { });
-    });
+  // ── لحظة الموافقة، المدير بيقدر يحدد: (1) خصم تحفيزي حصل عليه من الشركة
+  //    المورّدة فينخصم من الإجمالي الكلي للطلب، و(2) قديه بده يسدد الآن فعلياً
+  //    (كامل أو جزئي أو ولا شي حالياً) — بدل ما كان النظام قديماً يسحب تلقائياً
+  //    كامل مبلغ الطلب من الصندوق فور الموافقة بغض النظر عن قرار المدير الفعلي.
+  //    الدفعة المسددة الآن بتتسجل بنفس سجل الدفعات المستخدم لاحقاً بزر "تسديد" ──
+  const onApprovePurchaseRequest = async (id: number, opts?: { discountAmount?: number; paidNow?: number }): Promise<boolean> => {
+    const req = purchaseRequests.find(r => r.id === id); if (!req) return false;
+    const discountAmount = Math.max(0, opts?.discountAmount || 0);
+    const newTotal = Math.max(0, req.totalAmount - discountAmount);
+    const paidNow = Math.min(Math.max(0, opts?.paidNow || 0), newTotal);
+    try {
+      await api.finance.purchaseRequests.update(id, { dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), total_amount: newTotal, discount_amount: discountAmount, status: "approved", approved_by: "المدير", approved_date: _localISO(), note: req.note });
+      setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, status: "approved", approvedBy: "المدير", approvedDate: _today(), discountAmount, totalAmount: newTotal } : r));
+      if (paidNow > 0) {
+        const now = new Date();
+        const dateTimeStr = `${_localISO()} ${now.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" })}`;
+        const remaining = Math.max(0, newTotal - paidNow);
+        const note = `دفعة عند اعتماد الطلب بقيمة ${fmt(paidNow)} بتاريخ ${dateTimeStr} والباقي ${fmt(remaining)} لطلب الشراء #${id}`;
+        // ── نحفظ رقم حركة السحب الحقيقي على الطلب نفسه (drawer_tx_id)، لنستطيع
+        //    لاحقاً عند حذف الطلب أو تعديل مبلغه حذف/تصحيح هذه الحركة بالتحديد
+        //    بدل تركها معلّقة للأبد في سجل الصندوق ──
+        const txId = await doWithdraw(req.dept, paidNow, note, "مشتريات مُعتمدة");
+        if (txId) {
+          setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, drawerTxId: txId } : r));
+          api.finance.purchaseRequests.update(id, { drawer_tx_id: txId }).catch(() => { });
+        }
+        let voucherId: number | null = null;
+        try {
+          const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: paidNow, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "مشتريات مُعتمدة", notes: note, drawer_tx_id: txId || null });
+          if (rv && (rv as any).id) { voucherId = (rv as any).id; setPaymentVouchersGlobal(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]); }
+        } catch { /* نكمل حتى لو فشل إنشاء سند الصرف */ }
+        const r = await api.finance.purchaseRequests.payments.create(id, { amount: paidNow, note, drawer_tx_id: txId || null, payment_voucher_id: voucherId });
+        const realId = r && (r as any).payment ? (r as any).payment.id : Date.now();
+        setPurchaseRequests(p => p.map(x => x.id === id ? { ...x, paidAmount: (x.paidAmount || 0) + paidNow, payments: [...(x.payments || []), { id: realId, requestId: id, amount: paidNow, note, date: new Date().toISOString() }] } : x));
+      }
+      return true;
+    } catch {
+      toast("⚠️ تعذّرت الموافقة على الطلب — تحقق من الاتصال وحاول مرة أخرى", "error");
+      return false;
+    }
   };
   const onRejectPurchaseRequest = (id: number, reason: string) => {
     setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, status: "rejected", rejectionReason: reason } : r));
@@ -16001,17 +16084,20 @@ export default function App() {
   //    (بدل الكتابة فوق حقل paidAmount المفرد فقط)، مع ملاحظة تلقائية، وسحب
   //    حقيقي من صندوق القسم، وسند صرف حقيقي — بنفس مبدأ سندات القبض لتحصيل
   //    التأمين (كل دفعة حقيقية لازم تظهر بحسابات النظام الموحّدة). ──
-  const onSettlePurchaseRequestPayment = async (id: number, amount: number) => {
-    const req = purchaseRequests.find(r => r.id === id); if (!req) return;
+  // ── ترجع Promise<boolean> (نجحت الدفعة فعلياً بالسيرفر أو لأ) بدل ما ترجع
+  //    void بصمت — لأن الشاشة (confirmSettle) كانت عم تعرض توست "نجاح" فوراً
+  //    بدون ما تنتظر نتيجة الاتصال الحقيقية، فلو فشل الاتصال (مثلاً مصادقة
+  //    منتهية) المستخدم كان يشوف "تم" بينما ما انحفظ أي شي فعلياً بقاعدة البيانات ──
+  const onSettlePurchaseRequestPayment = async (id: number, amount: number): Promise<boolean> => {
+    const req = purchaseRequests.find(r => r.id === id); if (!req) return false;
     const remaining = Math.max(0, req.totalAmount - (req.paidAmount || 0));
     const amt = Math.min(Math.max(0, amount), remaining);
-    if (amt <= 0) return;
+    if (amt <= 0) return false;
     const newRemaining = Math.max(0, remaining - amt);
     const now = new Date();
     const dateTimeStr = `${_localISO()} ${now.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" })}`;
     const note = `تم سداد دفعة بقيمة ${fmt(amt)} بتاريخ ${dateTimeStr} والباقي ${fmt(newRemaining)} لطلب الشراء #${id}`;
     const tempId = Date.now();
-    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, paidAmount: (r.paidAmount || 0) + amt, payments: [...(r.payments || []), { id: tempId, requestId: id, amount: amt, note, date: new Date().toISOString() }] } : r));
     try {
       const txId = await doWithdraw(req.dept, amt, note, "دفعة مورد");
       let voucherId: number | null = null;
@@ -16020,11 +16106,16 @@ export default function App() {
         if (rv && (rv as any).id) { voucherId = (rv as any).id; setPaymentVouchersGlobal(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]); }
       } catch { /* نكمل حتى لو فشل إنشاء سند الصرف */ }
       const r = await api.finance.purchaseRequests.payments.create(id, { amount: amt, note, drawer_tx_id: txId || null, payment_voucher_id: voucherId });
-      if (r && (r as any).payment) {
-        const realId = (r as any).payment.id;
-        setPurchaseRequests(p => p.map(x => x.id === id ? { ...x, payments: (x.payments || []).map(pm => pm.id === tempId ? { ...pm, id: realId } : pm) } : x));
-      }
-    } catch { /* silent — التحديث المحلي بقي كما هو حتى لو فشل الاتصال */ }
+      if (!r || !(r as any).payment) throw new Error("payment save failed");
+      const realId = (r as any).payment.id;
+      // ── التحديث المحلي (تحديث "مبلغ الدفع" وإضافة السطر لسجل الدفعات) ما
+      //    بيصير إلا بعد تأكد نجاح الحفظ الفعلي بالسيرفر، مش قبله ──
+      setPurchaseRequests(p => p.map(x => x.id === id ? { ...x, paidAmount: (x.paidAmount || 0) + amt, payments: [...(x.payments || []), { id: realId, requestId: id, amount: amt, note, date: new Date().toISOString() }] } : x));
+      return true;
+    } catch {
+      toast("⚠️ تعذّر حفظ الدفعة بالسيرفر — تحقق من الاتصال أو سجّل الدخول من جديد وحاول مرة أخرى", "error");
+      return false;
+    }
   };
   // ── تعديل تفاصيل جلسة (canEditSession) — يشمل بيانات الجلسة الأساسية والتشخيص
   //    والأدوية وإحالات المختبر/الأشعة. الأصناف الفرعية (تشخيص/أدوية/إحالات) لا
@@ -16107,7 +16198,7 @@ export default function App() {
     if (route.screen === "fin-purchase-reqs" && loggedUser?.type === "admin") {
       api.finance.purchaseRequests.getAll().then(data => {
         if (data && Array.isArray(data)) {
-          setPurchaseRequests((data as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined })));
+          setPurchaseRequests((data as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [], discountAmount: Number(r.discount_amount) || 0 })));
         }
       }).catch(() => { });
     }

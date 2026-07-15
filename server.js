@@ -152,6 +152,13 @@ pool
     return pool.query(`ALTER TABLE lab_tests ADD CONSTRAINT lab_tests_code_is_l2l_key UNIQUE (code, is_l2l)`);
   })
   .catch(() => {});
+// خصم تحفيزي ممكن المدير يدخله لحظة الموافقة على طلب الشراء (خصم من الشركة
+// المورّدة)، بينخصم من الإجمالي الكلي للطلب — منفصل عن حقل paid_amount.
+pool
+  .query(
+    `ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS discount_amount numeric(12,2) DEFAULT 0`,
+  )
+  .catch(() => {});
 // ربط الفحص الواحد بأكتر من صنف من مستلزمات المخزون، كل صنف بكميته الخاصة
 // للخصم — يحل محل الربط القديم بصنف واحد فقط (kit_inventory_id/kit_qty)،
 // اللي بيضلوا موجودين للتوافق مع البيانات القديمة بس ما عادوا يُستخدَموا بمنطق الخصم.

@@ -379,11 +379,11 @@ router.put('/purchase-requests/:id', requireFinancialAuth, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM purchase_requests WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { dept, requested_by, date, total_amount, paid_amount, status, approved_by, approved_date, rejection_reason, note, supplier, drawer_tx_id } = req.body;
+    const { dept, requested_by, date, total_amount, paid_amount, status, approved_by, approved_date, rejection_reason, note, supplier, drawer_tx_id, discount_amount } = req.body;
     const { rows } = await pool.query(
       `UPDATE purchase_requests SET dept=$1,requested_by=$2,date=$3,total_amount=$4,
-       paid_amount=$5,status=$6,approved_by=$7,approved_date=$8,rejection_reason=$9,note=$10,supplier=$11,drawer_tx_id=$12
-       WHERE id=$13 RETURNING *`,
+       paid_amount=$5,status=$6,approved_by=$7,approved_date=$8,rejection_reason=$9,note=$10,supplier=$11,drawer_tx_id=$12,discount_amount=$13
+       WHERE id=$14 RETURNING *`,
       [
         dept             !== undefined ? dept             : c.dept,
         requested_by     !== undefined ? requested_by     : c.requested_by,
@@ -397,6 +397,7 @@ router.put('/purchase-requests/:id', requireFinancialAuth, async (req, res) => {
         note             !== undefined ? note             : c.note,
         supplier         !== undefined ? supplier         : c.supplier,
         drawer_tx_id     !== undefined ? drawer_tx_id     : c.drawer_tx_id,
+        discount_amount  !== undefined ? discount_amount  : c.discount_amount,
         req.params.id,
       ]
     );
