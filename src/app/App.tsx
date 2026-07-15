@@ -2755,7 +2755,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
 
 // ─── NEW PATIENT ───────────────────────────────────────────────────────────────
 
-function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles, customDepts = [], inventory = [], setInventory, computeKitStatus, checkAndNotify }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>; customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>; inventory?: typeof initialInventory; setInventory?: React.Dispatch<React.SetStateAction<typeof initialInventory>>; computeKitStatus?: (qty: number, threshold: number) => "ok" | "low" | "critical" | "empty"; checkAndNotify?: (itemName: string, dept: string, deptLabel: string, qty: number, threshold: number) => void }) {
+function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles, customDepts = [], inventory = [], setInventory, computeKitStatus, checkAndNotify, setRehabPlans, setRehabQueueEntries }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>; customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>; inventory?: typeof initialInventory; setInventory?: React.Dispatch<React.SetStateAction<typeof initialInventory>>; computeKitStatus?: (qty: number, threshold: number) => "ok" | "low" | "critical" | "empty"; checkAndNotify?: (itemName: string, dept: string, deptLabel: string, qty: number, threshold: number) => void; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>> }) {
   // ── إيجاد بيانات القسم من الثابتة أو المخصصة — بدون هذا، أي قسم مخصص (كالاستقبال)
   //    كان يسقط احتياطياً على DEPARTMENTS[0] (الجراحة)، فيُسجَّل كل دين/جلسة لقسم
   //    مخصص باسم "الجراحة" خطأً ويتضخم صندوقها بأموال لا تخصه. ──
@@ -2931,6 +2931,10 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       if (setSessions && sessionTotal > 0) {
         const autoDoc = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
         const deptInfo = findDeptInfo(dept);
+        // ── اسم الطبيب/الأخصائي المسؤول عن الجلسة لا يُدخَل يدوياً أبداً بأي قسم —
+        //    يُؤخذ تلقائياً من اسم الموظف المسجَّل دخوله بالحساب (نفس مبدأ باقي
+        //    الأقسام)، حتى تبقى نسبة الرواتب مربوطة بحساب حقيقي فعلاً نفّذ العمل. ──
+        const doctorName = autoDoc || deptInfo.short;
         const sessionDiag = isRehab
           ? [rehabDiagnosis].filter(Boolean)
           : selDiagIds.map(xid => availDiag.find(d => d.id === xid)?.name).filter(Boolean) as string[];
@@ -2954,9 +2958,9 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
         //    "تسجيل فحص" (دالة printAndComplete)، بغض النظر من أي شاشة حُجز
         //    الفحص أصلاً، لأن كل الفحوصات المحجوزة تمر بنفس قائمة الانتظار
         //    المشتركة (board) وتُنجَز من هناك. ──
-        const ns: PatientSession = { id: Date.now(), patientId: effectiveId, dept, doctor: autoDoc || deptInfo.short, date: today, diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()).map(m => ({ name: m.name, dose: m.dose, freq: m.freq, duration: m.duration })), notes: sessionNotesComputed, labRefs: sessionLabR, radRefs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt };
+        const ns: PatientSession = { id: Date.now(), patientId: effectiveId, dept, doctor: doctorName, date: today, diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()).map(m => ({ name: m.name, dose: m.dose, freq: m.freq, duration: m.duration })), notes: sessionNotesComputed, labRefs: sessionLabR, radRefs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt };
         setSessions(prev => [ns, ...prev]);
-        api.sessions.create({ patient_id: effectiveId, dept, doctor: autoDoc || deptInfo.short, date: form.joinDate || _localISO(), diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()), notes: sessionNotesComputed, lab_refs: sessionLabR, rad_refs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt }).then((r: any) => {
+        api.sessions.create({ patient_id: effectiveId, dept, doctor: doctorName, date: form.joinDate || _localISO(), diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()), notes: sessionNotesComputed, lab_refs: sessionLabR, rad_refs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt }).then((r: any) => {
           if (r && r.id) {
             setSessions?.(p => p.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
             if (pendingFiles.length > 0) {
@@ -2993,6 +2997,29 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
             }).catch(() => { });
           }
         }).catch(() => { });
+        // ── تسجيل مريض جديد بقسم التأهيل يجب أن يُنشئ "خطة علاجية" فعلية (وليس
+        //    جلسة عادية فقط)، وإلا يبقى المريض بلا خطة نشطة فيضطر الموظف يعمل
+        //    "خطة علاجية جديدة" من جديد لاحقاً ويُدخل نفس البيانات مرتين (ازدواج
+        //    دفعة/دين محتمل) — وكمان يظهر تبويب "التأهيل" بملف المريض فارغاً. ──
+        if (isRehab && setRehabPlans && selRehabService) {
+          const pricePerSession = rehabSessionCount > 0 ? Math.round((sessionTotal - discAmt) / rehabSessionCount) : 0;
+          const newPlan: RehabPlan = { id: Date.now() + 2, patientId: effectiveId, patientName: form.name, diagnosis: rehabDiagnosis, totalSessions: rehabSessionCount, completedSessions: 0, pricePerSession, planPrice: sessionNet, pricingMode: "plan", specialist: doctorName, status: "active", startDate: today };
+          setRehabPlans(prev => [...prev, newPlan]);
+          api.rehab.plans.create({ patient_id: effectiveId, patient_name: form.name, diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: pricePerSession, plan_price: sessionNet, pricing_mode: "plan", specialist: doctorName, status: "active", start_date: today, clinical_notes: sessionNotesComputed }).then(r => {
+            if (r) {
+              const newId = (r as any).id;
+              setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: newId } : p));
+              // ── جدولة الجلسة الأولى تلقائياً بقائمة انتظار "طلبات العلاج التأهيلي" —
+              //    نفس ما يحصل بالضبط عند الضغط على زر "تسجيل حضور جلسة" من قائمة المرضى. ──
+              if (setRehabQueueEntries) {
+                const now = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+                const entry: RehabQueueEntry = { id: Date.now() + 3, patientId: effectiveId, patientName: form.name, planId: newId, diagnosis: rehabDiagnosis, specialist: doctorName, sessionNumber: 1, time: now, date: today, status: "pending" };
+                setRehabQueueEntries(prev => [...prev, entry]);
+                api.rehab.queue.create({ patient_id: effectiveId, patient_name: form.name, plan_id: newId, diagnosis: rehabDiagnosis, specialist: doctorName, session_number: 1, session_time: now, session_date: today, status: "pending" }).then(qr => { if (qr && setRehabQueueEntries) setRehabQueueEntries(prev => prev.map(e => e.id === entry.id ? { ...e, id: (qr as any).id } : e)); }).catch(() => { });
+              }
+            }
+          }).catch(() => { });
+        }
       }
       if (sessionDebt > 0 && setDebts) {
         const deptInfo = findDeptInfo(dept);
@@ -4713,7 +4740,9 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 text-sm text-[#555]"><Calendar size={14} /><span>{today}</span><span className="text-[#CCC]">·</span><span className="font-medium text-[#1B3A6B]">{deptInfo.short}</span></div>
-          <input value={doctor} onChange={e => setDoctor(e.target.value)} placeholder="اسم الطبيب المعالج..." className="h-8 px-3 rounded-lg text-sm outline-none w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 160 }} />
+          {/* ── اسم الطبيب/المسؤول عن الجلسة لا يُدخَل يدوياً — يُؤخذ تلقائياً من
+              الموظف المسجَّل دخوله بالحساب (يُستخدم لاحتساب نسبته من الرواتب). ── */}
+          <div className="h-8 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 160, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />{doctor}</div>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -6621,7 +6650,7 @@ function RehabQueueScreen({ isAdmin = false, perms }: { isAdmin?: boolean; perms
   );
 }
 
-function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavigate, toast, doDeposit, setDebts, rehabServices = [], insurances = [], setInvoices }: { patientId?: string; dept: string; rehabPlans: RehabPlan[]; setRehabPlans: React.Dispatch<React.SetStateAction<RehabPlan[]>>; onNavigate: (r: Route) => void; toast: (m: string, t?: any) => void; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; rehabServices?: RehabServiceItem[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>> }) {
+function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavigate, toast, doDeposit, setDebts, rehabServices = [], insurances = [], setInvoices, setSessions, setRehabQueueEntries, loggedUser }: { patientId?: string; dept: string; rehabPlans: RehabPlan[]; setRehabPlans: React.Dispatch<React.SetStateAction<RehabPlan[]>>; onNavigate: (r: Route) => void; toast: (m: string, t?: any) => void; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; rehabServices?: RehabServiceItem[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>>; loggedUser?: LoggedUser }) {
   // ── نفس شاشة "التشخيص والعلاج" + "التفاصيل المالية للكشفية" المستخدَمة عند
   //    تسجيل مريض جديد بقسم التأهيل (NewPatientScreen) — لتوحيد التجربة بين
   //    "مريض جديد" و"خطة علاجية جديدة" لمريض مسجَّل مسبقاً، بدل شاشة قديمة
@@ -6642,7 +6671,8 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
   const [rehabServiceId, setRehabServiceId] = useState<number | null>(null);
   const [rehabSessionCount, setRehabSessionCount] = useState(1);
   const [rehabRecommendations, setRehabRecommendations] = useState("");
-  const [specialist, setSpecialist] = useState("");
+  // ── اسم الأخصائي لا يُدخَل يدوياً — يُؤخذ تلقائياً من الموظف المسجَّل دخوله ──
+  const specialist = (loggedUser?.type === "staff" ? loggedUser.staff.name : "") || (DEPARTMENTS.find(d => d.id === "rehab")?.short || "التأهيلي");
   const selRehabService = rehabServices.find(s => s.id === rehabServiceId) || null;
   const rehabTotal = selRehabService ? (selRehabService.price * rehabSessionCount) : 0;
   // ── التفاصيل المالية للكشفية (نفس منطق NewPatientScreen بالضبط) ──
@@ -6666,7 +6696,6 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
   const step2Valid = () => {
     if (!rehabDiagnosis.trim()) { toast("أدخل التشخيص التأهيلي / الفيزيائي", "error"); return false; }
     if (!rehabServiceId) { toast("اختر نوع الخدمة التأهيلية", "error"); return false; }
-    if (!specialist.trim()) { toast("أدخل اسم الأخصائي المعالج", "error"); return false; }
     return true;
   };
   const handleSave = () => {
@@ -6686,7 +6715,20 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
       const planPriceNet = Math.max(0, basePrice - discAmt - insDiscAmt);
       const newPlan: RehabPlan = { id: Date.now(), patientId: patientId || "", patientName: patient?.name || "", diagnosis: rehabDiagnosis, totalSessions: rehabSessionCount, completedSessions: 0, pricePerSession: sessionVal, planPrice: planPriceNet, pricingMode: "plan", specialist, status: "active", startDate: today };
       setRehabPlans(prev => [...(prev || []), newPlan]);
-      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: sessionVal, plan_price: planPriceNet, pricing_mode: "plan", specialist, status: "active", start_date: today, clinical_notes: clinicalNotes }).then(r => { if (r) setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: (r as any).id } : p)); }).catch(() => { });
+      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: sessionVal, plan_price: planPriceNet, pricing_mode: "plan", specialist, status: "active", start_date: today, clinical_notes: clinicalNotes }).then(r => {
+        if (!r) return;
+        const newId = (r as any).id;
+        setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: newId } : p));
+        // ── جدولة الجلسة الأولى تلقائياً بقائمة "طلبات العلاج التأهيلي" — نفس ما
+        //    يحصل عند الضغط على زر "تسجيل حضور جلسة" من قائمة المرضى. لازم ننتظر
+        //    الـ id الحقيقي من السيرفر حتى ترتبط الجلسة بالخطة الصحيحة. ──
+        if (setRehabQueueEntries && patientId) {
+          const now = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+          const entry: RehabQueueEntry = { id: Date.now() + 5, patientId, patientName: patient?.name || "", planId: newId, diagnosis: rehabDiagnosis, specialist, sessionNumber: 1, time: now, date: today, status: "pending" };
+          setRehabQueueEntries(prev => [...prev, entry]);
+          api.rehab.queue.create({ patient_id: patientId, patient_name: patient?.name || "", plan_id: newId, diagnosis: rehabDiagnosis, specialist, session_number: 1, session_time: now, session_date: today, status: "pending" }).then(qr => { if (qr) setRehabQueueEntries(prev => prev.map(e => e.id === entry.id ? { ...e, id: (qr as any).id } : e)); }).catch(() => { });
+        }
+      }).catch(() => { });
       if (paidAmt > 0 && doDeposit) doDeposit("rehab", paidAmt, `دفعة خطة علاجية — ${patient?.name || ""}`, "إيراد مريض");
       // ── نفس مبدأ NewPatientScreen: أي مبلغ متبقٍ يُسجَّل كدين على المريض تلقائياً ──
       if (remaining > 0 && setDebts && patientId) {
@@ -6699,6 +6741,15 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
         const insId = `ins-${Date.now()}`;
         setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "rehab", claimNo: insClaimNo.trim() || undefined, patientId: patientId, patientName: patient?.name || "" }]);
         api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "rehab", claim_no: insClaimNo.trim() || null, patient_id: patientId, patient_name: patient?.name || "" });
+      }
+      // ── تسجيل جلسة مالية (PatientSession) فعلية لهذه الخطة — بدونها يبقى
+      //    "إجمالي الفواتير/المدفوع" بملف المريض صفراً رغم دفع حقيقي، ولا
+      //    يُحتسب للأخصائي أي نسبة برواتبه (نظام الرواتب يعتمد على doctor
+      //    بجدول الجلسات). نفس منطق NewPatientScreen بالضبط. ──
+      if (setSessions && patientId) {
+        const ns: PatientSession = { id: Date.now() + 4, patientId, dept: "rehab", doctor: specialist, date: today, diagnoses: [rehabDiagnosis].filter(Boolean), medications: [], notes: clinicalNotes, labRefs: [], radRefs: [], amount: planPriceNet, paid: paidAmt, debt: remaining };
+        setSessions(prev => [ns, ...prev]);
+        api.sessions.create({ patient_id: patientId, dept: "rehab", doctor: specialist, date: _localISO(), diagnoses: ns.diagnoses, medications: [], notes: clinicalNotes, lab_refs: [], rad_refs: [], amount: planPriceNet, paid: paidAmt, debt: remaining }).then((r: any) => { if (r && r.id) setSessions(p => p.map(s => s.id === ns.id ? { ...s, id: r.id } : s)); }).catch(() => { });
       }
       toast(`تم إنشاء الخطة العلاجية لـ ${patient?.name || "المريض"} ✓`, "success");
       onNavigate({ screen: "open-patient", dept });
@@ -6798,7 +6849,10 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
                   <span className="text-sm text-[#1B3A6B]">إجمالي تكلفة الخطة: <strong>{fmt(rehabTotal)}</strong> ({rehabSessionCount} جلسة × {fmt(selRehabService.price)} / جلسة)</span>
                 </div>
               )}
-              <InputField label="اسم الأخصائي / المعالج الفيزيائي *" placeholder="اسم الأخصائي المعالج" value={specialist} onChange={setSpecialist} />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">الأخصائي / المعالج الفيزيائي</label>
+                <div className="h-10 px-3 rounded-lg text-sm flex items-center gap-2 text-[#1B3A6B] font-semibold" style={{ border: "1px solid #E0E0E0", backgroundColor: "#F5F5F5" }}><Users size={14} className="text-[#999]" />{specialist}<span className="text-xs text-[#999] font-normal">(يُؤخذ تلقائياً من الحساب المسجَّل دخوله)</span></div>
+              </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-[#555]">ملاحظات وتوصيات الخطة العلاجية</label>
                 <textarea rows={3} value={rehabRecommendations} onChange={e => setRehabRecommendations(e.target.value)} className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} placeholder="مثال: تمارين منزلية يومية، تجنب رفع الأوزان الثقيلة، الراحة التامة بين الجلسات..." />
@@ -13435,7 +13489,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} perms={deptPerms ?? undefined} insurances={insurances} />
               )}
               {subScreen === "new-patient" && activeDept && (
-                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />
+                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} setRehabPlans={setRehabPlans} setRehabQueueEntries={setRehabQueueEntries} />
               )}
               {subScreen === "new-session" && activeDept && (
                 <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />
@@ -13521,6 +13575,9 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                   onNavigate={r => { setRoute(r); setSubScreen(r.screen); }}
                   toast={staffToast}
                   doDeposit={doDeposit}
+                  setSessions={setSessions}
+                  setRehabQueueEntries={setRehabQueueEntries}
+                  loggedUser={{ type: "staff", staff }}
                 />
               )}
               {subScreen === "dept-profit" && activeDept && (
@@ -16022,7 +16079,7 @@ export default function App() {
     switch (route.screen) {
       case "dashboard": return <DashboardScreen drawers={drawers} debts={debts} invoices={invoices} purchaseRequests={purchaseRequests} onNavigate={setRoute} customDepts={customDepts} sessions={sessions} deptCapacity={sidebarSettings.deptCapacity} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} externalDebts={externalDebts} />;
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} insurances={insurances} />;
-      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
+      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} setRehabPlans={setRehabPlans} setRehabQueueEntries={setRehabQueueEntries} />;
       case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />;
       case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} insurances={insurances} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
@@ -16033,7 +16090,7 @@ export default function App() {
       case "lab-inventory": return <InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "lab-queue": return <LabQueueScreen toast={toast} />;
       case "lab-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="lab" suppliers={suppliersRoot} />;
-      case "rehab-new-plan": return <RehabNewPlanScreen patientId={route.patientId} dept={dept} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} onNavigate={setRoute} toast={toast} doDeposit={doDeposit} setDebts={setDebts} rehabServices={rehabServices} insurances={insurances} setInvoices={setInvoices} />;
+      case "rehab-new-plan": return <RehabNewPlanScreen patientId={route.patientId} dept={dept} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} onNavigate={setRoute} toast={toast} doDeposit={doDeposit} setDebts={setDebts} rehabServices={rehabServices} insurances={insurances} setInvoices={setInvoices} setSessions={setSessions} setRehabQueueEntries={setRehabQueueEntries} loggedUser={loggedUser} />;
       case "rehab-session": return <RehabSessionScreen toast={toast} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} />;
       case "rehab-catalog": return <RehabCatalogScreen toast={toast} rehabServices={rehabServices} setRehabServices={setRehabServices} />;
       case "rehab-queue": return <RehabQueueScreen />;
