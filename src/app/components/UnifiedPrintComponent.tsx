@@ -262,11 +262,26 @@ export default function UnifiedPrintComponent({ departmentId, departmentName, on
         </div>
         <div>
           <p className="text-xs font-semibold text-[#555] mb-2">حجم الخط (Font Size)</p>
-          <div className="grid grid-cols-2 gap-2">
+          {/* ── تحديد حر بالبكسل بدل ٤ خيارات ثابتة بس — سلايدر + حقل رقمي
+              يقبلوا أي قيمة ضمن مدى معقول (٨–٣٠px)، مع أزرار اختصار سريعة
+              للأحجام الشائعة تبقى متاحة كنقطة انطلاق سريعة. ── */}
+          <div className="flex items-center gap-3 mb-2">
+            <input type="range" min={8} max={30} step={1} value={fontSize}
+              onChange={e => update({ fontSize: parseInt(e.target.value) || DEFAULT_SETTINGS.fontSize })}
+              className="flex-1 accent-[#1B3A6B]" />
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <input type="number" min={8} max={30} value={fontSize}
+                onChange={e => update({ fontSize: Math.max(8, Math.min(30, parseInt(e.target.value) || DEFAULT_SETTINGS.fontSize)) })}
+                className="w-16 h-8 px-2 rounded-lg text-sm text-center outline-none"
+                style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
+              <span className="text-xs text-[#999]">px</span>
+            </div>
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
             {PRINT_FONT_SIZES.map(s => (
               <button key={s.v} onClick={() => update({ fontSize: s.v })}
-                className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors ${fontSize === s.v ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
-                style={{ border: `1.5px solid ${fontSize === s.v ? "#1B3A6B" : "#E0E0E0"}` }}>
+                className={`py-1 px-2.5 rounded-lg text-[11px] font-medium transition-colors ${fontSize === s.v ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
+                style={{ border: `1px solid ${fontSize === s.v ? "#1B3A6B" : "#E0E0E0"}` }}>
                 {s.l}
               </button>
             ))}
