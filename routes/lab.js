@@ -20,7 +20,17 @@ router.get('/tests', async (req, res) => {
             'note', lnr.note
           )) FROM lab_test_normal_ranges lnr WHERE lnr.test_id = lt.id),
           '[]'::json
-        ) AS "normalRanges"
+        ) AS "normalRanges",
+        COALESCE(
+          (SELECT json_agg(json_build_object(
+            'id', ltc.id,
+            'inventoryId', ltc.inventory_id,
+            'qty', ltc.qty,
+            'name', li.name,
+            'unit', li.unit
+          )) FROM lab_test_consumables ltc JOIN lab_inventory li ON li.id = ltc.inventory_id WHERE ltc.test_id = lt.id),
+          '[]'::json
+        ) AS "consumables"
       FROM lab_tests lt WHERE 1=1
     `;
     const params = [];
@@ -36,12 +46,18 @@ router.get('/tests', async (req, res) => {
 
 router.get('/tests/:id', async (req, res) => {
   try {
-    const [test, ranges] = await Promise.all([
+    const [test, ranges, consumables] = await Promise.all([
       pool.query('SELECT * FROM lab_tests WHERE id=$1', [req.params.id]),
-      pool.query('SELECT * FROM lab_test_normal_ranges WHERE test_id=$1 ORDER BY id', [req.params.id])
+      pool.query('SELECT * FROM lab_test_normal_ranges WHERE test_id=$1 ORDER BY id', [req.params.id]),
+      pool.query(
+        `SELECT ltc.id, ltc.inventory_id AS "inventoryId", ltc.qty, li.name, li.unit
+         FROM lab_test_consumables ltc JOIN lab_inventory li ON li.id = ltc.inventory_id
+         WHERE ltc.test_id=$1 ORDER BY ltc.id`,
+        [req.params.id]
+      ),
     ]);
     if (!test.rows.length) return res.status(404).json({ error: 'Not found' });
-    res.json({ ...test.rows[0], normal_ranges: ranges.rows });
+    res.json({ ...test.rows[0], normal_ranges: ranges.rows, consumables: consumables.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -74,6 +90,17 @@ router.post('/tests', requireAdmin, async (req, res) => {
           `INSERT INTO lab_test_normal_ranges (test_id,param,unit,min_val,max_val,note)
            VALUES ($1,$2,$3,$4,$5,$6)`,
           [createdTest.id, r.param, r.unit ?? null, r.min ?? r.min_val ?? null, r.max ?? r.max_val ?? null, r.note ?? null]
+        );
+      }
+    }
+    const consumablesToInsert = req.body.consumables;
+    if (consumablesToInsert && Array.isArray(consumablesToInsert)) {
+      for (const c of consumablesToInsert) {
+        const invId = c.inventoryId ?? c.inventory_id;
+        if (!invId) continue;
+        await client.query(
+          `INSERT INTO lab_test_consumables (test_id,inventory_id,qty) VALUES ($1,$2,$3)`,
+          [createdTest.id, invId, c.qty ?? 1]
         );
       }
     }
@@ -134,6 +161,18 @@ router.put('/tests/:id', requireAdmin, async (req, res) => {
           `INSERT INTO lab_test_normal_ranges (test_id,param,unit,min_val,max_val,note)
            VALUES ($1,$2,$3,$4,$5,$6)`,
           [req.params.id, r.param, r.unit ?? null, r.min ?? r.min_val ?? null, r.max ?? r.max_val ?? null, r.note ?? null]
+        );
+      }
+    }
+    const consumablesToInsert = req.body.consumables;
+    if (consumablesToInsert !== undefined && Array.isArray(consumablesToInsert)) {
+      await client.query('DELETE FROM lab_test_consumables WHERE test_id=$1', [req.params.id]);
+      for (const c of consumablesToInsert) {
+        const invId = c.inventoryId ?? c.inventory_id;
+        if (!invId) continue;
+        await client.query(
+          `INSERT INTO lab_test_consumables (test_id,inventory_id,qty) VALUES ($1,$2,$3)`,
+          [req.params.id, invId, c.qty ?? 1]
         );
       }
     }

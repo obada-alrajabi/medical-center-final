@@ -2315,7 +2315,7 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
     onSubmitPurchaseRequest({
       dept: screenDept, requestedBy: staffName || (screenDept === "surgery" ? "موظف الجراحة والطوارئ" : screenDept === "lab" ? "موظف المختبر" : screenDept === "rehab" ? "موظف قسم العلاج التأهيلي" : screenDept === "radiology" ? "موظف قسم الأشعة الطبية" : "موظف"), date: `${today} — ${nowTime}`,
       items: purchItems, totalAmount: totalCalc,
-      paidAmount: parseFloat(paidAmt) || totalCalc,
+      paidAmount: parseFloat(paidAmt) || 0,
       supplier: company,
       note
     });
@@ -5103,23 +5103,41 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
       if (testObjs.length < bookedNames.length) {
         console.warn("[خصم المخزون] فحوصات محجوزة لم تُطابَق بدليل الفحوصات الحالي — تحقق من تطابق الاسم تماماً بالدليل:", bookedNames.filter(n => !testObjs.some(t => t.name.trim() === (n || "").trim())));
       }
-      const linkedInventoryIds = testObjs.map(t => t.kitInventoryId).filter((iid): iid is number => iid != null).map(Number);
+      // ── كل فحص ممكن يترتبط بأكتر من صنف مستلزمات، وكل صنف بكمية خاصة فيه للخصم
+      //    (consumables) — لو الفحص ما زال على الربط القديم بصنف واحد فقط
+      //    (kitInventoryId، من فحوصات أُنشئت قبل هذا التعديل)، نتعامل معه كصنف
+      //    واحد بكمية 1 كما كان سابقاً، للحفاظ على التوافق مع البيانات القديمة. ──
+      const needMap = new Map<number, number>();
+      testObjs.forEach(t => {
+        if (t.consumables && t.consumables.length > 0) {
+          t.consumables.forEach(c => {
+            if (c.inventoryId == null) return;
+            const iid = Number(c.inventoryId);
+            needMap.set(iid, (needMap.get(iid) || 0) + (Number(c.qty) || 0));
+          });
+        } else if (t.kitInventoryId != null) {
+          const iid = Number(t.kitInventoryId);
+          needMap.set(iid, (needMap.get(iid) || 0) + 1);
+        }
+      });
       if (bookedNames.length > 0 && testObjs.length === 0) {
         toast("⚠️ تعذّر التعرّف على الفحص المحجوز بدليل الفحوصات الحالي — لم يُخصم أي مخزون (تحقّق من أن اسم الفحص لم يتغيّر بالدليل)", "warning");
-      } else if (linkedInventoryIds.length > 0) {
-        const deductedKits: string[] = []; const emptyKits: string[] = [];
+      } else if (needMap.size > 0) {
+        const deductedKits: string[] = []; const emptyKits: string[] = []; const partialKits: string[] = [];
         setInventory(prev => prev.map(kit => {
-          const timesNeeded = linkedInventoryIds.filter(iid => iid === Number(kit.id)).length;
-          if (timesNeeded === 0) return kit;
+          const needed = needMap.get(Number(kit.id));
+          if (!needed) return kit;
           if (kit.qty <= 0) { emptyKits.push(kit.name); return kit; }
-          const deductAmt = Math.min(timesNeeded, kit.qty);
+          const deductAmt = Math.min(needed, kit.qty);
           const newQty = kit.qty - deductAmt;
+          if (deductAmt < needed) partialKits.push(kit.name);
           deductedKits.push(kit.name);
           api.lab.inventory.update(kit.id, { name: kit.name, item_type: kit.itemType, qty: newQty, threshold: kit.threshold, unit: kit.unit, cost_per_unit: kit.unitCost, notes: kit.notes });
           if (checkAndNotify && newQty <= kit.threshold) checkAndNotify(kit.name, "lab", "مختبر التحاليل", newQty, kit.threshold);
           return { ...kit, qty: newQty, status: computeKitStatus(newQty, kit.threshold) };
         }));
         if (deductedKits.length > 0) toast(`تم خصم من المخزون: ${deductedKits.join("، ")}`, "info");
+        if (partialKits.length > 0) toast(`⚠️ الكمية المتوفرة غير كافية لبعض الأصناف (${partialKits.join("، ")}) — تم خصم المتوفر فقط`, "warning");
         if (emptyKits.length > 0) toast(`تحذير: ${emptyKits.join("، ")} — الكمية صفر، لم يُخصم`, "warning");
       }
     }
@@ -5260,7 +5278,11 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
                         <div className="flex-1 min-w-0"><p className="text-sm font-medium">{t.name}</p><p className="text-xs text-[#999]">{t.code} · {t.cat} · {t.time}</p></div>
                         <div className="text-left flex-shrink-0">
                           <p className="text-sm font-bold text-[#0D7377]">{fmt(t.price)}</p>
-                          {(() => { const linked = t.kitInventoryId != null ? inventory.find(i => i.id === t.kitInventoryId) : null; return linked && linked.qty <= linked.threshold ? <p className="text-xs text-[#FF8F00]">⚠️ {linked.qty <= 0 ? "الكيت نفد" : "مخزون الكيت منخفض"}</p> : null; })()}
+                          {(() => {
+                            const linkedIds = t.consumables && t.consumables.length > 0 ? t.consumables.map(c => c.inventoryId) : (t.kitInventoryId != null ? [t.kitInventoryId] : []);
+                            const lowItems = linkedIds.map(iid => inventory.find(i => i.id === iid)).filter((i): i is typeof inventory[number] => !!i && i.qty <= i.threshold);
+                            return lowItems.length > 0 ? <p className="text-xs text-[#FF8F00]">⚠️ {lowItems.some(i => i.qty <= 0) ? "أحد المستلزمات نفد" : "مخزون منخفض بأحد المستلزمات"}</p> : null;
+                          })()}
                         </div>
                       </label>
                     ))}
@@ -6941,6 +6963,11 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
   const [normalRanges, setNormalRanges] = useState<NormalRange[]>([{ param: "", unit: "", min: "", max: "", note: "" }]);
   const [tableTab, setTableTab] = useState<"internal" | "external">("internal");
   const [form, setForm] = useState({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitInventoryId: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" });
+  // ── ربط الفحص بأكتر من صنف من المستلزمات، كل صنف بكميته الخاصة به للخصم ──
+  const [consumablesForm, setConsumablesForm] = useState<{ inventoryId: string; qty: string }[]>([]);
+  const addConsumableRow = () => setConsumablesForm(p => [...p, { inventoryId: "", qty: "1" }]);
+  const removeConsumableRow = (i: number) => setConsumablesForm(p => p.filter((_, idx) => idx !== i));
+  const updateConsumableRow = (i: number, k: "inventoryId" | "qty", v: string) => setConsumablesForm(p => p.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
   const filtered = tests.filter(t => t.name.includes(search) || t.code.toLowerCase().includes(search.toLowerCase()) || t.nameEn.toLowerCase().includes(search.toLowerCase()));
   const filtInternal = filtered.filter(t => !t.isL2L);
   const filtExternal = filtered.filter(t => t.isL2L);
@@ -6951,13 +6978,25 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
     catch { toast("خطأ في قراءة الملف — تأكد أنه xlsx أو xls", "error"); }
     finally { setImportLoading(false); };
   };
-  const openAdd = () => { setForm({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitInventoryId: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" }); setNormalRanges([{ param: "", unit: "", min: "", max: "", note: "" }]); setEditItem(null); setAddModal(true) };
-  const openEdit = (t: LabTest) => { setForm({ code: t.code, name: t.name, nameEn: t.nameEn, cat: t.cat, priceOfficial: String(t.priceOfficial || 0), price: String(t.price), consumablesCost: String(t.consumablesCost || 0), priceCost: String(t.priceCost || 0), isL2L: String(t.isL2L || false), kit: t.kit, kitInventoryId: t.kitInventoryId != null ? String(t.kitInventoryId) : "", kitQty: String(t.kitQty || 0), kitUnit: t.kitUnit || "وحدة", kitThreshold: String(t.kitThreshold || 10), time: t.time, timeUnit: "ساعة", desc: "", notes: "" }); setNormalRanges(t.normalRanges || [{ param: "", unit: "", min: "", max: "", note: "" }]); setEditItem(t); setAddModal(true) };
+  const openAdd = () => { setForm({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitInventoryId: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" }); setNormalRanges([{ param: "", unit: "", min: "", max: "", note: "" }]); setConsumablesForm([]); setEditItem(null); setAddModal(true) };
+  const openEdit = (t: LabTest) => {
+    setForm({ code: t.code, name: t.name, nameEn: t.nameEn, cat: t.cat, priceOfficial: String(t.priceOfficial || 0), price: String(t.price), consumablesCost: String(t.consumablesCost || 0), priceCost: String(t.priceCost || 0), isL2L: String(t.isL2L || false), kit: t.kit, kitInventoryId: t.kitInventoryId != null ? String(t.kitInventoryId) : "", kitQty: String(t.kitQty || 0), kitUnit: t.kitUnit || "وحدة", kitThreshold: String(t.kitThreshold || 10), time: t.time, timeUnit: "ساعة", desc: "", notes: "" });
+    setNormalRanges(t.normalRanges || [{ param: "", unit: "", min: "", max: "", note: "" }]);
+    // ── لو الفحص عليه ربط قديم بصنف واحد بس (kitInventoryId) وما عنده أصناف
+    //    مربوطة بالطريقة الجديدة أصلاً، نعرضه كصف واحد بالمحرر الجديد لتسهيل الانتقال ──
+    if (t.consumables && t.consumables.length > 0) setConsumablesForm(t.consumables.map(c => ({ inventoryId: String(c.inventoryId), qty: String(c.qty || 1) })));
+    else if (t.kitInventoryId != null) setConsumablesForm([{ inventoryId: String(t.kitInventoryId), qty: String(t.kitQty || 1) }]);
+    else setConsumablesForm([]);
+    setEditItem(t); setAddModal(true);
+  };
   const handleSave = () => {
     if (!form.name.trim() || !form.code.trim() || !form.price) return;
-    const kitInventoryId = form.kitInventoryId ? Number(form.kitInventoryId) : null;
-    const base = { code: form.code, name: form.name, nameEn: form.nameEn, cat: form.cat, priceOfficial: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumablesCost: parseFloat(form.consumablesCost) || 0, priceCost: parseFloat(form.priceCost) || 0, isL2L: form.isL2L === "true", kit: form.kit, kitInventoryId, kitQty: parseInt(form.kitQty) || 0, kitUnit: form.kitUnit, kitThreshold: parseInt(form.kitThreshold) || 10, time: form.time, normalRanges };
-    const dbPayload = { code: form.code, name: form.name, name_en: form.nameEn, category: form.cat, price_official: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumables_cost: parseFloat(form.consumablesCost) || 0, price_cost: parseFloat(form.priceCost) || 0, is_l2l: form.isL2L === "true", kit: form.kit, kit_inventory_id: kitInventoryId, kit_qty: parseInt(form.kitQty) || 0, kit_unit: form.kitUnit, kit_threshold: parseInt(form.kitThreshold) || 10, time_estimate: form.time, normalRanges };
+    const consumablesPayload = consumablesForm.filter(c => c.inventoryId).map(c => ({ inventoryId: Number(c.inventoryId), qty: parseFloat(c.qty) || 1 }));
+    const firstInv = consumablesPayload.length > 0 ? consumablesPayload[0] : null;
+    const kitInventoryId = firstInv ? firstInv.inventoryId : null;
+    const kitNames = consumablesPayload.map(c => inventory.find(i => i.id === c.inventoryId)?.name).filter(Boolean).join(" + ");
+    const base = { code: form.code, name: form.name, nameEn: form.nameEn, cat: form.cat, priceOfficial: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumablesCost: parseFloat(form.consumablesCost) || 0, priceCost: parseFloat(form.priceCost) || 0, isL2L: form.isL2L === "true", kit: kitNames || form.kit, kitInventoryId, kitQty: firstInv ? firstInv.qty : parseInt(form.kitQty) || 0, kitUnit: form.kitUnit, kitThreshold: parseInt(form.kitThreshold) || 10, time: form.time, normalRanges, consumables: consumablesPayload.map((c, i) => ({ id: Date.now() + i, ...c })) };
+    const dbPayload = { code: form.code, name: form.name, name_en: form.nameEn, category: form.cat, price_official: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumables_cost: parseFloat(form.consumablesCost) || 0, price_cost: parseFloat(form.priceCost) || 0, is_l2l: form.isL2L === "true", kit: kitNames || form.kit, kit_inventory_id: kitInventoryId, kit_qty: firstInv ? firstInv.qty : parseInt(form.kitQty) || 0, kit_unit: form.kitUnit, kit_threshold: parseInt(form.kitThreshold) || 10, time_estimate: form.time, normalRanges, consumables: consumablesPayload };
     if (editItem) {
       const updated = tests.map(t => t.id === editItem.id ? { ...t, ...base } : t);
       initialLabTests.splice(0, initialLabTests.length, ...updated);
@@ -7216,21 +7255,34 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
               <button type="button" onClick={() => setForm(p => ({ ...p, isL2L: "true" }))} className={`flex-1 h-10 rounded-lg text-sm font-semibold transition-all border ${form.isL2L === "true" ? "bg-[#FFF8E1] border-[#FF8F00] text-[#FF8F00]" : "border-[#CCC] text-[#999]"}`}>خارجي (Lab to Lab)</button>
             </div>
           </div>
-          <p className="text-xs font-bold text-[#555] uppercase tracking-wider border-b border-[#E0E0E0] pb-2 pt-2">المخزون والكيت</p>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#555]">ربط الفحص بصنف من المستلزمات (للخصم التلقائي عند التسجيل)</label>
-            <select value={form.kitInventoryId} onChange={e => { const v = e.target.value; const invItem = inventory.find(i => String(i.id) === v); setForm(p => ({ ...p, kitInventoryId: v, kit: invItem ? invItem.name : p.kit })); }} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
-              <option value="">— بدون ربط (لن يتم خصم أي مخزون تلقائياً) —</option>
-              {inventory.map(i => <option key={i.id} value={i.id}>{i.name} — متوفر: {i.qty} {i.unit || "وحدة"}</option>)}
-            </select>
-            {form.kitInventoryId ? (() => {
-              const linked = inventory.find(i => String(i.id) === form.kitInventoryId);
-              return linked ? (
-                <p className="text-xs text-[#0D7377]">✓ عند تسجيل هذا الفحص لمريض، سيتم خصم وحدة واحدة تلقائياً من "{linked.name}" — الكمية الحالية بالمستلزمات: <strong>{linked.qty} {linked.unit || "وحدة"}</strong>{linked.qty <= linked.threshold ? " (منخفضة)" : ""}. لإضافة كمية أو تعديل حد التنبيه، من شاشة "مستلزمات المختبر".</p>
-              ) : null;
-            })() : (
-              <p className="text-xs text-[#F57C00]">⚠️ بدون ربط، لن ينخصم أي مخزون تلقائياً عند تسجيل هذا الفحص — اربطه بصنف من "مستلزمات المختبر" لتفعيل الخصم التلقائي.</p>
+          <p className="text-xs font-bold text-[#555] uppercase tracking-wider border-b border-[#E0E0E0] pb-2 pt-2">المخزون والمستلزمات</p>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-[#555]">ربط الفحص بأصناف المستلزمات (للخصم التلقائي عند التسجيل)</label>
+              <Btn small variant="outline" onClick={addConsumableRow}><Plus size={12} />إضافة صنف</Btn>
+            </div>
+            {consumablesForm.length === 0 && (
+              <p className="text-xs text-[#F57C00]">⚠️ بدون ربط، لن ينخصم أي مخزون تلقائياً عند تسجيل هذا الفحص — أضف صنفاً واحداً أو أكتر من "مستلزمات المختبر" لتفعيل الخصم التلقائي.</p>
             )}
+            {consumablesForm.map((row, i) => {
+              const linked = row.inventoryId ? inventory.find(inv => String(inv.id) === row.inventoryId) : null;
+              const usedElsewhereIds = consumablesForm.filter((_, idx) => idx !== i).map(r => r.inventoryId);
+              return (
+                <div key={i} className="flex flex-col gap-1">
+                  <div className="flex gap-2 items-center">
+                    <select value={row.inventoryId} onChange={e => updateConsumableRow(i, "inventoryId", e.target.value)} className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                      <option value="">— اختر صنف المستلزمات —</option>
+                      {inventory.filter(inv => !usedElsewhereIds.includes(String(inv.id))).map(inv => <option key={inv.id} value={inv.id}>{inv.name} — متوفر: {inv.qty} {inv.unit || "وحدة"}</option>)}
+                    </select>
+                    <input type="number" min={0.01} step="any" placeholder="الكمية" value={row.qty} onChange={e => updateConsumableRow(i, "qty", e.target.value)} className="w-24 h-10 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
+                    <button onClick={() => removeConsumableRow(i)} className="p-2 rounded hover:bg-[#FFEBEE] text-[#D32F2F] transition-colors flex-shrink-0"><Trash2 size={13} /></button>
+                  </div>
+                  {linked && (
+                    <p className="text-xs text-[#0D7377]">✓ سيُخصم <strong>{parseFloat(row.qty) || 1} {linked.unit || "وحدة"}</strong> من "{linked.name}" عند كل تسجيل لهذا الفحص — الكمية الحالية: <strong>{linked.qty} {linked.unit || "وحدة"}</strong>{linked.qty <= linked.threshold ? " (منخفضة)" : ""}.</p>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <p className="text-xs font-bold text-[#555] uppercase tracking-wider border-b border-[#E0E0E0] pb-2 pt-2">التوقيت</p>
           <div className="grid grid-cols-2 gap-3">
@@ -15757,7 +15809,8 @@ export default function App() {
             kitThreshold: Number(t.kit_threshold) || 10,
             time: t.time_estimate || "",
             timeUnit: "ساعة",
-            normalRanges: ranges
+            normalRanges: ranges,
+            consumables: Array.isArray(t.consumables) ? t.consumables.map((c: any) => ({ id: c.id, inventoryId: Number(c.inventoryId ?? c.inventory_id), qty: Number(c.qty) || 0, name: c.name || "", unit: c.unit || "" })) : []
           };
         });
         initialLabTests.splice(0, initialLabTests.length, ...mapped);
@@ -15886,7 +15939,11 @@ export default function App() {
   const onSubmitPurchaseRequest = (req: Omit<PurchaseRequest, "id" | "status">) => {
     const _prId = Date.now();
     setPurchaseRequests(p => [...p, { ...req, id: _prId, status: "pending" }]);
-    api.finance.purchaseRequests.create({ dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), items: req.items, total_amount: req.totalAmount, paid_amount: req.paidAmount || 0, note: req.note, supplier: req.supplier || null }).then(r => { if (r && (r as any).id) setPurchaseRequests(p => p.map(x => x.id === _prId ? { ...x, id: (r as any).id } : x)); }).catch(() => { });
+    // ── الأصناف لازم تُرسَل بأسماء حقول snake_case (estimated_price) لأن راوت
+    //    الباك إند بيقرأها هيك — إرسالها بـ camelCase (estimatedPrice) كان
+    //    بيخلي كل صنف يُحفَظ بسعر تقديري = صفر رغم إدخال المستخدم لسعر حقيقي ──
+    const itemsForDb = (req.items || []).map(it => ({ name: it.name, qty: it.qty, unit: it.unit, estimated_price: it.estimatedPrice, note: it.note }));
+    api.finance.purchaseRequests.create({ dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), items: itemsForDb, total_amount: req.totalAmount, paid_amount: req.paidAmount || 0, note: req.note, supplier: req.supplier || null }).then(r => { if (r && (r as any).id) setPurchaseRequests(p => p.map(x => x.id === _prId ? { ...x, id: (r as any).id } : x)); }).catch(() => { });
   };
   const onApprovePurchaseRequest = (id: number) => {
     const req = purchaseRequests.find(r => r.id === id); if (!req) return;

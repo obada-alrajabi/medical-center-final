@@ -152,6 +152,19 @@ pool
     return pool.query(`ALTER TABLE lab_tests ADD CONSTRAINT lab_tests_code_is_l2l_key UNIQUE (code, is_l2l)`);
   })
   .catch(() => {});
+// ربط الفحص الواحد بأكتر من صنف من مستلزمات المخزون، كل صنف بكميته الخاصة
+// للخصم — يحل محل الربط القديم بصنف واحد فقط (kit_inventory_id/kit_qty)،
+// اللي بيضلوا موجودين للتوافق مع البيانات القديمة بس ما عادوا يُستخدَموا بمنطق الخصم.
+pool
+  .query(
+    `CREATE TABLE IF NOT EXISTS lab_test_consumables (
+       id SERIAL PRIMARY KEY,
+       test_id INTEGER NOT NULL REFERENCES lab_tests(id) ON DELETE CASCADE,
+       inventory_id INTEGER NOT NULL REFERENCES lab_inventory(id) ON DELETE CASCADE,
+       qty numeric(10,2) NOT NULL DEFAULT 1
+     )`,
+  )
+  .catch(() => {});
 // Staff dept permissions — 4 extra permission columns referenced by the frontend
 pool
   .query(
