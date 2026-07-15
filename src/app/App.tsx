@@ -3273,7 +3273,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
                     مرتين: مرة عبر هالحقل (كـ discAmt) ومرة تانية عبر الحساب
                     التلقائي المنفصل (insDiscAmt) اللي أصلاً بيطبَّق فوق نفس
                     الأساس. خصم التأمين دايماً تلقائي بالكامل — حقل "الخصم" هون
-                    مخصص فقط لخصم إضافي يقرره الطبيب، منفصل تماماً عن التأمين. ──}
+                    مخصص فقط لخصم إضافي يقرره الطبيب، منفصل تماماً عن التأمين. ──*/}
                 <select value={form.insuranceCompany} onChange={e => {
                   const coName = e.target.value;
                   setForm(p => ({ ...p, insuranceCompany: coName }));
