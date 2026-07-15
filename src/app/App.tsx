@@ -975,15 +975,15 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
 .rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
 .rm-item strong{color:#1B3A6B}
 h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px}
-th{background:#1B3A6B;color:white;padding:7px 8px;text-align:right;font-weight:700}
-td{border:1px solid #ddd;padding:5px 8px;vertical-align:middle}
+table{width:100%;border-collapse:collapse;outline:1px solid #ddd;margin-top:6px;font-size:11px}
+th{background:#1B3A6B;color:white;padding:7px 8px;text-align:right;font-weight:700;border:1px solid #16305A}
+td{border:1px solid #ddd;padding:5px 8px;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word}
 tr:nth-child(even)>td{background:#F9FAFB}
 tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
-.kpi{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
-.kpi-box{background:#F5F7FA;border:1px solid #E0E0E0;border-radius:8px;padding:8px 16px;text-align:center}
-.kpi-l{font-size:10px;color:#777;margin-bottom:2px}.kpi-v{font-size:14px;font-weight:700;color:#1B3A6B}
+.kpi{display:flex;gap:22px;margin-bottom:16px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid #E0E0E0}
+.kpi-box{text-align:right;padding:0}
+.kpi-l{font-size:10px;color:#777;margin-bottom:2px}.kpi-v{font-size:13px;font-weight:700;color:#1B3A6B}
 .pt-card{border:1px solid #D0D9E8;border-radius:10px;padding:16px;margin-bottom:18px;background:#fff}
 .pt-name{font-size:16px;font-weight:700;color:#1B3A6B;margin-bottom:6px}
 .pt-info{display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:10px}
