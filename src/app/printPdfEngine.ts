@@ -73,8 +73,8 @@ export const PRINT_CONTENT_CSS = (fontFamily: string, fontSize: number) => `
 .rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
 .rm-item strong{color:#1B3A6B}
 h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
-table{width:100%;border-collapse:collapse;outline:1px solid #ddd;margin-top:6px;font-size:11px}
-th{background:#1B3A6B;color:white;padding:7px 8px;text-align:right;font-weight:700;border:1px solid #16305A}
+table{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px;font-size:11px}
+th{background:#1B3A6B;color:white;padding:7px 8px;text-align:right;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 td{border:1px solid #ddd;padding:5px 8px;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word}
 tr:nth-child(even)>td{background:#F9FAFB}
 tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
