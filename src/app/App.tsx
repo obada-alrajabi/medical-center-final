@@ -2883,20 +2883,19 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   const rehabTotal = selRehabService ? (selRehabService.price * rehabSessionCount) : 0;
   useEffect(() => { if (isRehab && rehabTotal > 0) setForm(p => ({ ...p, price: String(rehabTotal) })); }, [isRehab, rehabTotal]);
 
-  const basePrice = parseFloat(form.price) || 0; const discAmt = form.discountType === "percent" ? basePrice * (parseFloat(form.discount) || 0) / 100 : (parseFloat(form.discount) || 0);
+  const basePrice = parseFloat(form.price) || 0;
   // ── Insurance discount logic ──
   const insComp = insurances.find(c => c.name === form.insuranceCompany);
   const insDiscPct = insComp ? (isLab ? insComp.discountLab : isRad ? insComp.discountRad : insComp.discountClinic) : 0;
-  // ── نسبة التأمين تُحسَب من المبلغ بعد الخصم اليدوي (مش من السعر الأصلي
-  //    مباشرة) — وإلا لو استُخدم خصم يدوي كبير مع خصم تأمين كبير سوا، مجموعهم
-  //    ممكن يتجاوز قيمة الخدمة الفعلية، فتنحسب فاتورة شركة التأمين بمبلغ أكبر
-  //    من قيمة الخدمة بعد الخصم اليدوي — بدون ما ينعكس هذا الفرق على أي طرف. ──
-  const insDiscAmt = Math.max(0, basePrice - discAmt) * insDiscPct / 100;
-  // ── معاينة "الباقي / الدين على المريض" كانت ما بتطرح خصم التأمين (insDiscAmt)
-  //    إطلاقاً — فكانت تعرض دين أكبر من الدين الحقيقي يلي بينحفظ فعلياً عند
-  //    الحفظ (سيشن الدَين sessionDebt يطرح insDiscAmt بشكل صحيح). صار نفس
-  //    المعادلة بالضبط هون عشان المعاينة تطابق المحفوظ فعلياً. ──
-  const remaining = basePrice - discAmt - insDiscAmt - (parseFloat(form.paid) || 0);
+  // ── ترتيب الخصومات: خصم التأمين دايماً يُحسب من المبلغ الإجمالي الأصلي
+  //    (basePrice) مباشرة — نسبة التأمين ثابتة ومتفَق عليها مسبقاً مع الشركة
+  //    على أساس قيمة الخدمة الكاملة، مش على أساس أي خصم إضافي لاحق. أما الخصم
+  //    الإضافي يلي يقرره الطبيب فبينطبق بعدين على الباقي بعد خصم التأمين
+  //    (afterIns) — مش على السعر الأصلي مباشرة. ──
+  const insDiscAmt = basePrice * insDiscPct / 100;
+  const afterIns = Math.max(0, basePrice - insDiscAmt);
+  const discAmt = form.discountType === "percent" ? afterIns * (parseFloat(form.discount) || 0) / 100 : (parseFloat(form.discount) || 0);
+  const remaining = afterIns - discAmt - (parseFloat(form.paid) || 0);
   const v1 = () => {
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = "الاسم إلزامي";
@@ -4648,9 +4647,13 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   }, [p?.id]);
   const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
   const insDiscPct = insComp ? insComp.discountClinic : 0;
-  const totalAmt = parseFloat(amount) || 0; const discAmt = Math.min(parseFloat(discount) || 0, totalAmt);
-  const insDiscAmt = Math.min(totalAmt - discAmt, (totalAmt - discAmt) * insDiscPct / 100);
-  const netAmt = Math.max(0, totalAmt - discAmt - insDiscAmt); const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netAmt - paidAmt); const creditAmt = Math.max(0, paidAmt - netAmt);
+  const totalAmt = parseFloat(amount) || 0;
+  // ── ترتيب الخصومات: خصم التأمين يُحسب من المبلغ الإجمالي الأصلي مباشرة،
+  //    والخصم الإضافي (اليدوي) بينطبق بعدين على الباقي بعد خصم التأمين. ──
+  const insDiscAmt = Math.min(totalAmt, totalAmt * insDiscPct / 100);
+  const afterIns = Math.max(0, totalAmt - insDiscAmt);
+  const discAmt = Math.min(parseFloat(discount) || 0, afterIns);
+  const netAmt = Math.max(0, afterIns - discAmt); const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netAmt - paidAmt); const creditAmt = Math.max(0, paidAmt - netAmt);
   const prevDebt = debts.filter(d => d.pid === p.id).reduce((s, d) => s + d.amount, 0);
   const toggleDiag = (n: string) => setSelDiag(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n]);
   const addMed = () => setMeds(p => [...p, { name: "", dose: "", freq: "", duration: "" }]);
@@ -5030,13 +5033,16 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   });
   const selTestsData = selTests.map(c => _labTests.find(t => t.code === c)!).filter(Boolean);
   const testTotal = selTestsData.reduce((s, t) => s + t.price, 0);
-  const discAmt = Math.min(parseFloat(discount) || 0, testTotal);
   // ── التأمين الصحي: نفس منطق NewPatientScreen — الجزء الذي تغطيه شركة التأمين
-  //    يُستثنى من دين/مبلغ المريض ويُسجَّل كدين منفصل على شركة التأمين. ──
+  //    يُستثنى من دين/مبلغ المريض ويُسجَّل كدين منفصل على شركة التأمين. خصم
+  //    التأمين يُحسب من الإجمالي الأصلي مباشرة، والخصم الإضافي اليدوي بينطبق
+  //    بعدين على الباقي بعد خصم التأمين. ──
   const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
   const insDiscPct = insComp ? insComp.discountLab : 0;
-  const insDiscAmt = Math.min(testTotal - discAmt, (testTotal - discAmt) * insDiscPct / 100);
-  const netTotal = Math.max(0, testTotal - discAmt - insDiscAmt);
+  const insDiscAmt = Math.min(testTotal, testTotal * insDiscPct / 100);
+  const afterIns = Math.max(0, testTotal - insDiscAmt);
+  const discAmt = Math.min(parseFloat(discount) || 0, afterIns);
+  const netTotal = Math.max(0, afterIns - discAmt);
   const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netTotal - paidAmt); const creditAmt = Math.max(0, paidAmt - netTotal);
   const patName = selPat ? selPat.name : newPat.name; const patId = selPat ? selPat.id : (newPat.pid.trim() || generatePatientId());
   const prevDebt = selPat ? debts.filter(d => d.pid === selPat.id).reduce((s, d) => s + d.amount, 0) : 0;
@@ -5637,12 +5643,15 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const filteredImgs = _radImgs.filter(t => deviceFilter === "الكل" || t.device === deviceFilter);
   const selImgsData = selImgs.map(id => _radImgs.find(t => t.id === id)!).filter(Boolean);
   const imgTotal = selImgsData.reduce((s, t) => s + t.price, 0);
-  const discAmt = Math.min(parseFloat(discount) || 0, imgTotal);
-  // ── التأمين الصحي: نفس منطق NewPatientScreen/LabSessionScreen ──
+  // ── التأمين الصحي: نفس منطق NewPatientScreen/LabSessionScreen — خصم التأمين
+  //    يُحسب من الإجمالي الأصلي مباشرة، والخصم الإضافي اليدوي بينطبق بعدين على
+  //    الباقي بعد خصم التأمين. ──
   const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
   const insDiscPct = insComp ? insComp.discountRad : 0;
-  const insDiscAmt = Math.min(imgTotal - discAmt, (imgTotal - discAmt) * insDiscPct / 100);
-  const netTotal = Math.max(0, imgTotal - discAmt - insDiscAmt);
+  const insDiscAmt = Math.min(imgTotal, imgTotal * insDiscPct / 100);
+  const afterIns = Math.max(0, imgTotal - insDiscAmt);
+  const discAmt = Math.min(parseFloat(discount) || 0, afterIns);
+  const netTotal = Math.max(0, afterIns - discAmt);
   const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netTotal - paidAmt); const creditAmt = Math.max(0, paidAmt - netTotal);
   const patName = selPat ? selPat.name : newPat.name; const patId = selPat ? selPat.id : (newPat.pid.trim() || generatePatientId());
   const prevDebt = selPat ? debts.filter(d => d.pid === selPat.id).reduce((s, d) => s + d.amount, 0) : 0;
@@ -6786,17 +6795,18 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
   const [insClaimNo, setInsClaimNo] = useState("");
   useEffect(() => { if (rehabTotal > 0) setPriceStr(String(rehabTotal)); }, [rehabTotal]);
   const basePrice = parseFloat(priceStr) || 0;
-  const discAmt = discountType === "percent" ? basePrice * (parseFloat(discount) || 0) / 100 : (parseFloat(discount) || 0);
   const paidAmt = parseFloat(paidStr) || 0;
   const insComp = insurances.find(c => c.name === insuranceCompany);
   const insDiscPct = insComp ? insComp.discountClinic : 0;
-  // ── نسبة التأمين تُحسَب من المبلغ بعد الخصم اليدوي، مش من السعر الأصلي —
-  //    نفس تصحيح NewPatientScreen، لتفادي فاتورة تأمين أكبر من قيمة الخدمة
-  //    الفعلية لو استُخدم خصم يدوي مع خصم تأمين سوا. ──
-  const insDiscAmt = Math.max(0, basePrice - discAmt) * insDiscPct / 100;
+  // ── ترتيب الخصومات: خصم التأمين يُحسب من السعر الأصلي مباشرة (basePrice) —
+  //    نفس تصحيح NewPatientScreen. الخصم الإضافي يلي يقرره الطبيب بينطبق بعدين
+  //    على الباقي بعد خصم التأمين (afterIns)، مش على السعر الأصلي مباشرة. ──
+  const insDiscAmt = basePrice * insDiscPct / 100;
+  const afterIns = Math.max(0, basePrice - insDiscAmt);
+  const discAmt = discountType === "percent" ? afterIns * (parseFloat(discount) || 0) / 100 : (parseFloat(discount) || 0);
   // ── دين المريض يستثني الجزء المغطى من التأمين (insDiscAmt) — ذاك الجزء
   //    يُسجَّل كدين منفصل على شركة التأمين عبر setInvoices بالأسفل. ──
-  const remaining = Math.max(0, basePrice - discAmt - insDiscAmt - paidAmt);
+  const remaining = Math.max(0, afterIns - discAmt - paidAmt);
 
   const step2Valid = () => {
     if (!rehabDiagnosis.trim()) { toast("أدخل التشخيص التأهيلي / الفيزيائي", "error"); return false; }
