@@ -195,11 +195,15 @@ function _cellFont(cell: HTMLElement): string {
   const cs = window.getComputedStyle(cell);
   return `${cs.fontWeight || "400"} ${cs.fontSize} ${cs.fontFamily}`;
 }
-// أطول "كلمة" غير قابلة للتقسيم داخل الخلية (نقسّم على المسافات وعلى بعض
-// علامات الترقيم الشائعة التي يجوز كسر السطر عندها: – · / , مثل "التاريخ –
-// النوع" أو "Amoxicillin/Clavulanate")
+// أطول "كلمة" غير قابلة للتقسيم داخل الخلية — نقسّم *فقط* على المسافات
+// الحقيقية (الفواصل بين الكلمات)، وليس على أي علامة ترقيم أخرى. كنا سابقاً
+// نقسّم أيضاً على / و· والفاصلة، وهذا كان يكسر تواريخ زي "16/07/2026" في
+// منتصف الرقم (يحسبها كأنها 3 "كلمات" منفصلة: 16، 07، 2026 — فيعطي عمود
+// التاريخ عرضاً أدنى أصغر بكثير من طول التاريخ الفعلي، فينكسر التاريخ لاحقاً
+// بمنتصف رقم "2026" نفسه). أي نص بلا مسافات (تاريخ، اسم دواء إنجليزي بشرطة
+// مائلة...) يُعامَل الآن ككتلة واحدة غير قابلة للكسر بالكامل.
 function _longestTokenWidth(ctx: CanvasRenderingContext2D, text: string): number {
-  const tokens = text.trim().split(/[\s/·,]+/).filter(Boolean);
+  const tokens = text.trim().split(/\s+/).filter(Boolean);
   let max = 0;
   for (const t of tokens) {
     const w = ctx.measureText(t).width;
@@ -220,14 +224,22 @@ function _measureColumnWidths(rows: HTMLTableRowElement[], colCount: number) {
         const hPad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
           + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0) + 2;
         const text = (cell.textContent || "").trim();
-        const tokenW = _longestTokenWidth(_measureCtx, text) + hPad;
-        // العرض المفضّل: نفس القياس السابق (السطر الكامل بلا التفاف) عبر
-        // scrollWidth بعد إجبار nowrap مؤقتاً — أدق من measureText لأنه يشمل
-        // فعلياً أي عناصر HTML متداخلة (مثل <b>) داخل الخلية
+        // ── هل هذه الخلية ممنوعة من الالتفاف أصلاً بالتصميم النهائي؟ (رؤوس
+        //    الأعمدة th عندها white-space:nowrap دائم بالـ CSS) — لازم نتحقق
+        //    من النمط *المحسوب الفعلي قبل* ما نفرض nowrap مؤقتاً للقياس، وإلا
+        //    بنفقد المعلومة. لو الخلية نفسها nowrap بالتصميم، فحدّها الأدنى
+        //    الحقيقي هو عرض *كامل نصها* (بما فيه المسافات بين الكلمات) —
+        //    وليس أطول كلمة مفردة فيها فقط — لأنه ممنوع عليها الالتفاف بين
+        //    الكلمات أصلاً. هذا بالضبط سبب انقطاع رأس "إجمالي الفاتورة"
+        //    سابقاً: كنا نحسب حده الأدنى كأطول كلمة ("الفاتورة") بدل العبارة
+        //    كاملة، فيضيق العمود عن احتواء العنوان الكامل رغم أنه ممنوع من
+        //    الالتفاف. ──
+        const isPermanentlyNowrap = window.getComputedStyle(cell as HTMLElement).whiteSpace === "nowrap";
         const prevWs = (cell as HTMLElement).style.whiteSpace;
         (cell as HTMLElement).style.whiteSpace = "nowrap";
         const fullW = (cell as HTMLElement).scrollWidth;
         (cell as HTMLElement).style.whiteSpace = prevWs;
+        const tokenW = isPermanentlyNowrap ? fullW : (_longestTokenWidth(_measureCtx, text) + hPad);
         if (tokenW > minW[colIdx]) minW[colIdx] = tokenW;
         if (fullW > prefW[colIdx]) prefW[colIdx] = fullW;
       }

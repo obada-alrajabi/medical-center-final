@@ -2489,8 +2489,11 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
   const deptShort = (dId: string) => DEPARTMENTS.find(d => d.id === dId)?.short || customDepts.find(d => d.id === dId)?.short || dId;
   // ── دين المريض المعروض بالقائمة يجب أن يطابق ما يظهر داخل ملفه بالضبط —
   //    نفس مبدأ "الملف المالي المعزول" بملف المريض: الموظف غير الإداري يرى فقط
-  //    ديون قسمه الحالي (debts.dept مخزّن كاسم قصير وليس id، لذلك نقارنه بـ deptShort(dept)) ──
-  const liveDebt = (pid: string) => debts.filter(d => d.pid === pid && (isAdmin || d.dept === deptShort(dept))).reduce((s, d) => s + d.amount, 0);
+  //    ديون قسمه الحالي. تصحيح: debts.dept مربوط بقيد foreign key على
+  //    departments.id (الرمز الإنجليزي زي "rehab")، وليس الاسم العربي القصير —
+  //    نقارن بكلا الشكلين (dept الخام + deptShort(dept) الاسم العربي) احتياطاً
+  //    لأي سجل قديم محفوظ بالشكل العربي، لكن المرجع الصحيح من الآن هو dept ──
+  const liveDebt = (pid: string) => debts.filter(d => d.pid === pid && (isAdmin || d.dept === dept || d.dept === deptShort(dept))).reduce((s, d) => s + d.amount, 0);
   const lastVisit = (pid: string) => { const s = patSessions(pid); return s[0]?.date || mockPatients.find(p => p.id === pid)?.date || "—"; };
   return (
     <div className="flex flex-col md:flex-row bg-white rounded-2xl overflow-hidden shadow-sm" style={{ border: "1px solid #E0E0E0", minHeight: "76vh" }}>
@@ -3040,9 +3043,13 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       }
       if (sessionDebt > 0 && setDebts) {
         const deptInfo = findDeptInfo(dept);
-        const nd: DebtRow = { id: Date.now(), patient: form.name, pid: effectiveId, dept: deptInfo.short, amount: sessionDebt, date: today, days: 0, phone: form.phone };
+        // تصحيح: debts.dept مربوط بقيد foreign key على departments.id (الرمز
+        // الإنجليزي المختصر زي "rehab")، لا الاسم العربي القصير (.short) —
+        // كان استخدام .short هون بيفشل الإدراج بصمت بقاعدة البيانات (نفس علة
+        // المختبر/الأشعة/التأهيلي المُصحَّحة بالشاشات الأخرى)
+        const nd: DebtRow = { id: Date.now(), patient: form.name, pid: effectiveId, dept: deptInfo.id, amount: sessionDebt, date: today, days: 0, phone: form.phone };
         setDebts(prev => [nd, ...prev]);
-        api.finance.debts.create({ patient: form.name, patient_id: effectiveId, dept: deptInfo.short, amount: sessionDebt, date: form.joinDate || _localISO(), phone: form.phone }).then(r => { if (r && (r as any).id && setDebts) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
+        api.finance.debts.create({ patient: form.name, patient_id: effectiveId, dept: deptInfo.id, amount: sessionDebt, date: form.joinDate || _localISO(), phone: form.phone }).then(r => { if (r && (r as any).id && setDebts) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
       }
       if (insComp && insDiscAmt > 0 && setInvoices) {
         const insId = `ins-${Date.now()}`;
@@ -3815,12 +3822,12 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   // medications, referrals) stays unified across departments as before.
   const canSeeFinance = (sessDept: string) => isAdmin || sessDept === dept;
   const finSess = pSess.filter(s => canSeeFinance(s.dept));
-  // debts.dept is stored as the department's SHORT label (not its id) — compare
-  // against deptShort(dept) instead of the raw id, otherwise this always evaluates
-  // false for non-admin staff and the patient's file silently shows 0 debt even
-  // though the patient list (which sums with no per-department restriction) shows
-  // the real amount. This is what kept the two screens out of sync.
-  const liveDebt = debts.filter(d => d.pid === p.id && (isAdmin || d.dept === deptShort(dept))).reduce((s, d) => s + d.amount, 0);
+  // تصحيح: debts.dept مربوط فعلياً بقيد foreign key على departments.id (الرمز
+  // الإنجليزي زي "rehab")، وليس الاسم العربي القصير كما افتُرض هنا سابقاً —
+  // ذاك الافتراض الخاطئ كان سبب فشل حفظ كل ديون الجلسات بصمت بقاعدة البيانات
+  // (راجع نقاط إنشاء DebtRow بكل الشاشات). نقارن هون بكلا الشكلين للتوافق مع
+  // أي سجل قديم بالشكل العربي، لكن المرجع الصحيح من الآن فصاعداً هو dept الخام.
+  const liveDebt = debts.filter(d => d.pid === p.id && (isAdmin || d.dept === dept || d.dept === deptShort(dept))).reduce((s, d) => s + d.amount, 0);
   const lastVisit = pSess[0]?.date || p.date;
   const initials = (n: string) => n.split(" ").slice(0, 2).map(w => w[0]).join("");
   const totalAmt = finSess.reduce((s, x) => s + x.amount, 0);
@@ -3871,7 +3878,8 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
       let rem = amt;
       return prev.map(d => {
         if (d.pid !== p.id || rem <= 0) return d;
-        if (!isAdmin && d.dept !== myDeptShort) return d;
+        // تصحيح: نقارن بكلا الشكلين (dept الخام الإنجليزي + myDeptShort الاسم العربي) — نفس علة liveDebt أعلاه
+        if (!isAdmin && d.dept !== dept && d.dept !== myDeptShort) return d;
         if (d.amount <= rem) { rem -= d.amount; api.finance.debts.delete(d.id); return null as any; }
         const nd = { ...d, amount: d.amount - rem }; rem = 0; api.finance.debts.update(d.id, { amount: nd.amount }); return nd;
       }).filter(Boolean) as DebtRow[];
@@ -4548,12 +4556,11 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
               <div className="mt-4 pt-4" style={{ borderTop: "1px solid #F0F0F0" }}>
                 <p className="text-xs font-bold text-[#D32F2F] mb-2">📌 تفاصيل الديون المتبقية</p>
                 <div className="space-y-1.5">
-                  {/* ── debts.dept مخزّن بالاسم المختصر مش بمعرّف القسم — canSeeFinance
-                      مصمَّمة لمقارنة sessions (اللي عندها معرّف القسم الخام)، فكانت
-                      تفشل دايماً هون وتخفي كل الديون بالتفصيل رغم ظهور المجموع فوق ──*/}
-                  {debts.filter(d => d.pid === p.id && (isAdmin || d.dept === deptShort(dept))).map(d => (
+                  {/* ── تصحيح: debts.dept مربوط بقيد foreign key على departments.id (رمز
+                      إنجليزي)، نقارن بكلا الشكلين احتياطاً لأي سجل قديم بالاسم العربي ──*/}
+                  {debts.filter(d => d.pid === p.id && (isAdmin || d.dept === dept || d.dept === deptShort(dept))).map(d => (
                     <div key={d.id} className="flex items-center justify-between px-3 py-2 rounded-lg text-xs" style={{ backgroundColor: "#FFF8F8", border: "1px solid #FFCDD2" }}>
-                      <div className="flex items-center gap-2"><AlertCircle size={12} className="text-[#D32F2F]" /><span className="text-[#444]">{d.dept}</span><span className="text-[#999]">· {d.date}</span></div>
+                      <div className="flex items-center gap-2"><AlertCircle size={12} className="text-[#D32F2F]" /><span className="text-[#444]">{DEPARTMENTS.find(dd => dd.id === d.dept)?.short || customDepts.find(dd => dd.id === d.dept)?.short || d.dept}</span><span className="text-[#999]">· {d.date}</span></div>
                       <span className="font-bold text-[#D32F2F]">{fmt(d.amount)}</span>
                     </div>
                   ))}
@@ -4718,7 +4725,8 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
     if (totalAmt <= 0) { toast("أدخل مبلغ الجلسة", "error"); return; }
     setSaving(true);
     if (paidAmt > 0) doDeposit(dept, paidAmt, `دفعة مريض — ${p.name}`, "إيراد مريض");
-    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: p.name, pid: p.id, dept: deptInfo.short, amount: debtAmt, date: today, days: 0, phone: p.phone }; setDebts(prev => [nd, ...prev]); api.finance.debts.create({ patient: p.name, patient_id: p.id, dept: deptInfo.short, amount: debtAmt, date: api.parseDateISO(today), phone: p.phone }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    // تصحيح: dept لازم يكون deptInfo.id (رمز إنجليزي مطابق لـ departments.id) لا deptInfo.short (اسم عربي) — نفس علة باقي شاشات الجلسات
+    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: p.name, pid: p.id, dept: deptInfo.id, amount: debtAmt, date: today, days: 0, phone: p.phone }; setDebts(prev => [nd, ...prev]); api.finance.debts.create({ patient: p.name, patient_id: p.id, dept: deptInfo.id, amount: debtAmt, date: api.parseDateISO(today), phone: p.phone }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
     // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen/LabSessionScreen) ──
     if (insComp && insDiscAmt > 0 && setInvoices) {
       const insId = `ins-${Date.now()}`;
@@ -5077,7 +5085,8 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
       _syncPatients();
     }
     if (paidAmt > 0) doDeposit("lab", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
-    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "المختبر", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "المختبر", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    // تصحيح: dept لازم يكون الرمز المختصر ("lab") مش الاسم العربي — نفس علة RehabNewPlanScreen، كانت تفشل بصمت بقيد foreign key
+    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "lab", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "lab", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
     // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen) ──
     if (insComp && insDiscAmt > 0 && setInvoices) {
       const insId = `ins-${Date.now()}`;
@@ -5688,7 +5697,8 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
       _syncPatients();
     }
     if (paidAmt > 0) doDeposit("radiology", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
-    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "الأشعة", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "الأشعة", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    // تصحيح: dept لازم يكون الرمز المختصر ("radiology") مش الاسم العربي — نفس العلة بالمختبر والتأهيلي
+    if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "radiology", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "radiology", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
     // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen/LabSessionScreen) ──
     if (insComp && insDiscAmt > 0 && setInvoices) {
       const insId = `ins-${Date.now()}`;
@@ -6494,6 +6504,30 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
         const nc = plan.completedSessions + 1;
         const ns = nc >= plan.totalSessions ? "completed" as const : "active" as const;
         api.rehab.plans.update(plan.id, { diagnosis: plan.diagnosis, total_sessions: plan.totalSessions, completed_sessions: nc, price_per_session: plan.pricePerSession, plan_price: plan.planPrice, pricing_mode: plan.pricingMode, specialist: plan.specialist, status: ns }).catch(() => { });
+        // ── جدولة الجلسة التالية تلقائياً بقائمة الانتظار: قبل هذا التصحيح
+        //    كانت الخطة تُنشئ سجلاً واحداً فقط بقائمة الانتظار (الجلسة رقم ١)
+        //    عند إنشائها، وإتمام تلك الجلسة كان يكتفي بزيادة completedSessions
+        //    بدون أي سجل جديد — فلو الخطة ٤ جلسات مثلاً، ما كان في طريقة إطلاقاً
+        //    لإدخال نتائج الجلسات ٢/٣/٤ لأنها ما كانت توصل لقائمة الانتظار
+        //    أصلاً. الحل: كل ما تُنجَز جلسة ولسه العدد المتفَق عليه ما اكتمل
+        //    (nc < totalSessions)، نُنشئ تلقائياً سجل الجلسة التالية بنفس بيانات
+        //    المريض/الخطة/التشخيص/الأخصائي — تماماً متل إنشاء أول جلسة عند فتح
+        //    الخطة (انظر RehabNewPlanScreen و NewPatientScreen) ──
+        if (nc < plan.totalSessions && setRehabQueueEntries) {
+          const nextDate = _today();
+          const nextTime = _nowHHMM();
+          const nextEntry: RehabQueueEntry = {
+            id: Date.now() + 7, patientId: entry.patientId, patientName: entry.patientName,
+            planId: plan.id, diagnosis: entry.diagnosis, specialist: entry.specialist,
+            sessionNumber: nc + 1, time: nextTime, date: nextDate, status: "pending",
+          };
+          setRehabQueueEntries(qp => [...qp, nextEntry]);
+          api.rehab.queue.create({
+            patient_id: entry.patientId, patient_name: entry.patientName, plan_id: plan.id,
+            diagnosis: entry.diagnosis, specialist: entry.specialist, session_number: nc + 1,
+            session_time: nextTime, session_date: nextDate, status: "pending",
+          }).then(qr => { if (qr) setRehabQueueEntries(qp => qp.map(e => e.id === nextEntry.id ? { ...e, id: (qr as any).id } : e)); }).catch(() => { });
+        }
         return { ...plan, completedSessions: nc, status: ns };
       }));
     }
@@ -6601,7 +6635,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
             <div className="flex flex-col gap-2">
               <label className="text-xs font-semibold text-[#555]">نتيجة الجلسة:</label>
               <div className="flex gap-2 flex-wrap">{["تحسن ممتاز", "تحسن جيد", "تحسن بطيء", "لا تحسن", "تدهور"].map(opt => (
-                <button key={opt} onClick={() => setModalResult(opt)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${modalResult === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`} style={modalResult === opt ? undefined : { color: "#000000" }}>{opt}</button>
+                <button key={opt} type="button" onClick={() => setModalResult(opt)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${modalResult === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white text-black border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`}>{opt}</button>
               ))}</div>
             </div>
             <div className="p-3 rounded-xl flex items-start gap-2.5" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
@@ -6851,10 +6885,19 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
       }).catch(() => { });
       if (paidAmt > 0 && doDeposit) doDeposit("rehab", paidAmt, `دفعة خطة علاجية — ${patient?.name || ""}`, "إيراد مريض");
       // ── نفس مبدأ NewPatientScreen: أي مبلغ متبقٍ يُسجَّل كدين على المريض تلقائياً ──
+      // ── تصحيح: جدول debts.dept مربوط بقيد مفتاحي أجنبي (foreign key) على
+      //    departments.id، وهو عمود يخزّن الرمز المختصر للقسم (زي "rehab")
+      //    وليس الاسم العربي الظاهر للمستخدم. كان هون مكتوب "التأهيلي" (الاسم
+      //    العربي) بدل الرمز الصحيح، فكان الإدراج بقاعدة البيانات يفشل بصمت
+      //    (يلتقطه catch فاضي بدون أي تنبيه) رغم إن الحالة المحلية (state)
+      //    كانت تُظهر الدين فوراً بالواجهة — فيبان الدين صحيحاً لحظة الحفظ،
+      //    وبعد أي إعادة تحميل (refresh) يختفي من بطاقة "الديون" العلوية لأنه
+      //    أصلاً ما انحفظ بقاعدة البيانات، رغم إن حقل "دين" داخل سجل الجلسة
+      //    نفسه (عمود منفصل بلا هذا القيد) محفوظ وبيضل ظاهراً بشكل صحيح. ──
       if (remaining > 0 && setDebts && patientId) {
-        const nd: DebtRow = { id: Date.now() + 1, patient: patient?.name || "", pid: patientId, dept: "التأهيلي", amount: remaining, date: today, days: 0, phone: patient?.phone || "" };
+        const nd: DebtRow = { id: Date.now() + 1, patient: patient?.name || "", pid: patientId, dept: "rehab", amount: remaining, date: today, days: 0, phone: patient?.phone || "" };
         setDebts(prev => [nd, ...prev]);
-        api.finance.debts.create({ patient: patient?.name || "", patient_id: patientId, dept: "التأهيلي", amount: remaining, date: _localISO(), phone: patient?.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
+        api.finance.debts.create({ patient: patient?.name || "", patient_id: patientId, dept: "rehab", amount: remaining, date: _localISO(), phone: patient?.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
       }
       // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen) — كان مفقوداً هنا تماماً ──
       if (insComp && insDiscAmt > 0 && setInvoices) {
@@ -8839,7 +8882,9 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
   const [debtFrom, setDebtFrom] = useState(""); const [debtTo, setDebtTo] = useState("");
   const [smsModal, setSmsModal] = useState<DebtRow | null>(null); const [smsMessage, setSmsMessage] = useState(""); const [settleModal, setSettleModal] = useState<DebtRow | null>(null); const [settleAmount, setSettleAmount] = useState(""); const [sending, setSending] = useState(false); const [settling, setSettling] = useState(false);
   const inDebtRange = (date: string) => { if (!debtFrom && !debtTo) return true; const parts = date.split("/"); const iso = `${parts[2]}-${parts[1]}-${parts[0]}`; if (debtFrom && iso < debtFrom) return false; if (debtTo && iso > debtTo) return false; return true; };
-  const filtered = debts.filter(d => { if (search && !d.patient.includes(search) && !d.pid.includes(search)) return false; if (deptFilter && d.dept !== deptFilter) return false; if (ageFilter === "<30" && d.days >= 30) return false; if (ageFilter === "30-90" && (d.days < 30 || d.days > 90)) return false; if (ageFilter === ">90" && d.days <= 90) return false; if (!inDebtRange(d.date)) return false; return true; });
+  // تصحيح: deptFilter الآن رمز إنجليزي (d.id) — نقارن أيضاً بالاسم العربي المقابل احتياطاً لأي سجل قديم بالشكل العربي
+  const deptFilterShort = deptFilter ? (DEPARTMENTS.find(d => d.id === deptFilter)?.short || customDepts.find(d => d.id === deptFilter)?.short) : "";
+  const filtered = debts.filter(d => { if (search && !d.patient.includes(search) && !d.pid.includes(search)) return false; if (deptFilter && d.dept !== deptFilter && d.dept !== deptFilterShort) return false; if (ageFilter === "<30" && d.days >= 30) return false; if (ageFilter === "30-90" && (d.days < 30 || d.days > 90)) return false; if (ageFilter === ">90" && d.days <= 90) return false; if (!inDebtRange(d.date)) return false; return true; });
   const total = debts.reduce((s, d) => s + d.amount, 0); const under30 = debts.filter(d => d.days < 30).reduce((s, d) => s + d.amount, 0); const mid = debts.filter(d => d.days >= 30 && d.days <= 90).reduce((s, d) => s + d.amount, 0); const over90 = debts.filter(d => d.days > 90).reduce((s, d) => s + d.amount, 0);
   const ageBadge = (days: number) => days < 30 ? <Badge color="success">&lt;30 يوم</Badge> : days <= 90 ? <Badge color="warning">30–90 يوم</Badge> : <Badge color="danger">&gt;90 يوم</Badge>;
   const sendSMS = async () => {
@@ -8907,7 +8952,7 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
         <KPICard title="30–90 يوم" value={fmt(mid)} Icon={Clock} color="warning" />
         <KPICard title="أكثر من 90 يوم" value={fmt(over90)} Icon={XCircle} color="danger" />
       </div>
-      <Card title="تفاصيل ديون المرضى" action={<div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = filtered.map(d => [d.patient, d.pid, d.dept, d.amount, d.days, d.date, d.phone || ""]); const ws = XLSX.utils.aoa_to_sheet([["اسم المريض", "رقم الهوية", "القسم", "المبلغ (₪)", "عمر الدين (أيام)", "تاريخ الدين", "الجوال"], ...rows, [], [" ", " ", "الإجمالي", filtered.reduce((s, d) => s + d.amount, 0)]]); ws["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 14 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "ديون المرضى"); XLSX.writeFile(wb, `ديون_المرضى_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<h2>تفاصيل ديون المرضى</h2><table><thead><tr><th>اسم المريض</th><th>رقم الهوية</th><th>القسم</th><th>المبلغ (₪)</th><th>عمر الدين (أيام)</th><th>تاريخ الدين</th><th>الجوال</th></tr></thead><tbody>${filtered.map(d => `<tr><td>${d.patient}</td><td>${d.pid}</td><td>${d.dept}</td><td class="out">${fmt(d.amount)}</td><td>${d.days}</td><td>${d.date}</td><td>${d.phone || "—"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3"><strong>الإجمالي</strong></td><td class="out"><strong>${fmt(filtered.reduce((s, d) => s + d.amount, 0))}</strong></td><td colspan="3"></td></tr></tfoot></table>`; printHtml(html, "ديون المرضى"); }}><Printer size={14} />طباعة</Btn></div>}>
+      <Card title="تفاصيل ديون المرضى" action={<div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = filtered.map(d => [d.patient, d.pid, allDepts.find(ad => ad.id === d.dept)?.short || d.dept, d.amount, d.days, d.date, d.phone || ""]); const ws = XLSX.utils.aoa_to_sheet([["اسم المريض", "رقم الهوية", "القسم", "المبلغ (₪)", "عمر الدين (أيام)", "تاريخ الدين", "الجوال"], ...rows, [], [" ", " ", "الإجمالي", filtered.reduce((s, d) => s + d.amount, 0)]]); ws["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 14 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "ديون المرضى"); XLSX.writeFile(wb, `ديون_المرضى_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<h2>تفاصيل ديون المرضى</h2><table><thead><tr><th>اسم المريض</th><th>رقم الهوية</th><th>القسم</th><th>المبلغ (₪)</th><th>عمر الدين (أيام)</th><th>تاريخ الدين</th><th>الجوال</th></tr></thead><tbody>${filtered.map(d => `<tr><td>${d.patient}</td><td>${d.pid}</td><td>${allDepts.find(ad => ad.id === d.dept)?.short || d.dept}</td><td class="out">${fmt(d.amount)}</td><td>${d.days}</td><td>${d.date}</td><td>${d.phone || "—"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3"><strong>الإجمالي</strong></td><td class="out"><strong>${fmt(filtered.reduce((s, d) => s + d.amount, 0))}</strong></td><td colspan="3"></td></tr></tfoot></table>`; printHtml(html, "ديون المرضى"); }}><Printer size={14} />طباعة</Btn></div>}>
         <div className="flex items-center gap-3 p-2.5 rounded-xl mb-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BEDCF5" }}>
           <Calendar size={14} className="text-[#1B3A6B] flex-shrink-0" />
           <span className="text-xs font-semibold text-[#1B3A6B]">الفترة:</span>
@@ -8918,13 +8963,14 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
         </div>
         <div className="flex gap-3 mb-4">
           <div className="relative flex-1"><Search size={15} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]" /><input type="text" placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} className="w-full h-9 pr-9 pl-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
-          <select value={deptFilter} onChange={e => setDeptFilter(e.target.value)} className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل الأقسام</option>{allDepts.map(d => <option key={d.id} value={d.short}>{d.short}</option>)}</select>
+          {/* تصحيح: قيمة الخيار لازم تكون d.id (الرمز الإنجليزي المطابق لـ debts.dept الجديد) وليس d.short (الاسم العربي) — النص المعروض للمستخدم يبقى d.short */}
+          <select value={deptFilter} onChange={e => setDeptFilter(e.target.value)} className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل الأقسام</option>{allDepts.map(d => <option key={d.id} value={d.id}>{d.short}</option>)}</select>
           {(["all", "<30", "30-90", ">90"] as const).map(v => <button key={v} onClick={() => setAgeFilter(v)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${ageFilter === v ? "bg-[#1B3A6B] text-white" : "bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{ border: "1px solid #E0E0E0" }}>{v === "all" ? "الكل" : v}</button>)}
         </div>
         {filtered.length === 0 ? <EmptyState msg="لا توجد ديون بهذه الفلاتر" /> : (
           <table className="w-full text-sm"><THead cols={["اسم المريض", "رقم الهوية", "القسم", "المبلغ", "تاريخ الدين", "مدة التأخير", "الهاتف", ""]} />
             <tbody>{filtered.map((d, i) => <TRow key={d.id} i={i}>
-              <TD className="font-medium">{d.patient}</TD><TD className="text-[#555] font-mono">{d.pid}</TD><TD><Badge color="info">{d.dept}</Badge></TD>
+              <TD className="font-medium">{d.patient}</TD><TD className="text-[#555] font-mono">{d.pid}</TD><TD><Badge color="info">{allDepts.find(ad => ad.id === d.dept)?.short || d.dept}</Badge></TD>
               <TD className="font-bold text-[#D32F2F]">{fmt(d.amount)}</TD><TD className="text-[#555]">{d.date}</TD><TD>{ageBadge(d.days)}</TD><TD className="text-[#555] font-mono text-xs">{d.phone}</TD>
               <TD><div className="flex gap-1"><Btn small variant="secondary" onClick={() => setSmsModal(d)}>{d.smsSent ? <span className="text-[10px]">أُرسل</span> : <MessageSquare size={12} />}</Btn><Btn small variant="outline" onClick={() => setSettleModal(d)}>تسديد</Btn></div></TD>
             </TRow>)}</tbody>
@@ -13902,13 +13948,15 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={activeDept} sessions={sessions} receiptVouchers={allReceiptVouchers} paymentVouchers={allPaymentVouchers} invoices={invoices} externalDebts={[]} debts={debts} />
               )}
               {subScreen === "dept-debts" && activeDept && (() => {
+                // تصحيح: debts.dept مربوط بقيد foreign key على departments.id
+                // (الرمز الإنجليزي) — نقارن بكلا الشكلين احتياطاً لأي سجل قديم
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
-                return <DebtManagementScreen debts={debts.filter(d => d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} setReceiptVouchers={setReceiptVouchers} onSettleSessionsDebt={onSettleSessionsDebt} />;
+                return <DebtManagementScreen debts={debts.filter(d => d.dept === activeDept || d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} setReceiptVouchers={setReceiptVouchers} onSettleSessionsDebt={onSettleSessionsDebt} />;
               })()}
               {subScreen === "dept-revenue" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
                 const deptDrawers = { [activeDept]: drawers[activeDept] || { balance: 0, txs: [] } };
-                const deptDebts = debts.filter(d => d.dept === deptShort);
+                const deptDebts = debts.filter(d => d.dept === activeDept || d.dept === deptShort);
                 const deptSessions = sessions.filter(s => s.dept === activeDept);
                 const deptRV = (allReceiptVouchers || []).filter((v: any) => v.dept === activeDept);
                 return <FinRevenueScreen drawers={deptDrawers} debts={deptDebts} customDepts={customDepts} toast={staffToast} sessions={deptSessions} receiptVouchers={deptRV} />;
@@ -16355,11 +16403,11 @@ export default function App() {
   }, [route.screen, loggedUser?.type]);
   const dept = route.dept || "surgery"; const sidebarW = isMobile ? 0 : (collapsed ? 64 : 260);
   const activeDeptInfo = [...DEPARTMENTS, ...customDepts,].find(d => d.id === route.dept);
-  // ── debts.dept مخزّن باسم القسم المختصر (متل "الجراحة") مش بمعرّفه التقني
-  //    (متل "surgery") — المقارنة القديمة كانت تقارن المعرّف بالاسم المختصر
-  //    فما بتتطابق أبداً، فكانت "إجمالي الديون" تطلع صفر بمجرد تفعيل سياق قسم
-  //    معيّن رغم وجود ديون فعلية (نفس الخلل المُصلَح سابقاً بملف المريض) ──
-  const visibleDebts = route.dept ? debts.filter(d => d.dept === (activeDeptInfo?.short || route.dept)) : debts;
+  // ── تصحيح: debts.dept مربوط فعلياً بقيد foreign key على departments.id (رمز
+  //    إنجليزي زي "surgery")، وليس الاسم العربي المختصر كما افتُرض هنا سابقاً —
+  //    ذاك الافتراض الخاطئ كان سبب فشل حفظ ديون الجلسات بصمت بقاعدة البيانات
+  //    بكل الشاشات. نقارن هون بكلا الشكلين للتوافق مع أي سجل قديم بالشكل العربي ──
+  const visibleDebts = route.dept ? debts.filter(d => d.dept === route.dept || d.dept === activeDeptInfo?.short) : debts;
   const totalDebt = visibleDebts.reduce((s, d) => s + d.amount, 0);
   const pageTitle = (() => {
     const base = PAGE_TITLES[route.screen] || route.screen;
@@ -16499,8 +16547,9 @@ export default function App() {
 
       case "dept-vouchers": return route.dept ? <DeptVouchersScreen dept={route.dept} deptName={[...DEPARTMENTS, ...customDepts].find((d: any) => d.id === route.dept)?.name || route.dept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={toast} loggedUser={loggedUser} /> : null;
       case "dept-profit": return <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts} />;
-      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={dsh ? debts.filter(d => d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />; }
-      case "dept-revenue": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; const rdw = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const rdb = dsh ? debts.filter(d => d.dept === dsh) : debts; const deptSessions = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRV = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; return <FinRevenueScreen drawers={rdw} debts={rdb} customDepts={customDepts} toast={toast} sessions={deptSessions} receiptVouchers={deptRV} />; }
+      {/* تصحيح: debts.dept مربوط بقيد foreign key على departments.id (الرمز الإنجليزي) — نقارن بكلا الشكلين (route.dept الخام + dsh الاسم العربي) احتياطاً لأي سجل قديم */}
+      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={route.dept ? debts.filter(d => d.dept === route.dept || d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />; }
+      case "dept-revenue": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; const rdw = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const rdb = route.dept ? debts.filter(d => d.dept === route.dept || d.dept === dsh) : debts; const deptSessions = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRV = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; return <FinRevenueScreen drawers={rdw} debts={rdb} customDepts={customDepts} toast={toast} sessions={deptSessions} receiptVouchers={deptRV} />; }
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
       case "fin-revenue": return <FinRevenueScreen drawers={drawers} debts={debts} customDepts={customDepts} toast={toast} sessions={sessions} receiptVouchers={receiptVouchersGlobal} />;
