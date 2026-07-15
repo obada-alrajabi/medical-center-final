@@ -2,7 +2,7 @@
 
 export type ToastItem = { id: number; msg: string; type: "success"|"error"|"warning"|"info" };
 export type Route = { screen: string; dept?: string; patientId?: string };
-export type PatientRecord = { id:string; name:string; age:number; phone:string; blood:string; insurance:boolean; dept:string; debt:number; date:string; gender?:string; address?:string; chronic?:string; allergy?:string };
+export type PatientRecord = { id:string; name:string; age:number; phone:string; blood:string; insurance:boolean; dept:string; debt:number; date:string; gender?:string; address?:string; chronic?:string; allergy?:string; nationalId?:string; email?:string; notes?:string; insuranceCompany?:string };
 export type DrawerTx = { id:number; type:"in"|"out"; title:string; category:string; beneficiary?:string; amount:number; balance:number; time:string; date:string; auto?:boolean };
 export type DrawerState = { balance:number; txs:DrawerTx[]; openingBalance?:number; openingBalanceDate?:string };
 export type Invoice = { id:string; company:string; date:string; total:number; paid:number; remaining:number; status:"paid"|"partial"|"unpaid"; dept:string; claimNo?:string; patientId?:string; patientName?:string };

@@ -2448,7 +2448,7 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
 
 // ─── OPEN PATIENT ──────────────────────────────────────────────────────────────
 
-function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = [], loggedUser, patientDeleteRequests = [], setPatientDeleteRequests, deletedPatientIds = [], setDeletedPatientIds, onAdminDeletePatient, diagnoses = [], setDiagnoses, rehabPlans, setRehabPlans, rehabQueueEntries, setRehabQueueEntries, doDeposit, toast: rehabToast, perms }: { dept: string; onNavigate: (r: Route) => void; sessions: PatientSession[]; debts: DebtRow[]; customDepts?: Array<{ id: string; name: string; short: string }>; loggedUser?: LoggedUser | null; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; deletedPatientIds?: string[]; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; rehabPlans?: RehabPlan[]; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; rehabQueueEntries?: RehabQueueEntry[]; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>>; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; toast?: (m: string, t?: any) => void; perms?: DeptPermissions }) {
+function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = [], loggedUser, patientDeleteRequests = [], setPatientDeleteRequests, deletedPatientIds = [], setDeletedPatientIds, onAdminDeletePatient, diagnoses = [], setDiagnoses, rehabPlans, setRehabPlans, rehabQueueEntries, setRehabQueueEntries, doDeposit, toast: rehabToast, perms, insurances = [] }: { dept: string; onNavigate: (r: Route) => void; sessions: PatientSession[]; debts: DebtRow[]; customDepts?: Array<{ id: string; name: string; short: string }>; loggedUser?: LoggedUser | null; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; deletedPatientIds?: string[]; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; rehabPlans?: RehabPlan[]; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; rehabQueueEntries?: RehabQueueEntry[]; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>>; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; toast?: (m: string, t?: any) => void; perms?: DeptPermissions; insurances?: InsuranceCo[] }) {
   const isAdmin = loggedUser?.type === "admin";
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<typeof mockPatients[0] | null>(null);
@@ -2523,14 +2523,15 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
               const idx = mockPatients.findIndex(x => x.id === editForm.id);
               if (idx >= 0) { Object.assign(mockPatients[idx], editForm); _syncPatients(); }
               setSelected({ ...editForm });
-              api.patients.update(editForm.id, { name: editForm.name, age: editForm.age, phone: editForm.phone, blood_type: editForm.blood, has_insurance: editForm.insurance, gender: editForm.gender, address: editForm.address, has_chronic: !!(editForm.chronic?.trim()), chronic_detail: editForm.chronic || "", has_allergy: !!(editForm.allergy?.trim()), allergy_detail: editForm.allergy || "" });
+              api.patients.update(editForm.id, { name: editForm.name, age: editForm.age, phone: editForm.phone, blood_type: editForm.blood, has_insurance: editForm.insurance, gender: editForm.gender, address: editForm.address, has_chronic: !!(editForm.chronic?.trim()), chronic_detail: editForm.chronic || "", has_allergy: !!(editForm.allergy?.trim()), allergy_detail: editForm.allergy || "", national_id: editForm.nationalId || "", email: editForm.email || "", notes: editForm.notes || "", insurance_company: editForm.insurance ? (editForm.insuranceCompany || "") : "" });
               setEditModal(false);
               fireToast("تم تحديث بيانات المريض ✓");
             }}><Save size={14} />حفظ التعديلات</Btn><Btn variant="outline" onClick={() => setEditModal(false)}>إلغاء</Btn></>}>
             <div className="grid grid-cols-2 gap-4">
               <div><InputField label="الاسم الكامل" required value={editForm.name} onChange={v => setEF(p => ({ ...p, name: v }))} /></div>
               <div><InputField label="العمر" required type="number" value={String(editForm.age)} onChange={v => setEF(p => ({ ...p, age: parseInt(v) || 0 }))} /></div>
-              <div className="col-span-2"><InputField label="رقم الجوال" value={editForm.phone} onChange={v => setEF(p => ({ ...p, phone: v }))} /></div>
+              <div><InputField label="رقم الجوال" value={editForm.phone} onChange={v => setEF(p => ({ ...p, phone: v }))} /></div>
+              <div><InputField label="رقم الهوية الوطنية" placeholder="اختياري" value={editForm.nationalId || ""} onChange={v => setEF(p => ({ ...p, nationalId: v }))} /></div>
               <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">فصيلة الدم</label>
                 <select value={editForm.blood} onChange={e => setEF(p => ({ ...p, blood: e.target.value }))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}>
                   {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "غير محدد"].map(b => <option key={b} value={b}>{b}</option>)}
@@ -2541,12 +2542,22 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
                   <option value="">—</option><option value="ذكر">ذكر</option><option value="أنثى">أنثى</option>
                 </select>
               </div>
+              <div className="col-span-2"><InputField label="البريد الإلكتروني" placeholder="اختياري" value={editForm.email || ""} onChange={v => setEF(p => ({ ...p, email: v }))} /></div>
               <div className="col-span-2"><InputField label="العنوان / الموقع" value={editForm.address || ""} onChange={v => setEF(p => ({ ...p, address: v }))} /></div>
               <div className="col-span-2"><InputField label="الأمراض المزمنة" placeholder="مثال: سكري، ضغط، قصور كلوي..." value={editForm.chronic || ""} onChange={v => setEF(p => ({ ...p, chronic: v }))} /></div>
               <div className="col-span-2"><InputField label="الحساسية" placeholder="مثال: بنسلين، مسكنات..." value={editForm.allergy || ""} onChange={v => setEF(p => ({ ...p, allergy: v }))} /></div>
-              <div className="col-span-2 flex items-center gap-2 p-3 rounded-xl" style={{ backgroundColor: "#F5F5F5", border: "1px solid #E0E0E0" }}>
-                <input type="checkbox" id="ins-edit-op" checked={editForm.insurance} onChange={e => setEF(p => ({ ...p, insurance: e.target.checked }))} className="w-4 h-4 accent-[#1B3A6B]" />
-                <label htmlFor="ins-edit-op" className="text-sm text-[#555] cursor-pointer">يمتلك تأمين صحي</label>
+              <div className="col-span-2"><InputField label="ملاحظات" placeholder="أي ملاحظات إضافية عن المريض..." value={editForm.notes || ""} onChange={v => setEF(p => ({ ...p, notes: v }))} /></div>
+              <div className="col-span-2 flex flex-col gap-2 p-3 rounded-xl" style={{ backgroundColor: "#F5F5F5", border: "1px solid #E0E0E0" }}>
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="ins-edit-op" checked={editForm.insurance} onChange={e => setEF(p => ({ ...p, insurance: e.target.checked }))} className="w-4 h-4 accent-[#1B3A6B]" />
+                  <label htmlFor="ins-edit-op" className="text-sm text-[#555] cursor-pointer">يمتلك تأمين صحي</label>
+                </div>
+                {editForm.insurance && (
+                  <select value={editForm.insuranceCompany || ""} onChange={e => setEF(p => ({ ...p, insuranceCompany: e.target.value }))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}>
+                    <option value="">اختر شركة التأمين</option>
+                    {insurances.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
+                )}
               </div>
             </div>
           </Modal>
@@ -3592,7 +3603,7 @@ function PatientSearchScreen({ onNavigate, debts, customDepts = [] }: { onNaviga
 
 // ─── PATIENT FILE ──────────────────────────────────────────────────────────────
 
-function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, sessionFiles, setSessionFiles, setReceiptVouchers, perms }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; perms?: DeptPermissions }) {
+function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, sessionFiles, setSessionFiles, setReceiptVouchers, perms, insurances = [] }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; perms?: DeptPermissions; insurances?: InsuranceCo[] }) {
   const isAdmin = loggedUser?.type === "admin";
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
   const handleDeleteSession = async (id: number) => {
@@ -3702,7 +3713,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
     const idx = mockPatients.findIndex(x => x.id === editForm.id);
     if (idx >= 0) { Object.assign(mockPatients[idx], editForm); _syncPatients(); }
     setP({ ...editForm });
-    api.patients.update(editForm.id, { name: editForm.name, age: editForm.age, phone: editForm.phone, blood_type: editForm.blood, has_insurance: editForm.insurance, gender: editForm.gender, address: editForm.address, has_chronic: !!(editForm.chronic?.trim()), chronic_detail: editForm.chronic || "", has_allergy: !!(editForm.allergy?.trim()), allergy_detail: editForm.allergy || "" }).catch(() => { });
+    api.patients.update(editForm.id, { name: editForm.name, age: editForm.age, phone: editForm.phone, blood_type: editForm.blood, has_insurance: editForm.insurance, gender: editForm.gender, address: editForm.address, has_chronic: !!(editForm.chronic?.trim()), chronic_detail: editForm.chronic || "", has_allergy: !!(editForm.allergy?.trim()), allergy_detail: editForm.allergy || "", national_id: editForm.nationalId || "", email: editForm.email || "", notes: editForm.notes || "", insurance_company: editForm.insurance ? (editForm.insuranceCompany || "") : "" }).catch(() => { });
     setEditModal(false);
     fireToast("تم تحديث بيانات المريض ✓");
   };
@@ -3872,7 +3883,8 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
           <div className="grid grid-cols-2 gap-4">
             <div><InputField label="الاسم الكامل" required value={editForm.name} onChange={v => setEF2(p => ({ ...p, name: v }))} /></div>
             <div><InputField label="العمر" required type="number" value={String(editForm.age)} onChange={v => setEF2(p => ({ ...p, age: parseInt(v) || 0 }))} /></div>
-            <div className="col-span-2"><InputField label="رقم الجوال" value={editForm.phone} onChange={v => setEF2(p => ({ ...p, phone: v }))} /></div>
+            <div><InputField label="رقم الجوال" value={editForm.phone} onChange={v => setEF2(p => ({ ...p, phone: v }))} /></div>
+            <div><InputField label="رقم الهوية الوطنية" placeholder="اختياري" value={editForm.nationalId || ""} onChange={v => setEF2(p => ({ ...p, nationalId: v }))} /></div>
             <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">فصيلة الدم</label>
               <select value={editForm.blood} onChange={e => setEF2(p => ({ ...p, blood: e.target.value }))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}>
                 {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "غير محدد"].map(b => <option key={b} value={b}>{b}</option>)}
@@ -3883,12 +3895,22 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                 <option value="">—</option><option value="ذكر">ذكر</option><option value="أنثى">أنثى</option>
               </select>
             </div>
+            <div className="col-span-2"><InputField label="البريد الإلكتروني" placeholder="اختياري" value={editForm.email || ""} onChange={v => setEF2(p => ({ ...p, email: v }))} /></div>
             <div className="col-span-2"><InputField label="العنوان / الموقع" value={editForm.address || ""} onChange={v => setEF2(p => ({ ...p, address: v }))} /></div>
             <div className="col-span-2"><InputField label="الأمراض المزمنة" placeholder="مثال: سكري، ضغط، قصور كلوي..." value={editForm.chronic || ""} onChange={v => setEF2(p => ({ ...p, chronic: v }))} /></div>
             <div className="col-span-2"><InputField label="الحساسية" placeholder="مثال: بنسلين، مسكنات..." value={editForm.allergy || ""} onChange={v => setEF2(p => ({ ...p, allergy: v }))} /></div>
-            <div className="col-span-2 flex items-center gap-2 p-3 rounded-xl" style={{ backgroundColor: "#F5F5F5", border: "1px solid #E0E0E0" }}>
-              <input type="checkbox" id="ins-edit-pf" checked={editForm.insurance} onChange={e => setEF2(p => ({ ...p, insurance: e.target.checked }))} className="w-4 h-4 accent-[#1B3A6B]" />
-              <label htmlFor="ins-edit-pf" className="text-sm text-[#555] cursor-pointer">يمتلك تأمين صحي</label>
+            <div className="col-span-2"><InputField label="ملاحظات" placeholder="أي ملاحظات إضافية عن المريض..." value={editForm.notes || ""} onChange={v => setEF2(p => ({ ...p, notes: v }))} /></div>
+            <div className="col-span-2 flex flex-col gap-2 p-3 rounded-xl" style={{ backgroundColor: "#F5F5F5", border: "1px solid #E0E0E0" }}>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="ins-edit-pf" checked={editForm.insurance} onChange={e => setEF2(p => ({ ...p, insurance: e.target.checked }))} className="w-4 h-4 accent-[#1B3A6B]" />
+                <label htmlFor="ins-edit-pf" className="text-sm text-[#555] cursor-pointer">يمتلك تأمين صحي</label>
+              </div>
+              {editForm.insurance && (
+                <select value={editForm.insuranceCompany || ""} onChange={e => setEF2(p => ({ ...p, insuranceCompany: e.target.value }))} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}>
+                  <option value="">اختر شركة التأمين</option>
+                  {insurances.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              )}
             </div>
           </div>
         </Modal>
@@ -3914,7 +3936,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
             const printSessions = isAdmin ? pSess : (dept === "surgery" || customDepts.some(cd => cd.id === dept) ? clinicSessions : []);
             const printMeds = isAdmin ? allMeds : filteredMeds;
             const printRefs = isAdmin ? allRefs : filteredRefs;
-            if (printOpts.info) html += `<h2>بيانات المريض</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">الاسم الكامل</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">العمر</div><div class="kpi-v">${p.age} سنة</div></div><div class="kpi-box"><div class="kpi-l">فصيلة الدم</div><div class="kpi-v">${p.blood}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div>${p.insurance ? `<div class="kpi-box"><div class="kpi-l">التأمين</div><div class="kpi-v">يمتلك تأمين</div></div>` : ""} ${p.chronic ? `<div class="kpi-box"><div class="kpi-l">أمراض مزمنة</div><div class="kpi-v">${p.chronic}</div></div>` : ""} ${p.allergy ? `<div class="kpi-box"><div class="kpi-l">حساسية</div><div class="kpi-v out">${p.allergy}</div></div>` : ""}</div>`;
+            if (printOpts.info) html += `<h2>بيانات المريض</h2><div class="pt-info"><div class="pt-field"><b>الاسم الكامل:</b> ${p.name}</div><div class="pt-field"><b>رقم الملف:</b> ${p.id}</div><div class="pt-field"><b>العمر:</b> ${p.age} سنة</div><div class="pt-field"><b>فصيلة الدم:</b> ${p.blood}</div><div class="pt-field"><b>الجوال:</b> ${p.phone}</div><div class="pt-field"><b>تاريخ التسجيل:</b> ${p.date}</div>${p.insurance ? `<div class="pt-field"><b>التأمين:</b> يمتلك تأمين</div>` : ""}${p.chronic ? `<div class="pt-field"><b>أمراض مزمنة:</b> ${p.chronic}</div>` : ""}${p.allergy ? `<div class="pt-field out"><b>حساسية:</b> ${p.allergy}</div>` : ""}</div>`;
             if (printOpts.sessions) html += `<h2>الجلسات (${printSessions.length})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>الطبيب</th><th>الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${printSessions.map(s => canSeeFinance(s.dept) ? `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${s.doctor || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>` : `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${s.doctor || "—"}</td><td colspan="3">بيانات مالية غير متاحة لهذا القسم</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="4">الإجمالي (قسمك فقط)</td><td>${fmt(totalAmt)}</td><td class="in">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}">${liveDebt > 0 ? fmt(liveDebt) : "مسدد ✓"}</td></tr></tfoot></table>`;
             if (printOpts.meds && printMeds.length > 0) html += `<h2>الوصفات الطبية (${printMeds.length})</h2><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printMeds.map(m => `<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td><td>${m.date}</td><td>${m.dept}</td></tr>`).join("")}</tbody></table>`;
             if (printOpts.refs && printRefs.length > 0) html += `<h2>الإحالات (${printRefs.length})</h2><table><thead><tr><th>النوع</th><th>الطلب</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printRefs.map(r => `<tr><td>${r.type === "lab" ? "مختبر" : "أشعة"}</td><td>${r.name}</td><td>${r.date}</td><td>${r.dept}</td></tr>`).join("")}</tbody></table>`;
@@ -13207,7 +13229,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
 
               {subScreen === "open-patient" && activeDept && (
-                <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} perms={deptPerms ?? undefined} />
+                <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} perms={deptPerms ?? undefined} insurances={insurances} />
               )}
               {subScreen === "new-patient" && activeDept && (
                 <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />
@@ -13216,7 +13238,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />
               )}
               {subScreen === "patient-file" && activeDept && (
-                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} perms={deptPerms ?? undefined} />
+                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} perms={deptPerms ?? undefined} insurances={insurances} />
               )}
 
               {subScreen === "purchase-reqs" && activeDept && (
@@ -15292,7 +15314,7 @@ export default function App() {
         const byId = new Map(mockPatients.map(p => [p.id, p]));
         let changed = false;
         (dbPatients as any[]).forEach((p: any) => {
-          const mapped: PatientRecord = { id: p.id, name: p.name, age: Number(p.age) || 0, phone: p.phone || "", blood: p.blood_type || "غير معروف", insurance: !!p.has_insurance, dept: p.dept || "surgery", date: p.date || "", debt: Number(p.debt) || 0, gender: p.gender || "", address: p.address || "", chronic: p.chronic_detail || "", allergy: p.allergy_detail || "" };
+          const mapped: PatientRecord = { id: p.id, name: p.name, age: Number(p.age) || 0, phone: p.phone || "", blood: p.blood_type || "غير معروف", insurance: !!p.has_insurance, dept: p.dept || "surgery", date: p.date || "", debt: Number(p.debt) || 0, gender: p.gender || "", address: p.address || "", chronic: p.chronic_detail || "", allergy: p.allergy_detail || "", nationalId: p.national_id || "", email: p.email || "", notes: p.notes || "", insuranceCompany: p.insurance_company || "" };
           const existing = byId.get(p.id);
           if (!existing) {
             mockPatients.push(mapped);
@@ -15302,7 +15324,9 @@ export default function App() {
             existing.name !== mapped.name || existing.age !== mapped.age || existing.phone !== mapped.phone ||
             existing.blood !== mapped.blood || existing.insurance !== mapped.insurance || existing.dept !== mapped.dept ||
             existing.date !== mapped.date || existing.gender !== mapped.gender || existing.address !== mapped.address ||
-            existing.chronic !== mapped.chronic || existing.allergy !== mapped.allergy
+            existing.chronic !== mapped.chronic || existing.allergy !== mapped.allergy ||
+            existing.nationalId !== mapped.nationalId || existing.email !== mapped.email ||
+            existing.notes !== mapped.notes || existing.insuranceCompany !== mapped.insuranceCompany
           ) {
             Object.assign(existing, mapped);
             changed = true;
@@ -15709,10 +15733,10 @@ export default function App() {
   const renderScreen = () => {
     switch (route.screen) {
       case "dashboard": return <DashboardScreen drawers={drawers} debts={debts} invoices={invoices} purchaseRequests={purchaseRequests} onNavigate={setRoute} customDepts={customDepts} sessions={sessions} deptCapacity={sidebarSettings.deptCapacity} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} externalDebts={externalDebts} />;
-      case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} />;
+      case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} insurances={insurances} />;
       case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
       case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
-      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} />;
+      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} insurances={insurances} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" suppliers={suppliersRoot} />;
       case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} />;

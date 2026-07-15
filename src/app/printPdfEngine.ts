@@ -93,21 +93,42 @@ tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .footer{margin-top:20px;font-size:9px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}
 `;
 
-function loadImageDims(url: string): Promise<{ w: number; h: number } | null> {
+// ── تحويل صورة الترويسة (أياً كانت صيغتها الأصلية: PNG/JPEG/WEBP، وسواء
+//    data:URL أو رابط خارجي) إلى JPEG عبر canvas قبل تمريرها لـ jsPDF.
+//    السبب: محرك فك ترميز PNG المدمج داخل jsPDF نفسه يفشل بصمت (silent
+//    throw يُبتلع بمحاولة try/catch) مع بعض أنواع ملفات PNG (كالمفهرسة
+//    palette-based أو المتشابكة interlaced)، وهذا هو التفسير الأرجح لاختفاء
+//    الترويسة بالكامل رغم ضبطها بشكل صحيح بالإعدادات. بينما فك الترميز عبر
+//    عنصر <img> الحقيقي بالمتصفح موثوق دائماً (نفس الآلية المستخدمة أصلاً
+//    لتصيير شرائح المحتوى التي تعمل بنجاح)، فتحويل الترويسة لنفس المسار
+//    (canvas → JPEG dataURL) يضمن قبولها من jsPDF بلا استثناء ──
+function loadImageAsJpegDataUrl(url: string): Promise<string | null> {
   return new Promise(resolve => {
     if (!url) { resolve(null); return; }
     const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
-    img.onerror = () => resolve(null);
+    if (!url.startsWith("data:")) img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) { resolve(null); return; }
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { resolve(null); return; }
+        // خلفية بيضاء أولاً حتى لا تتحول أي شفافية بصورة PNG إلى أسود عند
+        // تصديرها كـ JPEG (JPEG لا يدعم قناة alpha إطلاقاً)
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.95));
+      } catch (err) {
+        console.warn("تعذّر تحويل صورة الترويسة عبر canvas:", err);
+        resolve(null);
+      }
+    };
+    img.onerror = () => { console.warn("تعذّر تحميل صورة الترويسة (onerror) — لن تظهر بهذه الطباعة"); resolve(null); };
     img.src = url;
   });
-}
-
-function guessImageFormat(url: string): "JPEG" | "PNG" {
-  const u = url.split("?")[0].toLowerCase();
-  if (u.endsWith(".png") || u.startsWith("data:image/png")) return "PNG";
-  return "JPEG";
 }
 
 /**
@@ -184,10 +205,12 @@ export async function generatePrintPdf(params: PrintDocParams): Promise<Blob> {
     (settings.orientation || "portrait").toLowerCase() === "landscape" ? "landscape" : "portrait";
   const pdf = new jsPDF({ orientation: orientationJs, unit: "mm", format: [pageWmm, pageHmm] });
 
-  const letterheadUrl = settings.letterheadImage || null;
-  const letterheadFmt = letterheadUrl ? guessImageFormat(letterheadUrl) : null;
-  // نتأكد من إمكانية تحميل صورة الترويسة فعلياً قبل محاولة رسمها بكل صفحة
-  const letterheadOk = letterheadUrl ? !!(await loadImageDims(letterheadUrl)) : false;
+  // نحوّل صورة الترويسة مرة واحدة فقط (وليس بكل صفحة) عبر canvas → JPEG
+  // dataURL موثوق قبل بدء حلقة الصفحات
+  const letterheadJpeg = settings.letterheadImage ? await loadImageAsJpegDataUrl(settings.letterheadImage) : null;
+  if (settings.letterheadImage && !letterheadJpeg) {
+    console.warn("⚠️ صورة الترويسة محفوظة بالإعدادات لكن تعذّر تحميلها/ترميزها — سيُطبع المستند بدون ترويسة على هذه المرة فقط");
+  }
 
   let pageIndex = 0;
   for (let i = 0; i < cutPoints.length - 1; i++) {
@@ -197,9 +220,9 @@ export async function generatePrintPdf(params: PrintDocParams): Promise<Blob> {
     if (pageIndex > 0) pdf.addPage([pageWmm, pageHmm], orientationJs);
     pageIndex++;
 
-    if (letterheadUrl && letterheadOk) {
-      try { pdf.addImage(letterheadUrl, letterheadFmt as any, 0, 0, pageWmm, pageHmm, undefined, "FAST"); }
-      catch (_) { /* صورة تعذّر ترميزها — نتابع بدون ترويسة على هذه الصفحة بدل فشل الطباعة كلها */ }
+    if (letterheadJpeg) {
+      try { pdf.addImage(letterheadJpeg, "JPEG", 0, 0, pageWmm, pageHmm, undefined, "FAST"); }
+      catch (err) { console.warn("فشل رسم صورة الترويسة على الصفحة رغم نجاح تحميلها:", err); }
     }
 
     const pageCanvas = document.createElement("canvas");
