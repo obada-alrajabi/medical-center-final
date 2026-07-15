@@ -8458,11 +8458,15 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
 
 // ─── DEBTS ─────────────────────────────────────────────────────────────────────
 
-function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, customDepts = [], setReceiptVouchers }: { debts: DebtRow[]; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; drawers: Record<string, DrawerState>; doDeposit: (dept: string, amount: number, title: string, type: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>;
+function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, customDepts = [], setReceiptVouchers, onSettleSessionsDebt }: { debts: DebtRow[]; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; drawers: Record<string, DrawerState>; doDeposit: (dept: string, amount: number, title: string, type: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>;
   // ── ضروري لضمان أن تسديد الدين يُسجَّل كسند قبض حقيقي في جدول السندات، وليس
   //    مجرد إيداع في الصندوق — بدونه لا يظهر التسديد بأي معادلة مالية موحّدة
   //    بالنظام (لوحة التحكم، النظام المالي، إلخ) رغم أن رصيد الصندوق يتغيّر. ──
   setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
+  // ── بدونها يبقى "المدفوع" بملف المريض مجمَّداً رغم تسديد الدين من هنا —
+  //    نفس خلل PatientFileScreen.handleDebtPayment المصلَّح سابقاً، موجود هنا
+  //    أيضاً لأنها مسار تسديد مستقل تماماً (شاشة إدارة الديون العامة). ──
+  onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => void;
 }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [search, setSearch] = useState(""); const [deptFilter, setDeptFilter] = useState(""); const [ageFilter, setAgeFilter] = useState<"all" | "<30" | "30-90" | ">90">("all");
@@ -8519,6 +8523,9 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
       if (r && setReceiptVouchers) setReceiptVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
       doDeposit(deptId, paid, `تسديد دين — ${settleModal.patient}`, "سند قبض");
       setDebts(p => p.map(d => { if (d.id !== settleModal.id) return d; const n = d.amount - paid; if (n <= 0) { api.finance.debts.delete(d.id); return null; } api.finance.debts.update(d.id, { amount: n }); return { ...d, amount: n }; }).filter(Boolean) as DebtRow[]);
+      // ── تحديث paid/debt على الجلسات الفعلية أيضاً، وإلا يبقى "المدفوع" بملف
+      //    المريض مجمَّداً رغم تسديد الدين من هنا (نفس إصلاح PatientFileScreen) ──
+      if (onSettleSessionsDebt && settleModal.pid) onSettleSessionsDebt(settleModal.pid, deptId, paid);
       toast(`تم تسجيل دفعة ${fmt(paid)} من ${settleModal.patient} كسند قبض ✓`);
     } catch {
       toast("تعذّر تسجيل السداد — حاول مجدداً", "error");
@@ -13448,7 +13455,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
               {subScreen === "dept-debts" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
-                return <DebtManagementScreen debts={debts.filter(d => d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} setReceiptVouchers={setReceiptVouchers} />;
+                return <DebtManagementScreen debts={debts.filter(d => d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} setReceiptVouchers={setReceiptVouchers} onSettleSessionsDebt={onSettleSessionsDebt} />;
               })()}
               {subScreen === "dept-revenue" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
@@ -15938,7 +15945,7 @@ export default function App() {
 
       case "dept-vouchers": return route.dept ? <DeptVouchersScreen dept={route.dept} deptName={[...DEPARTMENTS, ...customDepts].find((d: any) => d.id === route.dept)?.name || route.dept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={toast} loggedUser={loggedUser} /> : null;
       case "dept-profit": return <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts} />;
-      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={dsh ? debts.filter(d => d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} />; }
+      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={dsh ? debts.filter(d => d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />; }
       case "dept-revenue": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; const rdw = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const rdb = dsh ? debts.filter(d => d.dept === dsh) : debts; const deptSessions = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRV = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; return <FinRevenueScreen drawers={rdw} debts={rdb} customDepts={customDepts} toast={toast} sessions={deptSessions} receiptVouchers={deptRV} />; }
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
@@ -15946,7 +15953,7 @@ export default function App() {
       case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} setPaymentVouchers={setPaymentVouchersGlobal} />; }
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
-      case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} />;
+      case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />;
       case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} />;
       case "attendance": return <AttendanceScreen key={dept || "surgery"} dept={dept || "lab"} attendance={attendance} setAttendance={setAttendance} loggedUser={loggedUser} staffList={staffList} toast={toast} customDepts={customDepts} />;
       case "backup": return <BackupScreen toast={toast} />;
