@@ -5926,7 +5926,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الطبيب المُشخِّص</label><input value={r.doctor} onChange={e => setR({ doctor: e.target.value })} className="h-9 px-3 rounded-lg text-sm outline-none" placeholder="د. محمد أحمد" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
-                      <div className="flex items-center gap-2 flex-wrap pt-5"><label className="text-xs font-semibold text-[#555]">النتيجة:</label>{["طبيعي", "شاذ — يحتاج متابعة", "طارئ"].map(opt => <button key={opt} type="button" onClick={() => setR({ verdict: opt })} className={`px-3 py-1 rounded-lg text-xs border transition-colors ${r.verdict === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white text-[#555] border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`}>{opt}</button>)}</div>
+                      <div className="flex items-center gap-2 flex-wrap pt-5"><label className="text-xs font-semibold text-[#555]">النتيجة:</label>{["طبيعي", "شاذ — يحتاج متابعة", "طارئ"].map(opt => <button key={opt} type="button" onClick={() => setR({ verdict: opt })} className={`px-3 py-1 rounded-lg text-xs border transition-colors ${r.verdict === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`} style={r.verdict === opt ? undefined : { color: "#000000" }}>{opt}</button>)}</div>
                     </div>
                   </div>
                 </div>
@@ -6488,7 +6488,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
             <div className="flex flex-col gap-2">
               <label className="text-xs font-semibold text-[#555]">نتيجة الجلسة:</label>
               <div className="flex gap-2 flex-wrap">{["تحسن ممتاز", "تحسن جيد", "تحسن بطيء", "لا تحسن", "تدهور"].map(opt => (
-                <button key={opt} onClick={() => setModalResult(opt)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${modalResult === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white text-[#555] border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`}>{opt}</button>
+                <button key={opt} onClick={() => setModalResult(opt)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${modalResult === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`} style={modalResult === opt ? undefined : { color: "#000000" }}>{opt}</button>
               ))}</div>
             </div>
             <div className="p-3 rounded-xl flex items-start gap-2.5" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
