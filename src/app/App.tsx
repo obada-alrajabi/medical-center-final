@@ -851,6 +851,23 @@ const withdrawCats: { name: string; value: number }[] = [];
 const patientsPie: { name: string; value: number }[] = [];
 const weeklyOccupancy: { day: string;[dept: string]: number | string }[] = [];
 
+// ── نطاق احتساب نسبة الإيرادات الفعلي لأي موظف بنظام راتب "نسبة" ────────────
+// لو حدَّد المدير أقساماً معيَّنة صراحةً بخانة "الأقسام التي تُحتسب منها نسبة
+// الإيرادات" نستخدمها كما هي (تخصيص دقيق مقصود). أما لو تركها فارغة (الحالة
+// الافتراضية لأي موظف جديد) فكنّا سابقاً نعتبر ذلك يعني "احسب من كل جلسات
+// النظام بكل الأقسام" — وهذا خطأ: كان يعني أن أي موظف قد تُحتسب له عمولة من
+// قسم لا يملك صلاحية دخول عليه إطلاقاً، فقط لأن اسمه تطابق نصياً مع حقل
+// "الطبيب" بجلسة ما. الصحيح: لو الخانة فارغة، نحصر الاحتساب تلقائياً بالأقسام
+// التي يملك الموظف صلاحية وصول حقيقية عليها (قسمه الأساسي + أقسامه المرتبطة)
+// — هو فقط، وليس أي قسم آخر لا صلاحية له عليه. ──
+const effectivePercentageDepts = (sm?: { percentageDepts?: string[]; primaryDept?: string; assignedDepts?: string[] } | null): string[] => {
+  if (!sm) return [];
+  const explicit = sm.percentageDepts || [];
+  if (explicit.length > 0) return explicit;
+  const fallback = [sm.primaryDept, ...(sm.assignedDepts || [])].filter(Boolean) as string[];
+  return [...new Set(fallback)];
+};
+
 let gReportContext: { userName: string; userRole: string } = { userName: "", userRole: "" };
 const gPrintExportPerDept: Record<string, PrintExportSaved> = {};
 const defaultPrintExportFields = () => ({ name: true, phone: true, nid: false, age: true, blood: false, doctor: true, tests: true, diagnoses: true, medications: true, amount: true, paid: true, debt: true, notes: true });
@@ -2566,8 +2583,15 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
           <Modal open={delModal} onClose={() => setDelModal(false)} title={`طلب حذف ملف المريض — ${selected.name}`}
             footer={<><Btn variant="danger" disabled={!delReason.trim()} onClick={() => {
               const today = _today();
-              const req: PatientDeleteRequest = { id: Date.now(), patientId: selected.id, patientName: selected.name, requestedBy: "موظف", requestDept: dept, requestDate: today, reason: delReason.trim(), status: "pending" };
+              const requestedByName = (loggedUser?.type === "staff" ? (loggedUser.staff.name || loggedUser.staff.username) : loggedUser?.adminName) || "موظف";
+              const tempId = Date.now();
+              const req: PatientDeleteRequest = { id: tempId, patientId: selected.id, patientName: selected.name, requestedBy: requestedByName, requestDept: dept, requestDate: today, reason: delReason.trim(), status: "pending" };
               if (setPatientDeleteRequests) setPatientDeleteRequests(p => [...p, req]);
+              // ── يجب حفظ الطلب فعلياً بقاعدة البيانات، وإلا يختفي عند تحديث
+              //    الصفحة ولا يصل لحساب المدير إطلاقاً (كان الخلل السابق) ──
+              api.patients.deleteRequests.create({ patient_id: selected.id, patient_name: selected.name, requested_by: requestedByName, request_dept: dept, request_date: today, reason: delReason.trim() })
+                .then((r: any) => { if (r?.id && setPatientDeleteRequests) setPatientDeleteRequests(p => p.map(x => x.id === tempId ? { ...x, id: r.id } : x)); })
+                .catch(() => { });
               setDelModal(false); setDelReason("");
             }}><Trash2 size={14} />إرسال طلب الحذف</Btn><Btn variant="outline" onClick={() => setDelModal(false)}>إلغاء</Btn></>}>
             <div className="space-y-3">
@@ -2731,7 +2755,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
 
 // ─── NEW PATIENT ───────────────────────────────────────────────────────────────
 
-function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles, customDepts = [] }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>; customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }> }) {
+function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles, customDepts = [], inventory = [], setInventory, computeKitStatus, checkAndNotify }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>; customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>; inventory?: typeof initialInventory; setInventory?: React.Dispatch<React.SetStateAction<typeof initialInventory>>; computeKitStatus?: (qty: number, threshold: number) => "ok" | "low" | "critical" | "empty"; checkAndNotify?: (itemName: string, dept: string, deptLabel: string, qty: number, threshold: number) => void }) {
   // ── إيجاد بيانات القسم من الثابتة أو المخصصة — بدون هذا، أي قسم مخصص (كالاستقبال)
   //    كان يسقط احتياطياً على DEPARTMENTS[0] (الجراحة)، فيُسجَّل كل دين/جلسة لقسم
   //    مخصص باسم "الجراحة" خطأً ويتضخم صندوقها بأموال لا تخصه. ──
@@ -2925,6 +2949,11 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           : sessionNotes;
         const sessionLabR = isLab ? selTestsDataNP.map(t => t.code) : [] as string[];
         const sessionRadR = isRad ? selImgsDataNP.map(t => t.name) : [] as string[];
+        // ── ملاحظة: خصم مخزون الكيتات لا يحصل هنا (عند حجز/تسجيل الفحص) — يحصل
+        //    فقط عند اعتماد الفحص كمكتمل (طباعة التقرير الرسمي) داخل شاشة
+        //    "تسجيل فحص" (دالة printAndComplete)، بغض النظر من أي شاشة حُجز
+        //    الفحص أصلاً، لأن كل الفحوصات المحجوزة تمر بنفس قائمة الانتظار
+        //    المشتركة (board) وتُنجَز من هناك. ──
         const ns: PatientSession = { id: Date.now(), patientId: effectiveId, dept, doctor: autoDoc || deptInfo.short, date: today, diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()).map(m => ({ name: m.name, dose: m.dose, freq: m.freq, duration: m.duration })), notes: sessionNotesComputed, labRefs: sessionLabR, radRefs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt };
         setSessions(prev => [ns, ...prev]);
         api.sessions.create({ patient_id: effectiveId, dept, doctor: autoDoc || deptInfo.short, date: form.joinDate || _localISO(), diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()), notes: sessionNotesComputed, lab_refs: sessionLabR, rad_refs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt }).then((r: any) => {
@@ -3087,7 +3116,10 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
                       <div className="mt-2 space-y-1">
                         {matches.slice(0, 5).map(p => (
                           <button key={p.id} onClick={() => {
-                            setForm(prev => ({ ...prev, name: p.name, age: p.age ? String(p.age) : "", id: p.id || "", phone: p.phone, gender: (p as any).gender || "ذكر", blood: p.blood || "", address: (p as any).address || "", allergy: !!((p as any).allergy?.trim()), allergyDetail: (p as any).allergy || "", chronic: !!((p as any).chronic?.trim()), chronicDetail: (p as any).chronic || "", insuranceCompany: "" }));
+                            // ── تطبيق شركة التأمين الافتراضية للمريض تلقائياً على هذه الزيارة
+                            //    (بدل ما تبقى فارغة دائماً وتحتاج اختيار يدوي كل مرة) — الموظف
+                            //    يقدر يغيّرها لهذه الزيارة تحديداً لو احتاج ──
+                            setForm(prev => ({ ...prev, name: p.name, age: p.age ? String(p.age) : "", id: p.id || "", phone: p.phone, gender: (p as any).gender || "ذكر", blood: p.blood || "", address: (p as any).address || "", allergy: !!((p as any).allergy?.trim()), allergyDetail: (p as any).allergy || "", chronic: !!((p as any).chronic?.trim()), chronicDetail: (p as any).chronic || "", insuranceCompany: (p as any).insurance && (p as any).insuranceCompany ? (p as any).insuranceCompany : "" }));
                             setPrefillPatient(p as PatientRecord);
                             setPrefillSearch("");
                             setDupWarning(null);
@@ -3864,8 +3896,15 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
       <Modal open={patDelModal} onClose={() => setPatDelModal(false)} title={`طلب حذف ملف المريض — ${p.name}`}
         footer={<><Btn variant="danger" disabled={!patDelReason.trim()} onClick={() => {
           const today = _today();
-          const req: PatientDeleteRequest = { id: Date.now(), patientId: p.id, patientName: p.name, requestedBy: "موظف", requestDept: dept, requestDate: today, reason: patDelReason.trim(), status: "pending" };
+          const requestedByName = (loggedUser?.type === "staff" ? (loggedUser.staff.name || loggedUser.staff.username) : loggedUser?.adminName) || "موظف";
+          const tempId = Date.now();
+          const req: PatientDeleteRequest = { id: tempId, patientId: p.id, patientName: p.name, requestedBy: requestedByName, requestDept: dept, requestDate: today, reason: patDelReason.trim(), status: "pending" };
           if (setPatientDeleteRequests) setPatientDeleteRequests(prev => [...prev, req]);
+          // ── يجب حفظ الطلب فعلياً بقاعدة البيانات، وإلا يختفي عند تحديث
+          //    الصفحة ولا يصل لحساب المدير إطلاقاً (كان الخلل السابق) ──
+          api.patients.deleteRequests.create({ patient_id: p.id, patient_name: p.name, requested_by: requestedByName, request_dept: dept, request_date: today, reason: patDelReason.trim() })
+            .then((r: any) => { if (r?.id && setPatientDeleteRequests) setPatientDeleteRequests(prev => prev.map(x => x.id === tempId ? { ...x, id: r.id } : x)); })
+            .catch(() => { });
           setPatDelModal(false); setPatDelReason("");
         }}><Trash2 size={14} />إرسال طلب الحذف</Btn><Btn variant="outline" onClick={() => setPatDelModal(false)}>إلغاء</Btn></>}>
         <div className="space-y-3">
@@ -3940,7 +3979,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
             if (printOpts.sessions) html += `<h2>الجلسات (${printSessions.length})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>الطبيب</th><th>الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${printSessions.map(s => canSeeFinance(s.dept) ? `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${s.doctor || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>` : `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${s.doctor || "—"}</td><td colspan="3">بيانات مالية غير متاحة لهذا القسم</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="4">الإجمالي (قسمك فقط)</td><td>${fmt(totalAmt)}</td><td class="in">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}">${liveDebt > 0 ? fmt(liveDebt) : "مسدد ✓"}</td></tr></tfoot></table>`;
             if (printOpts.meds && printMeds.length > 0) html += `<h2>الوصفات الطبية (${printMeds.length})</h2><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printMeds.map(m => `<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td><td>${m.date}</td><td>${m.dept}</td></tr>`).join("")}</tbody></table>`;
             if (printOpts.refs && printRefs.length > 0) html += `<h2>الإحالات (${printRefs.length})</h2><table><thead><tr><th>النوع</th><th>الطلب</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printRefs.map(r => `<tr><td>${r.type === "lab" ? "مختبر" : "أشعة"}</td><td>${r.name}</td><td>${r.date}</td><td>${r.dept}</td></tr>`).join("")}</tbody></table>`;
-            printHtml(html, `ملف المريض — ${p.name}`);
+            printHtml(html, `ملف المريض — ${p.name}`, undefined, undefined, true, dept);
             setPrintModal(false);
           }}><Printer size={14} />طباعة</Btn>
           <Btn variant="outline" onClick={() => setPrintModal(false)}>إلغاء</Btn>
@@ -4096,7 +4135,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
             <Btn small variant="outline-white" onClick={() => setPrintModal(true)}><Printer size={13} />طباعة الملف</Btn>
             <Btn small variant="outline-white" onClick={() => {
               const html = `<h2>كشف الحساب المالي — ${p.name}${isAdmin ? "" : ` (قسم ${deptShort(dept)} فقط)`}</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">الاسم</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div></div><h2>تفاصيل الفواتير</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>إجمالي الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${finSess.map(s => `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي</td><td style="font-weight:bold">${fmt(totalAmt)}</td><td class="in" style="font-weight:bold">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}" style="font-weight:bold">${liveDebt > 0 ? fmt(liveDebt) : "مسدد بالكامل ✓"}</td></tr></tfoot></table>`;
-              printHtml(html, `كشف الحساب المالي — ${p.name}`);
+              printHtml(html, `كشف الحساب المالي — ${p.name}`, undefined, undefined, true, dept);
             }}><Receipt size={13} />كشف الحساب</Btn>
           </div>
         </div>
@@ -4461,13 +4500,14 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
 
 // ─── NEW SESSION ────────────────────────────────────────────────────────────────
 
-function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs, setSessionFiles, customDepts = [] }: {
+function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs, setSessionFiles, customDepts = [], insurances = [], setInvoices }: {
   dept: string; patientId: string; sessions: PatientSession[]; setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
   doDeposit: (dept: string, amount: number, title: string, type: string) => void; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>;
   debts: DebtRow[]; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; diagnoses: DiagnosisEntry[]; setDiagnoses: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;
   loggedUser?: LoggedUser | null; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>;
   setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>;
   customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>;
+  insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
 }) {
   const p = mockPatients.find(x => x.id === patientId) || mockPatients[0];
   // ── نفس إصلاح NewPatientScreen: قسم مخصص يجب ألا يسقط احتياطياً على "الجراحة" ──
@@ -4487,7 +4527,25 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   const [amount, setAmount] = useState(""); const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
   const [saving, setSaving] = useState(false); const [saved, setSaved] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const totalAmt = parseFloat(amount) || 0; const discAmt = Math.min(parseFloat(discount) || 0, totalAmt); const netAmt = totalAmt - discAmt; const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netAmt - paidAmt); const creditAmt = Math.max(0, paidAmt - netAmt);
+  // ── التأمين الصحي: نفس منطق NewPatientScreen/LabSessionScreen — لم تكن هذه
+  //    الشاشة (الجلسات الجديدة لمريض موجود بالعيادة/الجراحة/الأقسام المخصصة)
+  //    تدعم شركات التأمين إطلاقاً، فكان أي مريض عنده تأمين لا يُطبَّق عليه أي
+  //    خصم عند إنشاء جلسة جديدة من هنا. ──
+  const [payMode, setPayMode] = useState<"cash" | "insurance" | "company">("cash");
+  const [insuranceCompany, setInsuranceCompany] = useState("");
+  const [insClaimNo, setInsClaimNo] = useState("");
+  // ── تطبيق شركة التأمين الافتراضية للمريض تلقائياً بمجرد فتح الشاشة ──
+  useEffect(() => {
+    if (p && (p as any).insurance && (p as any).insuranceCompany) {
+      setPayMode("insurance");
+      setInsuranceCompany((p as any).insuranceCompany);
+    }
+  }, [p?.id]);
+  const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
+  const insDiscPct = insComp ? insComp.discountClinic : 0;
+  const totalAmt = parseFloat(amount) || 0; const discAmt = Math.min(parseFloat(discount) || 0, totalAmt);
+  const insDiscAmt = Math.min(totalAmt - discAmt, (totalAmt - discAmt) * insDiscPct / 100);
+  const netAmt = Math.max(0, totalAmt - discAmt - insDiscAmt); const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netAmt - paidAmt); const creditAmt = Math.max(0, paidAmt - netAmt);
   const prevDebt = debts.filter(d => d.pid === p.id).reduce((s, d) => s + d.amount, 0);
   const toggleDiag = (n: string) => setSelDiag(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n]);
   const addMed = () => setMeds(p => [...p, { name: "", dose: "", freq: "", duration: "" }]);
@@ -4548,6 +4606,12 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
     setSaving(true);
     if (paidAmt > 0) doDeposit(dept, paidAmt, `دفعة مريض — ${p.name}`, "إيراد مريض");
     if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: p.name, pid: p.id, dept: deptInfo.short, amount: debtAmt, date: today, days: 0, phone: p.phone }; setDebts(prev => [nd, ...prev]); api.finance.debts.create({ patient: p.name, patient_id: p.id, dept: deptInfo.short, amount: debtAmt, date: api.parseDateISO(today), phone: p.phone }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen/LabSessionScreen) ──
+    if (insComp && insDiscAmt > 0 && setInvoices) {
+      const insId = `ins-${Date.now()}`;
+      setInvoices(p2 => [...p2, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: p.id, patientName: p.name }]);
+      api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: p.id, patient_name: p.name });
+    }
     const ns: PatientSession = { id: Date.now(), patientId: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: today, diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, labRefs, radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt };
     setSessions(prev => [ns, ...prev]);
     api.sessions.create({ patient_id: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: api.parseDateISO(today), diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, lab_refs: labRefs, rad_refs: radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt }).then((r: any) => {
@@ -4726,6 +4790,37 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
         <div className="space-y-4">
           {/* Prev Debt Banner */}
           {prevDebt > 0 && <div className="px-4 py-3 rounded-xl flex items-start gap-3" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}><AlertTriangle size={16} className="text-[#FF8F00] flex-shrink-0 mt-0.5" /><p className="text-sm font-bold text-[#E65100]">⚠️ هذا المريض لديه دين سابق بقيمة {fmt(prevDebt)}</p></div>}
+          {/* طريقة الدفع / التأمين الصحي */}
+          <Card title="طريقة الدفع">
+            <div className="grid grid-cols-3 gap-3">
+              {[{ v: "cash", l: "نقد", Icon: Wallet }, { v: "insurance", l: "تأمين صحي", Icon: Shield }, { v: "company", l: "شركة / جهة", Icon: Briefcase }].map(o => (
+                <button key={o.v} type="button" onClick={() => setPayMode(o.v as any)}
+                  className={`flex flex-col items-center gap-2 py-4 rounded-xl text-xs font-semibold transition-all ${payMode === o.v ? "bg-[#1B3A6B] text-white shadow-sm" : "bg-[#FAFAFA] text-[#555] hover:bg-[#EBF3FB]"}`}
+                  style={{ border: `2px solid ${payMode === o.v ? "#1B3A6B" : "#E0E0E0"}` }}>
+                  <o.Icon size={20} />{o.l}
+                </button>
+              ))}
+            </div>
+            {payMode === "insurance" && (
+              <div className="mt-4 flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">شركة التأمين</label>
+                <select value={insuranceCompany} onChange={e => setInsuranceCompany(e.target.value)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                  <option value="">— اختر شركة التأمين —</option>
+                  {insurances.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+                {insComp && insDiscPct > 0 && (
+                  <div className="mt-2 p-2 rounded-lg flex flex-col gap-2 text-xs text-[#1B3A6B]" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+                    <span className="flex items-center gap-2"><Shield size={12} />خصم تأمين {insDiscPct}% — دين على {insComp.name}: <strong>{fmt(insDiscAmt)}</strong></span>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-semibold text-[#1B3A6B]">رقم كشفية التأمين <span className="text-[#999] font-normal">(اختياري)</span></label>
+                      <input value={insClaimNo} onChange={e => setInsClaimNo(e.target.value)} placeholder="رقم الكشفية / رقم الموافقة" className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #BBDEFB", backgroundColor: "white" }} />
+                    </div>
+                  </div>
+                )}
+                {insuranceCompany && !insComp && <p className="text-xs text-[#D32F2F]">لم يُعثر على شركة التأمين المحددة</p>}
+              </div>
+            )}
+          </Card>
           {/* Financials */}
           <Card title="التفاصيل المالية">
             <div className="space-y-3">
@@ -4733,6 +4828,7 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
               <InputField label="الخصم (₪)" type="number" placeholder="0" value={discount} onChange={setDiscount} />
               <InputField label="المبلغ المدفوع (₪)" type="number" placeholder="0" value={paid} onChange={setPaid} />
               {totalAmt > 0 && <div className="space-y-2 border-t border-[#E0E0E0] pt-2">
+                {insComp && insDiscAmt > 0 && <div className="flex justify-between text-sm"><span className="text-[#555]">تغطية التأمين ({insComp.name}):</span><span className="font-semibold text-[#1B3A6B]">{fmt(insDiscAmt)}</span></div>}
                 {discAmt > 0 && <div className="flex justify-between text-sm"><span className="text-[#555]">بعد الخصم:</span><span className="font-semibold">{fmt(netAmt)}</span></div>}
                 <div className={`flex items-center justify-between p-3 rounded-xl font-bold text-sm ${debtAmt > 0 ? "bg-[#FFEBEE] text-[#D32F2F]" : "bg-[#E8F5E9] text-[#388E3C]"}`} style={{ border: `1px solid ${debtAmt > 0 ? "#FFCDD2" : "#C8E6C9"}` }}>
                   <span>{debtAmt > 0 ? "الباقي على المريض:" : creditAmt > 0 ? "رصيد لصالح المريض:" : "مسدد بالكامل ✓"}</span>
@@ -4800,6 +4896,15 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   const [payMode, setPayMode] = useState<"cash" | "insurance" | "company">("cash");
   const [insuranceCompany, setInsuranceCompany] = useState("");
   const [insClaimNo, setInsClaimNo] = useState("");
+  // ── تطبيق شركة التأمين الافتراضية للمريض تلقائياً بمجرد اختياره — بدل ما
+  //    تبقى "نقداً" دائماً وتحتاج اختيار الشركة يدوياً كل مرة رغم أن المريض
+  //    عنده شركة تأمين محفوظة بملفه ──
+  useEffect(() => {
+    if (selPat && (selPat as any).insurance && (selPat as any).insuranceCompany) {
+      setPayMode("insurance");
+      setInsuranceCompany((selPat as any).insuranceCompany);
+    }
+  }, [selPat]);
   const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
   const [selTests, setSelTests] = useState<string[]>([]);
   const [testSearch, setTestSearch] = useState(""); const [catFilter, setCatFilter] = useState("الكل");
@@ -4863,46 +4968,16 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
       api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "lab", claim_no: insClaimNo.trim() || null, patient_id: effectivePatId, patient_name: patName });
     }
 
-    // ── خصم الكيتات تلقائياً لكل فحص مُختار — عبر الربط الحقيقي (kitInventoryId)
-    //    المسجَّل بدليل الفحوصات، وليس مطابقة اسم نصية بين الفحص وصنف المستلزمات
-    //    (كانت هذه المطابقة النصية غير موجودة أصلاً كخيار بالواجهة، فما كان في
-    //    خصم تلقائي إطلاقاً مهما عبّيت خانة "اسم الكيت" بالفحص). ──────────────
-    const selectedTestObjs = selTests.map(c => _labTests.find(t => t.code === c)).filter(Boolean) as LabTest[];
-    const deductedKits: string[] = [];
-    const emptyKits: string[] = [];
-    const deductedKitsInfo: { name: string; newQty: number; threshold: number }[] = [];
-    const linkedInventoryIds = selectedTestObjs.map(t => t.kitInventoryId).filter((id): id is number => id != null);
-    // ── ملاحظة: تكلفة شراء الكيت أصلاً بتنخصم من صندوق القسم مرة وحدة وقت
-    //    اعتماد طلب الشراء (doWithdraw بـ onApprovePurchaseRequest) — الخصم
-    //    هون عند الاستخدام هو تسجيل كمية مستهلكة فقط بالمخزون، بدون أي خصم
-    //    مالي إضافي من الصندوق، تجنباً لاحتساب نفس التكلفة مرتين. ──
-    if (setInventory && computeKitStatus && linkedInventoryIds.length > 0) {
-      setInventory(prev => prev.map(kit => {
-        const timesNeeded = linkedInventoryIds.filter(id => id === kit.id).length;
-        if (timesNeeded === 0) return kit;
-        if (kit.qty <= 0) { emptyKits.push(kit.name); return kit; }
-        const deductAmt = Math.min(timesNeeded, kit.qty);
-        const newQty = kit.qty - deductAmt;
-        deductedKits.push(kit.name);
-        deductedKitsInfo.push({ name: kit.name, newQty, threshold: kit.threshold });
-        api.lab.inventory.update(kit.id, { name: kit.name, item_type: kit.itemType, qty: newQty, threshold: kit.threshold, unit: kit.unit, cost_per_unit: kit.unitCost, notes: kit.notes });
-        return { ...kit, qty: newQty, status: computeKitStatus(newQty, kit.threshold) };
-      }));
-      // ── تحقق فوري من حد التنبيه بعد الخصم ─────────────────────────────
-      if (checkAndNotify) {
-        deductedKitsInfo.forEach(k => { if (k.newQty <= k.threshold) checkAndNotify(k.name, "lab", "مختبر التحاليل", k.newQty, k.threshold); });
-      }
-    }
-
+    // ── ملاحظة: خصم مخزون الكيتات لا يحصل هنا عند حجز/تسجيل الفحص — يحصل فقط
+    //    عند اعتماد الفحص كمكتمل (طباعة التقرير الرسمي عبر printAndComplete)،
+    //    حتى لا يُخصم المخزون على فحص محجوز لكنه لم يُنجَز فعلياً بعد. ──
     const labTestNames = selTests.map(c => _labTests.find(t => t.code === c)?.name || c);
     const labLid = Date.now();
     setBoard(p => [{ id: labLid, patient: patName, tests: labTestNames, time: labTime, status: "pending" as const, labType: labTypeFilter }, ...p]);
     api.queues.create({ dept: "lab", patient_id: effectivePatId, patient_name: patName, items: labTestNames, queue_time: labTime, status: "pending", notes: labTypeFilter === "external" ? "lab_type:external" : "lab_type:internal" }).then(r => { if (r) setBoard(p => p.map(s => s.id === labLid ? { ...s, id: r.id } : s)); }).catch(() => { });
 
-    // إشعار موحد بنتيجة الجلسة والخصم
-    let msg = `تم تسجيل ${selTests.length} فحص لـ ${patName}${debtAmt > 0 ? " — دين: " + fmt(debtAmt) : creditAmt > 0 ? " — رصيد: " + fmt(creditAmt) : " ✓"}`;
-    if (deductedKits.length > 0) msg += ` | خُصم: ${deductedKits.join("، ")}`;
-    if (emptyKits.length > 0) toast(`تحذير: ${emptyKits.join("، ")} — الكمية صفر، لم يُخصم`, "warning");
+    // إشعار بنتيجة الجلسة
+    const msg = `تم تسجيل ${selTests.length} فحص لـ ${patName}${debtAmt > 0 ? " — دين: " + fmt(debtAmt) : creditAmt > 0 ? " — رصيد: " + fmt(creditAmt) : " ✓"}`;
     toast(msg, "success");
     setLastSaved({ name: patName, tests: selTests.length, debtAmt });
     setSaving(false);
@@ -4962,10 +5037,38 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     api.queues.updateStatus(id, status, snapshot).catch(() => { });
     toast(status === "done" ? "تم تحديث النتائج ✓" : "تم حفظ النتائج — يبقى الفحص قيد الإنجاز حتى طباعة التقرير الرسمي", "success");
   };
-  // ── طباعة التقرير الرسمي هي ما يُنهي الفحص فعلياً وينقله إلى "مكتمل" ──
+  // ── طباعة التقرير الرسمي هي ما يُنهي الفحص فعلياً وينقله إلى "مكتمل" — وهذه
+  //    هي اللحظة الصحيحة لخصم مخزون الكيتات (وليس عند حجز/طلب الفحص)، حتى لا
+  //    يُخصم المخزون على فحص محجوز لكنه لم يُنجَز فعلياً بعد. الخصم يحصل هنا
+  //    بغض النظر من أي شاشة حُجز الفحص أصلاً (تسجيل مريض جديد أو تسجيل فحص
+  //    مباشرة)، لأن كل الفحوصات تمر بنفس قائمة الانتظار المشتركة (board). ──
   const printAndComplete = (id: number, patientName: string) => {
     const snapshot = buildLabResultsSnapshot();
+    const current = board.find(s => s.id === id);
+    const wasAlreadyDone = current?.status === "done";
     setBoard(p => p.map(s => s.id === id ? { ...s, status: "done" as const, results: snapshot } : s));
+    // ── خصم الكيتات مرة واحدة فقط، أول لحظة يتحول فيها الفحص من "قيد الإنجاز"
+    //    إلى "مكتمل" — لو أُعيدت طباعة/تعديل فحص مكتمل أصلاً، لا نُعيد الخصم ──
+    if (!wasAlreadyDone && setInventory && computeKitStatus) {
+      const testObjs = (current?.tests || []).map(name => _labTests.find(t => t.name === name)).filter(Boolean) as LabTest[];
+      const linkedInventoryIds = testObjs.map(t => t.kitInventoryId).filter((iid): iid is number => iid != null);
+      if (linkedInventoryIds.length > 0) {
+        const deductedKits: string[] = []; const emptyKits: string[] = [];
+        setInventory(prev => prev.map(kit => {
+          const timesNeeded = linkedInventoryIds.filter(iid => iid === kit.id).length;
+          if (timesNeeded === 0) return kit;
+          if (kit.qty <= 0) { emptyKits.push(kit.name); return kit; }
+          const deductAmt = Math.min(timesNeeded, kit.qty);
+          const newQty = kit.qty - deductAmt;
+          deductedKits.push(kit.name);
+          api.lab.inventory.update(kit.id, { name: kit.name, item_type: kit.itemType, qty: newQty, threshold: kit.threshold, unit: kit.unit, cost_per_unit: kit.unitCost, notes: kit.notes });
+          if (checkAndNotify && newQty <= kit.threshold) checkAndNotify(kit.name, "lab", "مختبر التحاليل", newQty, kit.threshold);
+          return { ...kit, qty: newQty, status: computeKitStatus(newQty, kit.threshold) };
+        }));
+        if (deductedKits.length > 0) toast(`تم خصم من المخزون: ${deductedKits.join("، ")}`, "info");
+        if (emptyKits.length > 0) toast(`تحذير: ${emptyKits.join("، ")} — الكمية صفر، لم يُخصم`, "warning");
+      }
+    }
     printLabReport(patientName, snapshot, board.find(s => s.id === id)?.patientId);
     api.queues.updateStatus(id, "done", snapshot).catch(() => { });
     setResultsModal(null);
@@ -5352,6 +5455,15 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const [payMode, setPayMode] = useState<"cash" | "insurance" | "company">("cash");
   const [insuranceCompany, setInsuranceCompany] = useState("");
   const [insClaimNo, setInsClaimNo] = useState("");
+  // ── تطبيق شركة التأمين الافتراضية للمريض تلقائياً بمجرد اختياره — بدل ما
+  //    تبقى "نقداً" دائماً وتحتاج اختيار الشركة يدوياً كل مرة رغم أن المريض
+  //    عنده شركة تأمين محفوظة بملفه ──
+  useEffect(() => {
+    if (selPat && (selPat as any).insurance && (selPat as any).insuranceCompany) {
+      setPayMode("insurance");
+      setInsuranceCompany((selPat as any).insuranceCompany);
+    }
+  }, [selPat]);
   const [selImgs, setSelImgs] = useState<number[]>([]);
   const [deviceFilter, setDeviceFilter] = useState("الكل");
   const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
@@ -8719,9 +8831,9 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const [payslipModal, setPayslipModal] = useState<{ emp: Employee; from: string; to: string } | null>(null);
   const getPayslipData = (e: Employee, from: string, to: string) => {
     const sm = getStaffMember(e);
-    const pDepts = sm?.percentageDepts || [];
+    const pDepts = effectivePercentageDepts(sm);
     const isFix = !sm || sm.salaryType === "fixed";
-    const rangeSessions = sessions.filter(s => s.doctor === e.name && (pDepts.length === 0 || pDepts.includes(s.dept)) && inRangeDDMMYYYY(s.date, from, to));
+    const rangeSessions = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, from, to));
     const rangeRevenue = rangeSessions.reduce((sum, s) => sum + s.paid, 0);
     const commission = isFix ? 0 : Math.round(rangeRevenue * ((sm!.percentageValue || 0) / 100));
     const pendingAdvances = employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid);
@@ -8758,8 +8870,8 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const getCommission = (e: Employee) => {
     const sm = getStaffMember(e);
     if (!sm || sm.salaryType === "fixed") return 0;
-    const pDepts = sm.percentageDepts || [];
-    const empRevenue = sessions.filter(s => s.doctor === e.name && (pDepts.length === 0 || pDepts.includes(s.dept))).reduce((sum, s) => sum + s.paid, 0);
+    const pDepts = effectivePercentageDepts(sm);
+    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept)).reduce((sum, s) => sum + s.paid, 0);
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
   const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).reduce((s, a) => s + a.amount, 0);
@@ -10078,7 +10190,7 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   const deptShortById = (id: string) => allDepts.find(d => d.id === id)?.short || id;
   const [tab, setTab] = useState("patients");
   const [fromDate, setFromDate] = useState(() => _localISO()); const [toDate, setToDate] = useState(() => _localISO());
-  const TABS = [{ k: "patients", l: "كشوفات المرضى" }, { k: "companies", l: "كشوفات شركات التأمين" }, { k: "insurance", l: "ملخص المؤمَّنين" }, { k: "suppliers", l: "كشوفات شركات الموردين" }, { k: "depts", l: "كشوفات الأقسام" }, { k: "custom", l: "التقارير المخصصة" }];
+  const TABS = [{ k: "patients", l: "كشوفات المرضى" }, { k: "companies", l: "كشوفات شركات التأمين" }, { k: "suppliers", l: "كشوفات شركات الموردين" }, { k: "depts", l: "كشوفات الأقسام" }, { k: "custom", l: "التقارير المخصصة" }];
   const parseStrDate = (s: string) => { if (!s) return null; const clean = s.trim(); if (clean.includes("/")) { const p = clean.split("/"); if (p.length === 3) { const d = parseInt(p[0]), m = parseInt(p[1]), y = parseInt(p[2]); if (!isNaN(y) && y > 2000) return new Date(y, m - 1, d, 12, 0, 0); } } const parts = clean.split("-"); if (parts.length === 3 && parts[0].length === 4) { const y = parseInt(parts[0]), m = parseInt(parts[1]), d = parseInt(parts[2]); if (!isNaN(y)) return new Date(y, m - 1, d, 12, 0, 0); } const iso = Date.parse(clean); if (!isNaN(iso)) { const dt = new Date(iso); dt.setHours(12, 0, 0, 0); return dt; } return null; };
   const inRange = (d: string) => { const date = parseStrDate(d); if (!fromDate || !toDate) return true; if (!date) return false; const from = parseStrDate(fromDate); if (from) from.setHours(0, 0, 0, 0); const to = parseStrDate(toDate); if (to) to.setHours(23, 59, 59, 999); return (from ? date >= from : true) && (to ? date <= to : true); };
   // ── Tab 1
@@ -10116,12 +10228,11 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   const p5Patients = mockPatients.filter(p => sessions.some(s => s.patientId === p.id && inRange(s.date)));
   const allFields = ["الاسم", "رقم الهوية", "القسم", "الجوال", "المبلغ", "المدفوع", "الدين", "التاريخ", "التشخيص", "التأمين"];
   const p5Toggle = (f: string) => setP5Fields(p => p.includes(f) ? p.filter(x => x !== f) : [...p, f]);
-  // ── Tab 3 — ملخص المؤمَّنين: مبني على فواتير التأمين الفعلية (invoices) وليس
-  //    فقط علم "مؤمَّن" العام على المريض — هذا يسمح فعلياً بالفلترة حسب شركة
-  //    تأمين محددة وقسم محدد، وهو ما كان مفقوداً (الفلاتر كانت موجودة شكلياً
-  //    بدون value/onChange، وما كانت مربوطة بأي بيانات فعلياً). ──
-  const [p3Company, setP3Company] = useState(""); const [p3Dept, setP3Dept] = useState("");
-  const p3Invoices = invoices.filter(i => inRange(i.date) && (!p3Company || i.company === p3Company) && (!p3Dept || i.dept === p3Dept));
+  // ── ملخص المؤمَّنين (مدمج داخل تبويب "كشوفات شركات التأمين"): مبني على فواتير
+  //    التأمين الفعلية (invoices) وليس فقط علم "مؤمَّن" العام على المريض — يُعاد
+  //    استخدام فلتر الشركة (p2Company) نفسه من أعلى التبويب، مع فلتر قسم خاص به. ──
+  const [p3Dept, setP3Dept] = useState("");
+  const p3Invoices = invoices.filter(i => inRange(i.date) && (!p2Company || i.company === p2Company) && (!p3Dept || i.dept === p3Dept));
   const p3PatientIds = [...new Set(p3Invoices.map(i => i.patientId).filter(Boolean))] as string[];
   const p3PatientRows = p3PatientIds.map(pid => {
     const invs = p3Invoices.filter(i => i.patientId === pid);
@@ -10218,6 +10329,7 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
               <select value={p2Company} onChange={e => setP2Company(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل شركات التأمين</option>{companies.map(c => <option key={c}>{c}</option>)}</select>
               <select value={p2Status} onChange={e => setP2Status(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="all">كل المطالبات</option><option value="paid">محصَّلة فقط</option><option value="unpaid">غير محصَّلة</option></select>
+              <select value={p3Dept} onChange={e => setP3Dept(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل الأقسام (لملخص المؤمَّنين)</option>{allDepts.map(d => <option key={d.id} value={d.id}>{d.short}</option>)}</select>
               <div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = compInvoices.map(inv => [inv.id, inv.company, inv.patientName || "—", inv.claimNo || "—", inv.dept, fmt(inv.total), fmt(inv.paid), fmt(inv.remaining), inv.status === "paid" ? "محصَّل" : inv.status === "partial" ? "جزئي" : "غير محصَّل", inv.date]); const ws = XLSX.utils.aoa_to_sheet([["رقم الفاتورة", "شركة التأمين", "اسم المريض", "رقم الكشفية", "القسم", "المبلغ", "المدفوع", "المتبقي", "الحالة", "التاريخ"], ...rows]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "كشف شركات التأمين"); XLSX.writeFile(wb, `كشف_تأمين_${p2Company || "الكل"}.xlsx`); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي المطالبات</div><div class="kpi-v">${fmt(compInvoices.reduce((s, i) => s + i.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">محصَّل</div><div class="kpi-v in">${fmt(compInvoices.reduce((s, i) => s + i.paid, 0))}</div></div><div class="kpi-box"><div class="kpi-l">متبقي</div><div class="kpi-v out">${fmt(compInvoices.reduce((s, i) => s + i.remaining, 0))}</div></div></div><h2>كشف حساب شركة تأمين${p2Company ? " — " + p2Company : ""}</h2><table><thead><tr><th>رقم الفاتورة</th><th>شركة التأمين</th><th>اسم المريض</th><th>رقم الكشفية</th><th>القسم</th><th>المبلغ</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${compInvoices.map(i => `<tr><td>${i.id}</td><td>${i.company}</td><td>${i.patientName || "—"}</td><td>${i.claimNo || "—"}</td><td>${deptShortById(i.dept)}</td><td>${fmt(i.total)}</td><td class="in">${fmt(i.paid)}</td><td class="${i.remaining > 0 ? "out" : "in"}">${fmt(i.remaining)}</td><td>${i.status === "paid" ? "محصَّل ✓" : "غير محصَّل"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `كشف حساب شركة تأمين${p2Company ? " — " + p2Company : ""}`, fromDate, toDate); }}><Printer size={14} />PDF</Btn></div>
             </div>
           </Card>
@@ -10251,25 +10363,13 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
               </table>
             )}
           </Card>
-        </div>
-      )}
-
-      {tab === "insurance" && (
-        <div className="space-y-4">
-          <Card title="فلاتر التأمين">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <select value={p3Company} onChange={e => setP3Company(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل شركات التأمين</option>{companies.map(c => <option key={c}>{c}</option>)}</select>
-              <select value={p3Dept} onChange={e => setP3Dept(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل الأقسام</option>{allDepts.map(d => <option key={d.id} value={d.id}>{d.short}</option>)}</select>
-              <Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">المرضى المؤمَّنون</div><div class="kpi-v">${p3PatientRows.length}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي المطالبات</div><div class="kpi-v">${fmt(p3PatientRows.reduce((s, r) => s + r.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">المحصَّل</div><div class="kpi-v in">${fmt(p3PatientRows.reduce((s, r) => s + r.collected, 0))}</div></div></div><h2>ملخص المؤمَّنين${p3Company ? " — " + p3Company : ""}</h2><table><thead><tr><th>اسم المريض</th><th>رقم الملف</th><th>عدد المطالبات</th><th>إجمالي المطالبات</th><th>المحصَّل</th><th>نسبة التحصيل</th></tr></thead><tbody>${p3PatientRows.map(r => `<tr><td>${r.name}</td><td>${r.pid}</td><td>${r.claims}</td><td>${fmt(r.total)}</td><td class="in">${fmt(r.collected)}</td><td>${r.rate}%</td></tr>`).join("")}</tbody></table>`; printHtml(html, `ملخص المؤمَّنين${p3Company ? " — " + p3Company : ""}`, fromDate, toDate); }}><Printer size={14} />تقرير PDF</Btn>
+          <Card title="ملخص المؤمَّنين" action={<Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">المرضى المؤمَّنون</div><div class="kpi-v">${p3PatientRows.length}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي المطالبات</div><div class="kpi-v">${fmt(p3PatientRows.reduce((s, r) => s + r.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">المحصَّل</div><div class="kpi-v in">${fmt(p3PatientRows.reduce((s, r) => s + r.collected, 0))}</div></div></div><h2>ملخص المؤمَّنين${p2Company ? " — " + p2Company : ""}</h2><table><thead><tr><th>اسم المريض</th><th>رقم الملف</th><th>عدد المطالبات</th><th>إجمالي المطالبات</th><th>المحصَّل</th><th>نسبة التحصيل</th></tr></thead><tbody>${p3PatientRows.map(r => `<tr><td>${r.name}</td><td>${r.pid}</td><td>${r.claims}</td><td>${fmt(r.total)}</td><td class="in">${fmt(r.collected)}</td><td>${r.rate}%</td></tr>`).join("")}</tbody></table>`; printHtml(html, `ملخص المؤمَّنين${p2Company ? " — " + p2Company : ""}`, fromDate, toDate); }}><Printer size={14} />تقرير PDF</Btn>}>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+              <KPICard title="المرضى المؤمَّنون" value={String(p3PatientRows.length)} Icon={Users} color="secondary" />
+              <KPICard title="عدد المطالبات" value={String(p3Invoices.length)} Icon={FileText} color="secondary" />
+              <KPICard title="إجمالي المطالبات" value={fmt(p3PatientRows.reduce((s, r) => s + r.total, 0))} Icon={DollarSign} color="primary" />
+              <KPICard title="المحصَّل" value={fmt(p3PatientRows.reduce((s, r) => s + r.collected, 0))} Icon={CheckCircle} color="success" />
             </div>
-          </Card>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <KPICard title="المرضى المؤمَّنون" value={String(p3PatientRows.length)} Icon={Users} color="secondary" />
-            <KPICard title="عدد المطالبات" value={String(p3Invoices.length)} Icon={FileText} color="secondary" />
-            <KPICard title="إجمالي المطالبات" value={fmt(p3PatientRows.reduce((s, r) => s + r.total, 0))} Icon={DollarSign} color="primary" />
-            <KPICard title="المحصَّل" value={fmt(p3PatientRows.reduce((s, r) => s + r.collected, 0))} Icon={CheckCircle} color="success" />
-          </div>
-          <Card title="المرضى المؤمَّنون">
             {p3PatientRows.length === 0 ? <EmptyState msg="لا توجد مطالبات تأمين تطابق الفلتر" /> : (
               <table className="w-full text-sm">
                 <THead cols={["اسم المريض", "رقم الملف", "عدد المطالبات", "إجمالي المطالبات", "المحصَّل", "نسبة التحصيل"]} />
@@ -11589,8 +11689,8 @@ function StaffManagementScreen({
           <div className="space-y-3">
             {filtered.map(s => {
               const deptCount = Object.values(s.deptPermissions ?? {}).filter((d: any) => d.canView).length;
-              const pDepts = s.percentageDepts || [];
-              const empRevenue = sessions.filter(sess => sess.doctor === s.name && (pDepts.length === 0 || pDepts.includes(sess.dept))).reduce((sum, sess) => sum + sess.paid, 0);
+              const pDepts = effectivePercentageDepts(s);
+              const empRevenue = sessions.filter(sess => sess.doctor === s.name && pDepts.includes(sess.dept)).reduce((sum, sess) => sum + sess.paid, 0);
               const commissionEst = s.salaryType !== "fixed" ? Math.round(empRevenue * (s.percentageValue / 100)) : 0;
               const extraDepts = (s.assignedDepts || []).filter((id: string) => id !== s.primaryDept);
               return (
@@ -11812,11 +11912,11 @@ function StaffManagementScreen({
                 <p className="text-[#555]">
                   {(form.percentageDepts || []).length > 0
                     ? <>يُحتسب من جلساته في: <strong>{(form.percentageDepts || []).map((id: string) => [...DEPARTMENTS, ...customDepts].find(d => d.id === id)?.name || id).join("، ")}</strong></>
-                    : "يُحتسب من جميع جلساته بصرف النظر عن القسم."}
+                    : <>يُحتسب تلقائياً من أقسامه المرتبطة فقط: <strong>{effectivePercentageDepts(form as any).map((id: string) => [...DEPARTMENTS, ...customDepts].find(d => d.id === id)?.name || id).join("، ") || "لم يُحدَّد قسم بعد"}</strong></>}
                 </p>
                 {form.name && (() => {
-                  const pDepts = form.percentageDepts || [];
-                  const empSess = sessions.filter(sess => sess.doctor === form.name && (pDepts.length === 0 || pDepts.includes(sess.dept)));
+                  const pDepts = effectivePercentageDepts(form as any);
+                  const empSess = sessions.filter(sess => sess.doctor === form.name && pDepts.includes(sess.dept));
                   const empRev = empSess.reduce((s, sess) => s + sess.paid, 0);
                   return empRev > 0 ? <div className="mt-2 pt-2" style={{ borderTop: "1px solid #BBDEFB" }}>
                     <p>عدد جلساته: <strong>{empSess.length}</strong></p>
@@ -12349,8 +12449,8 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   const [payTo, setPayTo] = useState(_localISO());
   const isFixSalary = staff.salaryType === "fixed" || staff.salaryType === "both";
   const isPctSalary = staff.salaryType === "percentage" || staff.salaryType === "both";
-  const pDepts = (staff as any).percentageDepts || [];
-  const rangeSessions = sessions.filter(s => s.doctor === staff.name && (pDepts.length === 0 || pDepts.includes(s.dept)) && inRangeDDMMYYYY(s.date, payFrom, payTo));
+  const pDepts = effectivePercentageDepts(staff as any);
+  const rangeSessions = sessions.filter(s => s.doctor === staff.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, payFrom, payTo));
   const rangeRevenue = rangeSessions.reduce((sum, s) => sum + s.paid, 0);
   const commission = isPctSalary ? Math.round(rangeRevenue * ((staff.percentageValue || 0) / 100)) : 0;
   const rangeExpenseVouchers = myExpenseVouchers.filter(t => inRangeDDMMYYYY(t.date, payFrom, payTo));
@@ -13232,10 +13332,10 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} perms={deptPerms ?? undefined} insurances={insurances} />
               )}
               {subScreen === "new-patient" && activeDept && (
-                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />
+                <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />
               )}
               {subScreen === "new-session" && activeDept && (
-                <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />
+                <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />
               )}
               {subScreen === "patient-file" && activeDept && (
                 <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} perms={deptPerms ?? undefined} insurances={insurances} />
@@ -15248,7 +15348,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     const _doLoad = async () => {
-      const [dbDrawers, dbPatients, dbStaff, dbEmployees, dbAdvances, dbExternalDebts, dbInsurances, dbCustomDepts, dbAdminAccounts, dbDebts, dbEmployeeAdvances, dbLabTests, dbInventory, dbRadImages, dbSessions, dbInvoices, dbAttendance, dbPurchaseRequests, dbDiagnoses, dbSurgeryInv, dbSuppliers, dbRehabServices, dbRehabPlans, dbRehabQueue, dbReminders, dbBroadcast, dbReceiptVouchers, dbPaymentVouchers] = await Promise.all([
+      const [dbDrawers, dbPatients, dbStaff, dbEmployees, dbAdvances, dbExternalDebts, dbInsurances, dbCustomDepts, dbAdminAccounts, dbDebts, dbEmployeeAdvances, dbLabTests, dbInventory, dbRadImages, dbSessions, dbInvoices, dbAttendance, dbPurchaseRequests, dbDiagnoses, dbSurgeryInv, dbSuppliers, dbRehabServices, dbRehabPlans, dbRehabQueue, dbReminders, dbBroadcast, dbReceiptVouchers, dbPaymentVouchers, dbDeleteRequests] = await Promise.all([
         api.drawers.getAll(),
         api.patients.getAll(),
         api.staff.getAll(),
@@ -15277,6 +15377,7 @@ export default function App() {
         api.broadcast.get(),
         api.finance.receiptVouchers.getAll(),
         api.finance.paymentVouchers.getAll(),
+        api.patients.deleteRequests.getAll(),
       ]);
       console.log('[DB LOAD] Raw API results:', {
         drawers: (dbDrawers as any[])?.length, patients: (dbPatients as any[])?.length,
@@ -15342,6 +15443,16 @@ export default function App() {
       }
       if (dbAdvances && (dbAdvances as any[]).length > 0) {
         setStaffAdvanceRequests((dbAdvances as any[]).map((r: any) => ({ id: r.id, staffId: Number(r.staff_id) || 0, staffName: r.staff_name || "", dept: r.dept || "", amount: Number(r.amount) || 0, date: r.date || "", reason: r.reason || "", status: r.status || "pending", reviewedBy: r.reviewed_by || "", reviewDate: r.review_date || "", rejectionReason: r.rejection_reason || "" })));
+      }
+      // ── طلبات حذف ملفات المرضى: كانت تُنشأ محلياً فقط (setPatientDeleteRequests
+      //    بذاكرة المتصفح) بدون أي استدعاء فعلي لـ api.patients.deleteRequests.create
+      //    ولا أي تحميل لها هنا عند الإقلاع — فطلب الحذف يختفي بمجرد تحديث الصفحة،
+      //    وحساب المدير (بجلسة/جهاز مختلف) ما كان يشوفه إطلاقاً لأنه لم يُحفظ
+      //    بقاعدة البيانات أصلاً. الآن تُحمَّل هنا من قاعدة البيانات (مصدر الحقيقة
+      //    الوحيد) تماماً مثل باقي القوائم، وأصبح الإنشاء الفعلي يمر عبر الـ API
+      //    (انظر موقعي الإنشاء بالأسفل) ──
+      if (dbDeleteRequests && (dbDeleteRequests as any[]).length > 0) {
+        setPatientDeleteRequests((dbDeleteRequests as any[]).map((r: any) => ({ id: r.id, patientId: r.patient_id || "", patientName: r.patient_name || "", requestedBy: r.requested_by || "", requestDept: r.request_dept || "", requestDate: r.request_date || "", reason: r.reason || "", status: r.status || "pending", reviewedBy: r.reviewed_by || "", reviewDate: r.review_date || "", rejectionReason: r.rejection_reason || "" })));
       }
       if (dbExternalDebts && (dbExternalDebts as any[]).length > 0) {
         setExternalDebts((dbExternalDebts as any[]).map((d: any) => ({ id: d.id, dir: d.direction === "owed_by_us" ? "received" : "given", party: d.party || "", amount: Number(d.amount) || 0, date: d.date || "", note: d.note || "", status: d.status || "pending", settledDate: d.settled_date || "" })));
@@ -15745,8 +15856,8 @@ export default function App() {
     switch (route.screen) {
       case "dashboard": return <DashboardScreen drawers={drawers} debts={debts} invoices={invoices} purchaseRequests={purchaseRequests} onNavigate={setRoute} customDepts={customDepts} sessions={sessions} deptCapacity={sidebarSettings.deptCapacity} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} externalDebts={externalDebts} />;
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} insurances={insurances} />;
-      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
-      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
+      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
+      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />;
       case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} insurances={insurances} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" suppliers={suppliersRoot} />;

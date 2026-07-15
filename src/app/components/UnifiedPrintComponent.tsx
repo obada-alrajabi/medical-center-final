@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Image as ImageIcon, Printer, FileDown, Save, CheckCircle } from "lucide-react";
 import { api, type PrintSettingsRow } from "../api";
+import { openPrintPdf } from "../printPdfEngine";
 
 // ─── Unified print settings ─────────────────────────────────────────────────
 // Backed by ONE backend row per scope: "lab" | "surgery" | "rehab" |
@@ -63,74 +64,30 @@ const settingsToRowPatch = (s: UnifiedPrintSettings): Partial<PrintSettingsRow> 
   show_signature: s.showSignature,
 });
 
-export function generateUnifiedPrintHtml(
-  bodyHtml: string,
-  settings: UnifiedPrintSettings,
-  title = "طباعة"
-): string {
-  const { headerEnabled, headerImageBase64, marginTop, marginBottom, marginRight, marginLeft, fontFamily, fontSize } = settings;
-  const hasBg = headerEnabled && !!headerImageBase64;
-  const bgCss = hasBg
-    ? `background-image:url('${headerImageBase64}');background-size:100% 100%;background-repeat:no-repeat;-webkit-print-color-adjust:exact;print-color-adjust:exact;`
-    : "";
-  return `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head>
-<meta charset="UTF-8">
-<title>${title}</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&family=Cairo:wght@400;500;700&family=Amiri&display=swap');
-*{box-sizing:border-box}
-@page{size:A4;margin:0}
-body{margin:0;padding:0;background:transparent;font-family:${fontFamily},Arial,sans-serif;direction:rtl;color:#1A1A1A;font-size:${fontSize}px}
-.lh-bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;${bgCss}}
-.content-area{
-  padding:${marginTop}mm ${marginRight}mm ${marginBottom}mm ${marginLeft}mm;
-  position:relative;z-index:0;
-}
-h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px}
-th{background:#1B3A6B;color:white;padding:7px 8px;text-align:right;font-weight:700}
-td{border:1px solid #ddd;padding:5px 8px;vertical-align:middle}
-tr:nth-child(even)>td{background:#F9FAFB}
-tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
-.in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
-.kpi{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
-.kpi-box{background:#F5F7FA;border:1px solid #E0E0E0;border-radius:8px;padding:8px 16px;text-align:center}
-.kpi-l{font-size:10px;color:#777;margin-bottom:2px}.kpi-v{font-size:14px;font-weight:700;color:#1B3A6B}
-.pt-card{border:1px solid #D0D9E8;border-radius:10px;padding:16px;margin-bottom:18px;background:#fff}
-.pt-name{font-size:16px;font-weight:700;color:#1B3A6B;margin-bottom:6px}
-.pt-info{display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:10px}
-.pt-field{font-size:11px;color:#555}.pt-field b{color:#1A1A1A}
-.tests-title{font-size:12px;font-weight:700;color:#1B3A6B;margin:10px 0 4px;padding-bottom:3px;border-bottom:1px solid #E0E0E0}
-.tests-list{margin:0;padding:0 18px;font-size:12px;line-height:1.9}
-.sig-area{display:flex;justify-content:space-between;margin-top:22px;padding-top:10px;border-top:1px dashed #CCC}
-.sig-box{text-align:center;font-size:10px;color:#888}.sig-line{border-top:1px solid #888;width:120px;margin:28px auto 4px}
-.footer{margin-top:20px;font-size:9px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}
-.rm{display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:14px;border-bottom:1px solid #E8EDF5;background:#F5F8FF;padding:6px 10px;border-radius:0 0 6px 6px}
-.rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
-.rm-item strong{color:#1B3A6B}
-@media print{.pt-card{page-break-inside:avoid}}
-</style>
-</head>
-<body>
-${hasBg ? '<div class="lh-bg"></div>' : ""}
-<div class="content-area">
-${bodyHtml}
-</div>
-</body>
-</html>`;
-}
-
-export function doUnifiedPrint(bodyHtml: string, settings: UnifiedPrintSettings, title = "طباعة") {
-  const html = generateUnifiedPrintHtml(bodyHtml, settings, title);
-  const pw = window.open("", "_blank");
-  if (!pw) return;
-  pw.document.write(html);
-  pw.document.close();
-  setTimeout(() => {
-    try { pw.focus(); pw.print(); } catch {}
-  }, 500);
+// ── ملاحظة معمارية: كان هذا الملف يحتوي سابقاً على مسار طباعة منفصل تماماً
+//    (`generateUnifiedPrintHtml` + `doUnifiedPrint`) يعتمد على CSS
+//    background-image و window.print() المباشر — نفس الخدعة غير الموثوقة التي
+//    استُبدلت في كل باقي النظام بمحرك canvas+PDF الموحّد (`printPdfEngine.ts`)
+//    تحديداً بسبب اعتمادها على خيار "طباعة الخلفيات" بالمتصفح، وتكرار الهوامش
+//    الخاطئ عبر الصفحات المتعددة. أزلنا الازدواجية هنا واستبدلناها باستدعاء
+//    مباشر لنفس المحرك الموحّد (`openPrintPdf`)، حتى لا يوجد أي مسار طباعة في
+//    النظام لا يمر عبر نفس المحرك/نفس منطق الترويسة والهوامش. ──
+export async function doUnifiedPrint(bodyHtml: string, settings: UnifiedPrintSettings, title = "طباعة") {
+  await openPrintPdf({
+    title,
+    bodyHtml,
+    settings: {
+      paperSize: "A4",
+      orientation: "portrait",
+      marginTop: settings.marginTop,
+      marginRight: settings.marginRight,
+      marginBottom: settings.marginBottom,
+      marginLeft: settings.marginLeft,
+      letterheadImage: settings.headerEnabled ? (settings.headerImageBase64 || null) : null,
+      fontFamily: settings.fontFamily,
+      fontSize: settings.fontSize,
+    },
+  });
 }
 
 interface Props {
