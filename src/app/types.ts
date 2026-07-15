@@ -123,7 +123,7 @@ export type LoggedUser = { type:"admin"; adminName?:string } | { type:"staff"; s
 
 // ─── DATA MODEL TYPES (defined inline in original constants section) ───────────
 export type TestParam = { name:string; unit:string; min:string; max:string };
-export type KitParam = { name:string; unit:string; min:string; max:string };
+export type KitParam = { name:string; unit:string; min:string; max:string; value?:string };
 export type SurgeryClinicItem = { id:number; name:string; category:string; qty:number; threshold:number; expiryDate:string; notes:string };
 export type PatientDeleteRequest = { id:number; patientId:string; patientName:string; requestedBy:string; requestDept:string; requestDate:string; reason:string; status:"pending"|"approved"|"rejected"; reviewedBy?:string; reviewDate?:string; rejectionReason?:string };
 export type RehabPlan = { id:number; patientId:string; patientName:string; diagnosis:string; totalSessions:number; completedSessions:number; pricePerSession:number; planPrice:number; pricingMode:"per-session"|"plan"; specialist:string; status:"active"|"completed"|"cancelled"; startDate:string };

@@ -2772,6 +2772,8 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   const [insClaimNo, setInsClaimNo] = useState("");
   const [prefillSearch, setPrefillSearch] = useState("");
   const [fileId] = useState(() => generatePatientId());
+  // ── الرقم الحقيقي المؤكَّد من السيرفر بعد الحفظ (قد يختلف عن fileId في حالة تعارض نادر) ──
+  const [savedEffectiveId, setSavedEffectiveId] = useState<string | null>(null);
   const [dupWarning, setDupWarning] = useState<typeof mockPatients[0] | null>(null);
   // ── Existing-patient link: when an existing patient is selected from prefill search,
   //    track them here so we DON'T create a duplicate record on save ──
@@ -2885,7 +2887,11 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   // ── Insurance discount logic ──
   const insComp = insurances.find(c => c.name === form.insuranceCompany);
   const insDiscPct = insComp ? (isLab ? insComp.discountLab : isRad ? insComp.discountRad : insComp.discountClinic) : 0;
-  const insDiscAmt = basePrice * insDiscPct / 100;
+  // ── نسبة التأمين تُحسَب من المبلغ بعد الخصم اليدوي (مش من السعر الأصلي
+  //    مباشرة) — وإلا لو استُخدم خصم يدوي كبير مع خصم تأمين كبير سوا، مجموعهم
+  //    ممكن يتجاوز قيمة الخدمة الفعلية، فتنحسب فاتورة شركة التأمين بمبلغ أكبر
+  //    من قيمة الخدمة بعد الخصم اليدوي — بدون ما ينعكس هذا الفرق على أي طرف. ──
+  const insDiscAmt = Math.max(0, basePrice - discAmt) * insDiscPct / 100;
   const v1 = () => {
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = "الاسم إلزامي";
@@ -2908,6 +2914,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       // locally pre-generated fileId — this guarantees no session/debt/queue record is
       // ever created against a patient row that doesn't truly exist in the database.
       let effectiveId = prefillPatient ? prefillPatient.id : fileId;
+      setSavedEffectiveId(effectiveId);
       if (!prefillPatient && !mockPatients.find(p => p.id === fileId)) {
         const created = await api.patients.create({ id: fileId, name: form.name, age: Number(form.age), phone: form.phone, gender: form.gender, address: form.address, email: form.email, national_id: form.id, blood_type: form.blood || "غير معروف", has_insurance: !!form.insuranceCompany, insurance_company: form.insuranceCompany, dept, date: form.joinDate || _localISO(), has_allergy: form.allergy, allergy_detail: form.allergyDetail, has_chronic: form.chronic, chronic_detail: form.chronicDetail, debt: 0, notes: form.notes });
         if (!created || !(created as any).id) {
@@ -2916,6 +2923,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           return;
         }
         effectiveId = String((created as any).id);
+        setSavedEffectiveId(effectiveId);
         mockPatients.push({ id: effectiveId, name: form.name, age: Number(form.age), phone: form.phone, blood: form.blood || "غير معروف", insurance: !!form.insuranceCompany, dept, date: joinDateDisplay, debt: 0, gender: form.gender, address: form.address, chronic: form.chronic ? form.chronicDetail : "", allergy: form.allergy ? form.allergyDetail : "" });
         _syncPatients();
       }
@@ -3041,7 +3049,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       <h2 className="text-xl font-bold text-[#1B3A6B] mb-2">تم التسجيل بنجاح</h2>
       <div className="mb-4 p-3 rounded-xl flex items-center gap-3 justify-center" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
         <span className="text-xs text-[#555]">رقم ملف المريض (لا يتكرر)</span>
-        <strong className="font-mono text-[#1B3A6B] tracking-widest text-lg">{prefillPatient?.id || fileId}</strong>
+        <strong className="font-mono text-[#1B3A6B] tracking-widest text-lg">{prefillPatient?.id || savedEffectiveId || fileId}</strong>
       </div>
       {prefillPatient && <p className="text-xs text-[#388E3C] mb-2 font-bold">✓ تم الربط بالملف الأصلي — لا يوجد تكرار في قاعدة البيانات</p>}
       {remaining > 0 && <p className="text-sm text-[#D32F2F] mb-3">دين مسجَّل: <strong>{fmt(remaining)}</strong></p>}
@@ -3054,7 +3062,11 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
         {isRad && (
           <Btn variant="secondary" onClick={() => onNavigate({ screen: "rad-session", dept })}><Layers size={14} />الانتقال لطلبات الأشعة وتعبئة النتائج</Btn>
         )}
-        <Btn variant="outline" onClick={() => onNavigate({ screen: "patient-file", dept, patientId: prefillPatient?.id || fileId })}><Eye size={14} />فتح ملف المريض</Btn>
+        {/* ── لو تعارض رقم الملف المحسوب محلياً (fileId) مع رقم موجود فعلاً،
+            السيرفر بيرجّع رقم ملف حقيقي مختلف (effectiveId) ويُستخدم هو فعلياً
+            بكل الجلسات/الديون/الفواتير — فلازم زر "فتح ملف المريض" يفتح على
+            نفس الرقم الحقيقي، وإلا بيفتح على رقم ما إله أي بيانات مالية مرتبطة به ── */}
+        <Btn variant="outline" onClick={() => onNavigate({ screen: "patient-file", dept, patientId: prefillPatient?.id || savedEffectiveId || fileId })}><Eye size={14} />فتح ملف المريض</Btn>
       </div>
     </div>
   );
@@ -4513,7 +4525,10 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
               <div className="mt-4 pt-4" style={{ borderTop: "1px solid #F0F0F0" }}>
                 <p className="text-xs font-bold text-[#D32F2F] mb-2">📌 تفاصيل الديون المتبقية</p>
                 <div className="space-y-1.5">
-                  {debts.filter(d => d.pid === p.id && canSeeFinance(d.dept)).map(d => (
+                  {/* ── debts.dept مخزّن بالاسم المختصر مش بمعرّف القسم — canSeeFinance
+                      مصمَّمة لمقارنة sessions (اللي عندها معرّف القسم الخام)، فكانت
+                      تفشل دايماً هون وتخفي كل الديون بالتفصيل رغم ظهور المجموع فوق ──*/}
+                  {debts.filter(d => d.pid === p.id && (isAdmin || d.dept === deptShort(dept))).map(d => (
                     <div key={d.id} className="flex items-center justify-between px-3 py-2 rounded-lg text-xs" style={{ backgroundColor: "#FFF8F8", border: "1px solid #FFCDD2" }}>
                       <div className="flex items-center gap-2"><AlertCircle size={12} className="text-[#D32F2F]" /><span className="text-[#444]">{d.dept}</span><span className="text-[#999]">· {d.date}</span></div>
                       <span className="font-bold text-[#D32F2F]">{fmt(d.amount)}</span>
@@ -4949,7 +4964,6 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   const [board, setBoard] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> }[]>([]);
   const [resultsModal, setResultsModal] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> } | null>(null);
   useEffect(() => { api.queues.getAll("lab").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patientId: r.patient_id || null, patient: r.patient_name, tests: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", labType: typeof r.notes === "string" && r.notes.includes("lab_type:external") ? "external" as const : "internal" as const, results: r.results || undefined }))); }).catch(() => { }); }, []);
-  const [resultVals, setResultVals] = useState<Record<string, string>>({});
   const today = _today();
   const LAB_FILTER_CATS = ["الكل", ...LAB_CATS];
   const filteredTests = _labTests.filter(t => {
@@ -4965,7 +4979,7 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   //    يُستثنى من دين/مبلغ المريض ويُسجَّل كدين منفصل على شركة التأمين. ──
   const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
   const insDiscPct = insComp ? insComp.discountLab : 0;
-  const insDiscAmt = Math.min(testTotal - discAmt, testTotal * insDiscPct / 100);
+  const insDiscAmt = Math.min(testTotal - discAmt, (testTotal - discAmt) * insDiscPct / 100);
   const netTotal = Math.max(0, testTotal - discAmt - insDiscAmt);
   const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netTotal - paidAmt); const creditAmt = Math.max(0, paidAmt - netTotal);
   const patName = selPat ? selPat.name : newPat.name; const patId = selPat ? selPat.id : (newPat.pid.trim() || generatePatientId());
@@ -5022,7 +5036,7 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   const buildLabResultsSnapshot = () => {
     const snap: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> = {};
     Object.keys(modalParams).forEach(testName => {
-      snap[testName] = (modalParams[testName] || []).map(p => ({ name: p.name, unit: p.unit, min: p.min, max: p.max, value: resultVals[`${testName}-${p.name}`] || "" }));
+      snap[testName] = (modalParams[testName] || []).map(p => ({ name: p.name, unit: p.unit, min: p.min, max: p.max, value: p.value || "" }));
     });
     return snap;
   };
@@ -5124,9 +5138,11 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
         toast("⚠️ تعذّر التعرّف على الفحص المحجوز بدليل الفحوصات الحالي — لم يُخصم أي مخزون (تحقّق من أن اسم الفحص لم يتغيّر بالدليل)", "warning");
       } else if (needMap.size > 0) {
         const deductedKits: string[] = []; const emptyKits: string[] = []; const partialKits: string[] = [];
+        const matchedIds = new Set<number>();
         setInventory(prev => prev.map(kit => {
           const needed = needMap.get(Number(kit.id));
           if (!needed) return kit;
+          matchedIds.add(Number(kit.id));
           if (kit.qty <= 0) { emptyKits.push(kit.name); return kit; }
           const deductAmt = Math.min(needed, kit.qty);
           const newQty = kit.qty - deductAmt;
@@ -5139,6 +5155,10 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
         if (deductedKits.length > 0) toast(`تم خصم من المخزون: ${deductedKits.join("، ")}`, "info");
         if (partialKits.length > 0) toast(`⚠️ الكمية المتوفرة غير كافية لبعض الأصناف (${partialKits.join("، ")}) — تم خصم المتوفر فقط`, "warning");
         if (emptyKits.length > 0) toast(`تحذير: ${emptyKits.join("، ")} — الكمية صفر، لم يُخصم`, "warning");
+        // ── لو صنف مرتبط بالفحص انحذف من "مستلزمات المختبر" (أو تغيّر معرّفه)،
+        //    ما بيطابق أي عنصر حالي بالمخزون — كان هاد يمر بصمت بدون أي تنبيه ──
+        const missingIds = Array.from(needMap.keys()).filter(iid => !matchedIds.has(iid));
+        if (missingIds.length > 0) toast(`⚠️ ${missingIds.length} صنف مرتبط بالفحص لم يعد موجوداً بمستلزمات المخزون — لم يُخصم له شيء. راجع ربط الفحص من "دليل الفحوصات"`, "warning");
       }
     }
     printLabReport(patientName, snapshot, board.find(s => s.id === id)?.patientId);
@@ -5154,28 +5174,29 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   const openResults = (s: typeof labSessions[0]) => {
     setResultsModal(s);
     const p: Record<string, KitParam[]> = {};
-    const vals: Record<string, string> = {};
+    // ── قيمة كل معامل صارت محفوظة داخل صف المعامل نفسه (value) بدل قاموس منفصل
+    //    مفتاحه اسم المعامل — القاموس القديم كان يخلط/يفقد القيم لو صارت
+    //    معاملين بنفس الاسم (مثلاً معاملين جدد لسا فاضي اسمهم "")، أو لو
+    //    المستخدم غيّر اسم المعامل بعد ما كتب النتيجة (المفتاح القديم يضيع). ──
     s.tests.forEach(testName => {
       // ── إذا كانت نتائج هذا الفحص محفوظة مسبقاً (من "حفظ النتائج" السابق)،
       //    حمّلها بدل إعادة تعبئة القيم الافتراضية الفارغة — هذا ما كان ناقصاً
       //    وبيخلي أي نتيجة محفوظة "تختفي" عند إعادة فتح شاشة إدخال النتائج. ──
       const saved = s.results?.[testName];
       if (saved && saved.length > 0) {
-        p[testName] = saved.map(r => ({ name: r.name, unit: r.unit, min: r.min, max: r.max }));
-        saved.forEach(r => { vals[`${testName}-${r.name}`] = r.value || ""; });
+        p[testName] = saved.map(r => ({ name: r.name, unit: r.unit, min: r.min, max: r.max, value: r.value || "" }));
         return;
       }
       const isL2L = s.labType === "external";
       const t = _labTests.find(x => x.name === testName && x.isL2L === isL2L) || _labTests.find(x => x.name === testName);
       const defaults = t ? DEFAULT_TEST_PARAMS[t.code] : undefined;
       if (defaults && defaults.length > 0) {
-        p[testName] = defaults.map(d => ({ name: d.name, unit: d.unit, min: d.min, max: d.max }));
+        p[testName] = defaults.map(d => ({ name: d.name, unit: d.unit, min: d.min, max: d.max, value: "" }));
       } else {
-        p[testName] = (t?.normalRanges || []).map(r => ({ name: r.param, unit: r.unit, min: r.min, max: r.max }));
+        p[testName] = (t?.normalRanges || []).map(r => ({ name: r.param, unit: r.unit, min: r.min, max: r.max, value: "" }));
       }
     });
     setModalParams(p);
-    setResultVals(vals);
   };
   return (
     <div className="space-y-4">
@@ -5435,7 +5456,7 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
             {resultsModal.tests.map(testName => {
               const isSemen = testName === "تحليل السائل المنوي";
               const params = modalParams[testName] || [];
-              const addParam = () => setModalParams(p => ({ ...p, [testName]: [...params, { name: "", unit: "", min: "", max: "" }] }));
+              const addParam = () => setModalParams(p => ({ ...p, [testName]: [...params, { name: "", unit: "", min: "", max: "", value: "" }] }));
               const delParam = (idx: number) => setModalParams(p => ({ ...p, [testName]: params.filter((_, i) => i !== idx) }));
               const updateParam = (idx: number, field: keyof KitParam, val: string) => setModalParams(p => ({ ...p, [testName]: params.map((r, i) => i === idx ? { ...r, [field]: val } : r) }));
               return (
@@ -5484,10 +5505,10 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
                         return (
                           <TRow key={i} i={i}>
                             <TD><input value={r.name} onChange={e => updateParam(i, "name", e.target.value)} placeholder="اسم المعامل" className="h-7 w-28 px-2 rounded text-xs outline-none" style={{ border: "1px solid #CCC" }} /></TD>
-                            <TD><input type="text" value={resultVals[`${testName}-${r.name}`] || ""} onChange={e => setResultVals(p => ({ ...p, [`${testName}-${r.name}`]: e.target.value }))} className="h-7 w-20 px-2 rounded text-xs outline-none" style={{ border: "1px solid #CCC" }} /></TD>
+                            <TD><input type="text" value={r.value || ""} onChange={e => updateParam(i, "value", e.target.value)} className="h-7 w-20 px-2 rounded text-xs outline-none" style={{ border: "1px solid #CCC" }} /></TD>
                             <TD><input value={r.unit} onChange={e => updateParam(i, "unit", e.target.value)} placeholder="وحدة" className="h-7 w-16 px-2 rounded text-xs outline-none" style={{ border: "1px solid #CCC" }} /></TD>
                             <TD><span className="text-[#555] text-xs">{r.min && r.max ? `${r.min}–${r.max}` : <span className="flex gap-1"><input value={r.min} onChange={e => updateParam(i, "min", e.target.value)} placeholder="أدنى" className="h-6 w-14 px-1 rounded text-xs outline-none" style={{ border: "1px solid #CCC" }} /><input value={r.max} onChange={e => updateParam(i, "max", e.target.value)} placeholder="أعلى" className="h-6 w-14 px-1 rounded text-xs outline-none" style={{ border: "1px solid #CCC" }} /></span>}</span></TD>
-                            <TD>{r.min && r.max && resultVals[`${testName}-${r.name}`] ? (() => { const v = parseFloat(resultVals[`${testName}-${r.name}`]); const mn = parseFloat(r.min); const mx = parseFloat(r.max); if (isNaN(v)) return <span className="text-[#999] text-xs">—</span>; if (v >= mn && v <= mx) return <span className="text-[#388E3C] font-bold text-xs">طبيعي ✓</span>; return v > mx ? <span className="text-[#D32F2F] font-bold text-xs">↑ مرتفع</span> : <span className="text-[#1B3A6B] font-bold text-xs">↓ منخفض</span>; })() : <span className="text-[#999] text-xs">—</span>}</TD>
+                            <TD>{r.min && r.max && r.value ? (() => { const v = parseFloat(r.value); const mn = parseFloat(r.min); const mx = parseFloat(r.max); if (isNaN(v)) return <span className="text-[#999] text-xs">—</span>; if (v >= mn && v <= mx) return <span className="text-[#388E3C] font-bold text-xs">طبيعي ✓</span>; return v > mx ? <span className="text-[#D32F2F] font-bold text-xs">↑ مرتفع</span> : <span className="text-[#1B3A6B] font-bold text-xs">↓ منخفض</span>; })() : <span className="text-[#999] text-xs">—</span>}</TD>
                             <TD><button onClick={() => delParam(i)} className="text-[#D32F2F] hover:text-[#B71C1C] p-1 rounded transition-colors"><Trash2 size={12} /></button></TD>
                           </TRow>
                         );
@@ -5564,7 +5585,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   // ── التأمين الصحي: نفس منطق NewPatientScreen/LabSessionScreen ──
   const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
   const insDiscPct = insComp ? insComp.discountRad : 0;
-  const insDiscAmt = Math.min(imgTotal - discAmt, imgTotal * insDiscPct / 100);
+  const insDiscAmt = Math.min(imgTotal - discAmt, (imgTotal - discAmt) * insDiscPct / 100);
   const netTotal = Math.max(0, imgTotal - discAmt - insDiscAmt);
   const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netTotal - paidAmt); const creditAmt = Math.max(0, paidAmt - netTotal);
   const patName = selPat ? selPat.name : newPat.name; const patId = selPat ? selPat.id : (newPat.pid.trim() || generatePatientId());
@@ -6713,7 +6734,10 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
   const paidAmt = parseFloat(paidStr) || 0;
   const insComp = insurances.find(c => c.name === insuranceCompany);
   const insDiscPct = insComp ? insComp.discountClinic : 0;
-  const insDiscAmt = basePrice * insDiscPct / 100;
+  // ── نسبة التأمين تُحسَب من المبلغ بعد الخصم اليدوي، مش من السعر الأصلي —
+  //    نفس تصحيح NewPatientScreen، لتفادي فاتورة تأمين أكبر من قيمة الخدمة
+  //    الفعلية لو استُخدم خصم يدوي مع خصم تأمين سوا. ──
+  const insDiscAmt = Math.max(0, basePrice - discAmt) * insDiscPct / 100;
   // ── دين المريض يستثني الجزء المغطى من التأمين (insDiscAmt) — ذاك الجزء
   //    يُسجَّل كدين منفصل على شركة التأمين عبر setInvoices بالأسفل. ──
   const remaining = Math.max(0, basePrice - discAmt - insDiscAmt - paidAmt);
@@ -6972,9 +6996,10 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
   const [form, setForm] = useState({ code: "", name: "", nameEn: "", cat: "تحاليل الدم", priceOfficial: "", price: "", consumablesCost: "", priceCost: "", isL2L: "false", kit: "", kitInventoryId: "", kitQty: "", kitUnit: "وحدة", kitThreshold: "10", time: "", timeUnit: "ساعة", desc: "", notes: "" });
   // ── ربط الفحص بأكتر من صنف من المستلزمات، كل صنف بكميته الخاصة به للخصم ──
   const [consumablesForm, setConsumablesForm] = useState<{ inventoryId: string; qty: string }[]>([]);
-  const addConsumableRow = () => setConsumablesForm(p => [...p, { inventoryId: "", qty: "1" }]);
+  const addConsumableRow = () => setConsumablesForm(p => [...p, { inventoryId: "", qty: "" }]);
   const removeConsumableRow = (i: number) => setConsumablesForm(p => p.filter((_, idx) => idx !== i));
   const updateConsumableRow = (i: number, k: "inventoryId" | "qty", v: string) => setConsumablesForm(p => p.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
+  const [saving, setSaving] = useState(false);
   const filtered = tests.filter(t => t.name.includes(search) || t.code.toLowerCase().includes(search.toLowerCase()) || t.nameEn.toLowerCase().includes(search.toLowerCase()));
   const filtInternal = filtered.filter(t => !t.isL2L);
   const filtExternal = filtered.filter(t => t.isL2L);
@@ -6996,31 +7021,77 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
     else setConsumablesForm([]);
     setEditItem(t); setAddModal(true);
   };
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.name.trim() || !form.code.trim() || !form.price) return;
-    const consumablesPayload = consumablesForm.filter(c => c.inventoryId).map(c => ({ inventoryId: Number(c.inventoryId), qty: parseFloat(c.qty) || 1 }));
+    // ── التحقق قبل أي محاولة حفظ: كل صف مستلزمات فيه صنف مُحدَّد لازم يكون
+    //    عنده كمية صريحة (مش صفر ولا فاضية)، ولازم ما تتجاوز الكمية المتوفرة
+    //    فعلياً بالمخزون حالياً — نمنع الحفظ كلياً بدل ما نحذّر بعده ──
+    for (const row of consumablesForm) {
+      if (!row.inventoryId) continue;
+      const linked = inventory.find(i => String(i.id) === row.inventoryId);
+      const qtyNum = parseFloat(row.qty);
+      if (!row.qty.trim() || isNaN(qtyNum) || qtyNum <= 0) {
+        toast(`⚠️ حدّد كمية صحيحة أكبر من صفر للصنف "${linked?.name || row.inventoryId}" قبل الحفظ`, "error");
+        return;
+      }
+      if (linked && qtyNum > linked.qty) {
+        toast(`⚠️ الكمية المحددة لـ"${linked.name}" (${qtyNum}) أكبر من المتوفر حالياً بالمخزون (${linked.qty} ${linked.unit || "وحدة"}) — عدّل الكمية أو ورّد المخزون أولاً`, "error");
+        return;
+      }
+    }
+    const consumablesPayload = consumablesForm.filter(c => c.inventoryId).map(c => ({ inventoryId: Number(c.inventoryId), qty: parseFloat(c.qty) }));
     const firstInv = consumablesPayload.length > 0 ? consumablesPayload[0] : null;
     const kitInventoryId = firstInv ? firstInv.inventoryId : null;
     const kitNames = consumablesPayload.map(c => inventory.find(i => i.id === c.inventoryId)?.name).filter(Boolean).join(" + ");
     const base = { code: form.code, name: form.name, nameEn: form.nameEn, cat: form.cat, priceOfficial: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumablesCost: parseFloat(form.consumablesCost) || 0, priceCost: parseFloat(form.priceCost) || 0, isL2L: form.isL2L === "true", kit: kitNames || form.kit, kitInventoryId, kitQty: firstInv ? firstInv.qty : parseInt(form.kitQty) || 0, kitUnit: form.kitUnit, kitThreshold: parseInt(form.kitThreshold) || 10, time: form.time, normalRanges, consumables: consumablesPayload.map((c, i) => ({ id: Date.now() + i, ...c })) };
     const dbPayload = { code: form.code, name: form.name, name_en: form.nameEn, category: form.cat, price_official: parseFloat(form.priceOfficial) || 0, price: parseFloat(form.price) || 0, consumables_cost: parseFloat(form.consumablesCost) || 0, price_cost: parseFloat(form.priceCost) || 0, is_l2l: form.isL2L === "true", kit: kitNames || form.kit, kit_inventory_id: kitInventoryId, kit_qty: firstInv ? firstInv.qty : parseInt(form.kitQty) || 0, kit_unit: form.kitUnit, kit_threshold: parseInt(form.kitThreshold) || 10, time_estimate: form.time, normalRanges, consumables: consumablesPayload };
-    if (editItem) {
-      const updated = tests.map(t => t.id === editItem.id ? { ...t, ...base } : t);
-      initialLabTests.splice(0, initialLabTests.length, ...updated);
-      setTests([...initialLabTests]);
-      setLabTests?.([...initialLabTests]);
-      api.lab.tests.update(editItem.id, dbPayload);
-      toast("تم تحديث الفحص بنجاح ✓");
-    } else {
-      const newId = Date.now();
-      const newEntry = { id: newId, ...base };
-      initialLabTests.unshift(newEntry);
-      setTests([...initialLabTests]);
-      setLabTests?.([...initialLabTests]);
-      api.lab.tests.create(dbPayload).then(r => { if (r && (r as any).id) { const _rid = (r as any).id; const _idx = initialLabTests.findIndex(t => t.id === newId); if (_idx >= 0) initialLabTests[_idx] = { ...initialLabTests[_idx], id: _rid }; setTests([...initialLabTests]); setLabTests?.([...initialLabTests]); } }).catch(() => { });
-      toast("تم إضافة الفحص بنجاح ✓");
+    setSaving(true);
+    try {
+      if (editItem) {
+        // ── تحديث متفائل محلي فوراً، بس ما منعرض "تم بنجاح" ولا منسكر النافذة
+        //    إلا بعد ما نتأكد فعلياً إنه الحفظ نجح بالسيرفر — وبعدين نعيد جلب
+        //    الفحص من السيرفر (getById) ونستبدل الأصناف المحلية بالنسخة الحقيقية
+        //    المؤكدة من قاعدة البيانات، حتى ما نضل معتمدين على تحديث متفائل قد
+        //    يكون غير مطابق تماماً لما انحفظ فعلاً (مثلاً لو فشل جزء من الحفظ) ──
+        const r = await api.lab.tests.update(editItem.id, dbPayload);
+        if (!r) throw new Error("update failed");
+        const confirmed = await api.lab.tests.getById(editItem.id) as any;
+        const confirmedConsumables = confirmed && Array.isArray(confirmed.consumables)
+          ? confirmed.consumables.map((c: any) => ({ id: c.id, inventoryId: Number(c.inventoryId ?? c.inventory_id), qty: Number(c.qty) || 0, name: c.name || "", unit: c.unit || "" }))
+          : base.consumables;
+        if (consumablesPayload.length > 0 && confirmedConsumables.length !== consumablesPayload.length) {
+          toast(`⚠️ تحذير: طلبت ربط ${consumablesPayload.length} صنف لكن السيرفر أكّد حفظ ${confirmedConsumables.length} فقط — تحقق من الفحص وأعد الحفظ إذا لزم`, "warning");
+        }
+        const finalEntry = { ...base, consumables: confirmedConsumables };
+        const updated = tests.map(t => t.id === editItem.id ? { ...t, ...finalEntry } : t);
+        initialLabTests.splice(0, initialLabTests.length, ...updated);
+        setTests([...initialLabTests]);
+        setLabTests?.([...initialLabTests]);
+        toast("تم تحديث الفحص بنجاح ✓");
+        setAddModal(false);
+      } else {
+        const r = await api.lab.tests.create(dbPayload) as any;
+        if (!r || !r.id) throw new Error("create failed");
+        const realId = r.id;
+        const confirmed = await api.lab.tests.getById(realId) as any;
+        const confirmedConsumables = confirmed && Array.isArray(confirmed.consumables)
+          ? confirmed.consumables.map((c: any) => ({ id: c.id, inventoryId: Number(c.inventoryId ?? c.inventory_id), qty: Number(c.qty) || 0, name: c.name || "", unit: c.unit || "" }))
+          : base.consumables;
+        if (consumablesPayload.length > 0 && confirmedConsumables.length !== consumablesPayload.length) {
+          toast(`⚠️ تحذير: طلبت ربط ${consumablesPayload.length} صنف لكن السيرفر أكّد حفظ ${confirmedConsumables.length} فقط — تحقق من الفحص وأعد الحفظ إذا لزم`, "warning");
+        }
+        const newEntry = { ...base, id: realId, consumables: confirmedConsumables };
+        initialLabTests.unshift(newEntry);
+        setTests([...initialLabTests]);
+        setLabTests?.([...initialLabTests]);
+        toast("تم إضافة الفحص بنجاح ✓");
+        setAddModal(false);
+      }
+    } catch {
+      toast("⚠️ تعذّر حفظ الفحص بالسيرفر — تحقق من الاتصال أو سجّل الدخول من جديد وحاول مرة أخرى. النافذة ستبقى مفتوحة حتى لا تفقد ما أدخلته", "error");
+    } finally {
+      setSaving(false);
     }
-    setAddModal(false);
   };
   const handleDel = () => {
     if (delConfirm) {
@@ -7218,7 +7289,7 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
 
       {/* Add/Edit Modal */}
       <Modal open={addModal} onClose={() => setAddModal(false)} title={editItem ? `تعديل فحص: ${editItem.name}` : "إضافة فحص جديد"} wide
-        footer={<><Btn variant="secondary" onClick={handleSave} disabled={!form.name.trim() || !form.code.trim() || !form.price}><Save size={16} />حفظ الفحص</Btn><Btn variant="outline" onClick={() => setAddModal(false)}>إلغاء</Btn></>}>
+        footer={<><Btn variant="secondary" loading={saving} onClick={handleSave} disabled={!form.name.trim() || !form.code.trim() || !form.price}><Save size={16} />حفظ الفحص</Btn><Btn variant="outline" onClick={() => setAddModal(false)}>إلغاء</Btn></>}>
         <div className="space-y-4">
           <p className="text-xs font-bold text-[#555] uppercase tracking-wider border-b border-[#E0E0E0] pb-2">معلومات أساسية</p>
           <div className="grid grid-cols-2 gap-3">
@@ -7286,6 +7357,7 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
                   </div>
                   {linked && (
                     <p className="text-xs text-[#0D7377]">✓ سيُخصم <strong>{parseFloat(row.qty) || 1} {linked.unit || "وحدة"}</strong> من "{linked.name}" عند كل تسجيل لهذا الفحص — الكمية الحالية: <strong>{linked.qty} {linked.unit || "وحدة"}</strong>{linked.qty <= linked.threshold ? " (منخفضة)" : ""}.</p>
+                    {(parseFloat(row.qty) || 0) > linked.qty && <p className="text-xs text-[#D32F2F]">⚠️ الكمية المحددة ({parseFloat(row.qty) || 0}) أكبر من المتوفر حالياً بالمخزون ({linked.qty}) — أول تسجيل لهذا الفحص سيُفرغ الصنف ولن يُخصم الكامل.</p>}
                   )}
                 </div>
               );
@@ -16205,7 +16277,11 @@ export default function App() {
   }, [route.screen, loggedUser?.type]);
   const dept = route.dept || "surgery"; const sidebarW = isMobile ? 0 : (collapsed ? 64 : 260);
   const activeDeptInfo = [...DEPARTMENTS, ...customDepts,].find(d => d.id === route.dept);
-  const visibleDebts = route.dept ? debts.filter(d => d.dept === route.dept) : debts;
+  // ── debts.dept مخزّن باسم القسم المختصر (متل "الجراحة") مش بمعرّفه التقني
+  //    (متل "surgery") — المقارنة القديمة كانت تقارن المعرّف بالاسم المختصر
+  //    فما بتتطابق أبداً، فكانت "إجمالي الديون" تطلع صفر بمجرد تفعيل سياق قسم
+  //    معيّن رغم وجود ديون فعلية (نفس الخلل المُصلَح سابقاً بملف المريض) ──
+  const visibleDebts = route.dept ? debts.filter(d => d.dept === (activeDeptInfo?.short || route.dept)) : debts;
   const totalDebt = visibleDebts.reduce((s, d) => s + d.amount, 0);
   const pageTitle = (() => {
     const base = PAGE_TITLES[route.screen] || route.screen;

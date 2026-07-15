@@ -20,6 +20,75 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ─── Patient Delete Requests ───────────────────────────────────────────────
+// ── لازم هالمسارات (اللي فيها "delete-requests" كجزء ثابت من المسار) تُسجَّل
+//    قبل مسارات "/:id" العامة تحت. إكسبرس بيطابق المسارات بترتيب التسجيل،
+//    فلو ظلت "/:id" مسجّلة قبلها، أي طلب زي GET /patients/delete-requests/all
+//    كان ينطبق غلط على GET /patients/:id (وكأن "delete-requests" هو رقم ملف
+//    مريض)، فيرجع 404 بصمت — وهيك طلبات حذف ملفات المرضى يلي يقدّمها الموظفين
+//    كانت توصل لقاعدة البيانات فعلاً (POST ما كانت فيها تعارض) بس ما كانت
+//    توصل لشاشة المدير أبداً (GET) ولا تتوافق/تترفض (PUT) لأنها كانت بترجع
+//    لنفس مسار المريض العام بدل مسار طلبات الحذف. ──
+router.get('/delete-requests/all', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM patient_delete_requests ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/delete-requests/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM patient_delete_requests WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/delete-requests', async (req, res) => {
+  const { patient_id, patient_name, requested_by, request_dept, request_date, reason } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO patient_delete_requests
+       (patient_id,patient_name,requested_by,request_dept,request_date,reason)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [patient_id, patient_name, requested_by, request_dept ?? null, request_date, reason ?? null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/delete-requests/:id', requireAdmin, async (req, res) => {
+  const { status, reviewed_by, review_date, rejection_reason } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE patient_delete_requests SET status=$1,reviewed_by=$2,review_date=$3,rejection_reason=$4
+       WHERE id=$5 RETURNING *`,
+      [status, reviewed_by ?? null, review_date ?? null, rejection_reason ?? null, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// BUG-09 fix: requireAdmin added — prevents bypassing the admin-approval workflow
+router.delete('/delete-requests/:id', requireAdmin, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query('DELETE FROM patient_delete_requests WHERE id=$1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM patients WHERE id=$1', [req.params.id]);
@@ -164,67 +233,6 @@ router.delete('/cascade/:id', requireAdmin, async (req, res) => {
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
     const { rowCount } = await pool.query('DELETE FROM patients WHERE id=$1', [req.params.id]);
-    if (!rowCount) return res.status(404).json({ error: 'Not found' });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── Patient Delete Requests ───────────────────────────────────────────────
-router.get('/delete-requests/all', async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT * FROM patient_delete_requests ORDER BY created_at DESC');
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/delete-requests/:id', async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT * FROM patient_delete_requests WHERE id=$1', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.post('/delete-requests', async (req, res) => {
-  const { patient_id, patient_name, requested_by, request_dept, request_date, reason } = req.body;
-  try {
-    const { rows } = await pool.query(
-      `INSERT INTO patient_delete_requests
-       (patient_id,patient_name,requested_by,request_dept,request_date,reason)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [patient_id, patient_name, requested_by, request_dept ?? null, request_date, reason ?? null]
-    );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.put('/delete-requests/:id', requireAdmin, async (req, res) => {
-  const { status, reviewed_by, review_date, rejection_reason } = req.body;
-  try {
-    const { rows } = await pool.query(
-      `UPDATE patient_delete_requests SET status=$1,reviewed_by=$2,review_date=$3,rejection_reason=$4
-       WHERE id=$5 RETURNING *`,
-      [status, reviewed_by ?? null, review_date ?? null, rejection_reason ?? null, req.params.id]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// BUG-09 fix: requireAdmin added — prevents bypassing the admin-approval workflow
-router.delete('/delete-requests/:id', requireAdmin, async (req, res) => {
-  try {
-    const { rowCount } = await pool.query('DELETE FROM patient_delete_requests WHERE id=$1', [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: 'Not found' });
     res.json({ success: true });
   } catch (err) {
