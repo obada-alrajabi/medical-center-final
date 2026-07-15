@@ -9727,7 +9727,17 @@ function DataDeletionScreen({ sessions, setSessions, debts, setDebts, attendance
     setTableDeleting(true);
     try {
       const r = await api.admin.tables.deleteAll(table);
-      if (r && (r as any).success) { toast(`✅ تم حذف جميع بيانات جدول "${table}" (${(r as any).deleted} سجل)`, "success"); await loadTables(); }
+      if (r && (r as any).success) {
+        // ── لو الجدول مرتبط بجداول تانية بقيد مفتاحي أجنبي (زي "الأقسام" اللي
+        //    مرتبطة فيها معظم الجداول)، الحذف بينسحب تلقائياً على تلك الجداول
+        //    كمان (كاسكيد) عشان ما يفشل الحذف بخطأ قيد مفتاحي. نوضح للمستخدم
+        //    أي جداول تانية تأثرت، لأنه أثر الزر ممكن يكون أوسع من جدول واحد. ──
+        const cascaded = ((r as any).cascaded || {}) as Record<string, number>;
+        const otherTables = Object.entries(cascaded).filter(([t, c]) => t !== table && c > 0);
+        const extraMsg = otherTables.length > 0 ? ` — وانحذف تلقائياً بيانات مرتبطة من: ${otherTables.map(([t, c]) => `${TABLE_AR_LABELS[t] || t} (${c})`).join("، ")}` : "";
+        toast(`✅ تم حذف جميع بيانات جدول "${TABLE_AR_LABELS[table] || table}" (${(r as any).deleted} سجل)${extraMsg}`, "success");
+        await loadTables();
+      }
       else toast("تعذّر حذف الجدول", "error");
     } catch { toast("حدث خطأ أثناء حذف الجدول", "error"); }
     setTableConfirm(null); setTableConfirmText(""); setTableDeleting(false);
