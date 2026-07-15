@@ -127,6 +127,22 @@ pool
     `ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS paid_amount numeric(12,2) DEFAULT 0`,
   )
   .catch(() => {});
+// سجل دفعات التسديد لطلبات الشراء — يسمح بتسديد جزئي على أكثر من دفعة، كل
+// دفعة إلها ملاحظة منفصلة (تُبنى تلقائياً بالفرونت-إند)، بدل حقل paid_amount
+// المفرد الوحيد اللي كان بينكتب فوق نفسه بكل تعديل.
+pool
+  .query(
+    `CREATE TABLE IF NOT EXISTS purchase_request_payments (
+       id SERIAL PRIMARY KEY,
+       request_id INTEGER NOT NULL REFERENCES purchase_requests(id) ON DELETE CASCADE,
+       amount numeric(12,2) NOT NULL,
+       note text,
+       drawer_tx_id INTEGER,
+       payment_voucher_id INTEGER,
+       created_at timestamp with time zone DEFAULT now()
+     )`,
+  )
+  .catch(() => {});
 // Composite unique constraint on code and is_l2l for lab tests
 pool
   .query(

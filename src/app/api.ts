@@ -224,6 +224,10 @@ export const api = {
         update: (id: number, item: unknown) => put<unknown>(`/finance/purchase-items/${id}`, item),
         delete: (id: number) => del<unknown>(`/finance/purchase-items/${id}`),
       },
+      payments: {
+        getAll: (requestId: number) => get<unknown[]>(`/finance/purchase-requests/${requestId}/payments`),
+        create: (requestId: number, payment: unknown) => post<unknown>(`/finance/purchase-requests/${requestId}/payments`, payment),
+      },
     },
     receiptVouchers: {
       getAll: () => get<unknown[]>("/finance/receipt-vouchers"),

@@ -271,15 +271,19 @@ router.get('/purchase-requests', async (req, res) => {
     const { rows } = await pool.query(sql, params);
     if (!rows.length) return res.json(rows);
     const ids = rows.map(r => r.id);
-    const { rows: itemRows } = await pool.query(
-      'SELECT * FROM purchase_request_items WHERE request_id = ANY($1::int[]) ORDER BY id',
-      [ids]
-    );
+    const [{ rows: itemRows }, { rows: paymentRows }] = await Promise.all([
+      pool.query('SELECT * FROM purchase_request_items WHERE request_id = ANY($1::int[]) ORDER BY id', [ids]),
+      pool.query('SELECT * FROM purchase_request_payments WHERE request_id = ANY($1::int[]) ORDER BY created_at', [ids]),
+    ]);
     const itemsByRequest = {};
     for (const item of itemRows) {
       (itemsByRequest[item.request_id] ??= []).push(item);
     }
-    res.json(rows.map(r => ({ ...r, items: itemsByRequest[r.id] || [] })));
+    const paymentsByRequest = {};
+    for (const p of paymentRows) {
+      (paymentsByRequest[p.request_id] ??= []).push(p);
+    }
+    res.json(rows.map(r => ({ ...r, items: itemsByRequest[r.id] || [], payments: paymentsByRequest[r.id] || [] })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -287,14 +291,56 @@ router.get('/purchase-requests', async (req, res) => {
 
 router.get('/purchase-requests/:id', async (req, res) => {
   try {
-    const [req_row, items_row] = await Promise.all([
+    const [req_row, items_row, payments_row] = await Promise.all([
       pool.query('SELECT * FROM purchase_requests WHERE id=$1', [req.params.id]),
-      pool.query('SELECT * FROM purchase_request_items WHERE request_id=$1 ORDER BY id', [req.params.id])
+      pool.query('SELECT * FROM purchase_request_items WHERE request_id=$1 ORDER BY id', [req.params.id]),
+      pool.query('SELECT * FROM purchase_request_payments WHERE request_id=$1 ORDER BY created_at', [req.params.id])
     ]);
     if (!req_row.rows.length) return res.status(404).json({ error: 'Not found' });
-    res.json({ ...req_row.rows[0], items: items_row.rows });
+    res.json({ ...req_row.rows[0], items: items_row.rows, payments: payments_row.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Purchase Request Payments (تسديد جزئي/كلي مع سجل دفعات) ─────────────────
+router.get('/purchase-requests/:id/payments', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM purchase_request_payments WHERE request_id=$1 ORDER BY created_at',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/purchase-requests/:id/payments', requireFinancialAuth, async (req, res) => {
+  const { amount, note, drawer_tx_id, payment_voucher_id } = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: reqRows } = await client.query('SELECT * FROM purchase_requests WHERE id=$1 FOR UPDATE', [req.params.id]);
+    if (!reqRows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
+    const amt = Number(amount) || 0;
+    if (amt <= 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'invalid amount' }); }
+    const { rows: payRows } = await client.query(
+      `INSERT INTO purchase_request_payments (request_id, amount, note, drawer_tx_id, payment_voucher_id)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.params.id, amt, note ?? null, drawer_tx_id ?? null, payment_voucher_id ?? null]
+    );
+    const { rows: updRows } = await client.query(
+      `UPDATE purchase_requests SET paid_amount = COALESCE(paid_amount,0) + $1 WHERE id=$2 RETURNING *`,
+      [amt, req.params.id]
+    );
+    await client.query('COMMIT');
+    res.status(201).json({ payment: payRows[0], request: updRows[0] });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

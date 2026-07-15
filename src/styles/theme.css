@@ -289,20 +289,18 @@ button:active:not(:disabled) {
     padding: 6px !important;
   }
 
-  /* ── 6. الجداول ─────────────────────────────────────────────────────── */
+  /* ── 6. الجداول — لا تفرض حشوة/حجم خط/تباعد أسطر خاص هون؛ هاي القيم
+     مسؤول عنها فقط النمط المشترك PRINT_CONTENT_CSS (محرك الطباعة الأساسي)
+     حتى ما يصير في نسخة "مضغوطة" منفصلة للجداول عند الطباعة المباشرة من
+     المتصفح (المسار الاحتياطي). هون فقط قواعد تقسيم الصفحات وإبقاء اتجاه
+     الحدود، بدون أي قيم padding/font-size/line-height ثابتة تتعارض. ────── */
   table {
     width: 100%;
-    border-collapse: collapse;
     page-break-inside: auto;
   }
   thead { display: table-header-group; }
   tr    { page-break-inside: avoid; }
-  th, td {
-    border: 1px solid #bbb;
-    padding: 5px 8px;
-    font-size: 10pt;
-  }
-  th { background: #f0f0f0 !important; font-weight: 700; -webkit-print-color-adjust: exact; }
+  th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
   /* ── 7. خط وألوان مناسبة للطباعة ───────────────────────────────────── */
   * {

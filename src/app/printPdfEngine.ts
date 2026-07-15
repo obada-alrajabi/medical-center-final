@@ -73,9 +73,15 @@ export const PRINT_CONTENT_CSS = (fontFamily: string, fontSize: number) => `
 .rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
 .rm-item strong{color:#1B3A6B}
 h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
-table{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px;font-size:11px}
-th{background:#1B3A6B;color:white;padding:7px 8px;text-align:right;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-td{border:1px solid #ddd;padding:5px 8px;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word}
+/* ── جدول موحّد لكل شاشات الطباعة — لا يوجد نمط منفصل لأي تقرير على حدة.
+      عرض الأعمدة النهائي (table-layout:fixed + colgroup) يُحسَب ديناميكياً
+      بدالة normalizeTableColumns() قبل التصوير مباشرة (انظر أسفل)، بناءً على
+      المحتوى الفعلي لكل عمود بالرأس والجسم معاً — بهيك يبقى الرأس مطابقاً
+      تماماً لأعمدة الجسم دائماً، وبنفس الوقت الأعمدة تاخد عرضها الحقيقي حسب
+      محتواها بدل التساوي القسري. ── */
+table{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;line-height:1.5}
+th,td{border:1px solid #ddd;padding:8px 10px;vertical-align:middle;text-align:right;word-wrap:break-word;overflow-wrap:break-word;white-space:normal}
+th{background:#1B3A6B;color:white;font-weight:700}
 tr:nth-child(even)>td{background:#F9FAFB}
 tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
@@ -131,6 +137,53 @@ function loadImageAsJpegDataUrl(url: string): Promise<string | null> {
   });
 }
 
+// ── توحيد عرض أعمدة الجداول بين الرأس والجسم قبل تصويرها ────────────────────
+// المشكلة: بعض متصفحات/محركات تحويل DOM→canvas (html2canvas) لا تُصيّر عرض
+// أعمدة جدول table-layout:auto بدقة موثوقة، فيظهر عمود الرأس مزاح عن عمود
+// الجسم تحته رغم أن الجدول HTML سليم 100% (نفس عدد الخلايا بكل صف). الحل
+// الموثوق: بعد إدراج الجدول بالـ DOM وقياس عرضه الطبيعي (auto) الصحيح فعلياً
+// من طرف المتصفح، نُثبِّت (colgroup + table-layout:fixed) نفس العرض المقاس
+// على كل الأعمدة — فيصير الرأس والجسم يشتركان بنفس قيم العرض الثابتة تماماً،
+// بدل ترك محرك التصوير يعيد حساب/تخمين العرض بنفسه. العرض يبقى متناسباً مع
+// محتوى كل عمود الفعلي (وليس متساوياً بالعافية) لأنه مبني على قياس حقيقي.
+function normalizeTableColumns(root: HTMLElement) {
+  const tables = Array.from(root.querySelectorAll("table"));
+  tables.forEach(table => {
+    const rows = Array.from(table.rows);
+    if (!rows.length) return;
+    const colCount = Math.max(...rows.map(r => r.cells.length));
+    if (colCount < 2) return;
+    const widths = new Array(colCount).fill(0);
+    rows.forEach(row => {
+      let colIdx = 0;
+      Array.from(row.cells).forEach(cell => {
+        const span = cell.colSpan || 1;
+        if (span === 1 && colIdx < colCount) {
+          const w = cell.scrollWidth;
+          if (w > widths[colIdx]) widths[colIdx] = w;
+        }
+        colIdx += span;
+      });
+    });
+    const total = widths.reduce((a, b) => a + b, 0);
+    if (total <= 0) return;
+    // حد أدنى معقول لكل عمود حتى لا يُضغَط عمود محتواه قصير (مثل "#") لدرجة
+    // غير مقروءة إذا كان عمود آخر طويلاً جداً بنفس الصف
+    const minPct = 6;
+    const rawPct = widths.map(w => (w / total) * 100);
+    let existing = table.querySelector("colgroup");
+    if (existing) existing.remove();
+    const colgroup = document.createElement("colgroup");
+    rawPct.forEach(p => {
+      const col = document.createElement("col");
+      col.style.width = `${Math.max(p, minPct)}%`;
+      colgroup.appendChild(col);
+    });
+    table.insertBefore(colgroup, table.firstChild);
+    (table as HTMLElement).style.tableLayout = "fixed";
+  });
+}
+
 /**
  * يُصيّر شذرة HTML (bodyHtml) إلى ملف PDF حقيقي مطابق تماماً لإعدادات
  * الترويسة/الهوامش/الورق/الخط المُمرَّرة، ويُعيد الناتج كـ Blob.
@@ -163,6 +216,7 @@ export async function generatePrintPdf(params: PrintDocParams): Promise<Blob> {
 
   try { await (document as any).fonts?.ready; } catch (_) { /* بعض المتصفحات لا تدعم document.fonts */ }
   await new Promise(r => setTimeout(r, 80)); // مهلة قصيرة لاستقرار التخطيط/الخطوط قبل التصوير
+  normalizeTableColumns(inner); // تثبيت عرض الأعمدة قبل التصوير مباشرة (انظر التعليق أعلى الدالة)
 
   let rasterCanvas: HTMLCanvasElement;
   try {

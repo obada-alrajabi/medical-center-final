@@ -975,9 +975,9 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
 .rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
 .rm-item strong{color:#1B3A6B}
 h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
-table{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px;font-size:11px}
-th{background:#1B3A6B;color:white;padding:7px 8px;text-align:right;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-td{border:1px solid #ddd;padding:5px 8px;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word}
+table{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;line-height:1.5}
+th,td{border:1px solid #ddd;padding:8px 10px;vertical-align:middle;text-align:right;word-wrap:break-word;overflow-wrap:break-word;white-space:normal}
+th{background:#1B3A6B;color:white;font-weight:700}
 tr:nth-child(even)>td{background:#F9FAFB}
 tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
@@ -7408,7 +7408,7 @@ function ImageCatalogScreen({ toast, perms }: { toast: (m: string, t?: any) => v
 // ─── FIN: ALL DRAWERS (overview + withdrawals) ────────────────────────────────
 
 
-function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, onEditPurchaseRequest, toast, customDepts = [], suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; onEditPurchaseRequest?: (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
+function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, onEditPurchaseRequest, onSettlePayment, toast, customDepts = [], suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; onEditPurchaseRequest?: (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => void; onSettlePayment?: (id: number, amount: number) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [deptFilter, setDeptFilter] = useState("all");
   const [searchQ, setSearchQ] = useState("");
@@ -7416,6 +7416,24 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [delConfId, setDelConfId] = useState<number | null>(null);
+  // ── تسديد دفعة (كاملة/جزئية) لطلب شراء مُعتمَد، مع سجل دفعات وملاحظة تلقائية ──
+  const [settleReq, setSettleReq] = useState<PurchaseRequest | null>(null);
+  const [settleAmt, setSettleAmt] = useState("");
+  const [settling, setSettling] = useState(false);
+  const settleRemaining = settleReq ? Math.max(0, settleReq.totalAmount - (settleReq.paidAmount || 0)) : 0;
+  const settleAmtNum = parseFloat(settleAmt) || 0;
+  const settleNewRemaining = Math.max(0, settleRemaining - settleAmtNum);
+  const openSettle = (req: PurchaseRequest) => { setSettleReq(req); setSettleAmt(String(Math.max(0, req.totalAmount - (req.paidAmount || 0)))); };
+  const confirmSettle = async () => {
+    if (!settleReq || settleAmtNum <= 0) { toast("أدخل مبلغاً صحيحاً", "error"); return; }
+    if (settleAmtNum > settleRemaining) { toast("المبلغ أكبر من المتبقي على الطلب", "error"); return; }
+    setSettling(true);
+    try {
+      onSettlePayment?.(settleReq.id, settleAmtNum);
+      toast(settleNewRemaining <= 0 ? "تم سداد كامل مبلغ طلب الشراء ✓" : `تم تسجيل دفعة ${fmt(settleAmtNum)} — المتبقي ${fmt(settleNewRemaining)} ✓`, "success");
+      setSettleReq(null); setSettleAmt("");
+    } finally { setSettling(false); }
+  };
   // ── تعديل طلب الشراء (المدير فقط) — كان مفقوداً بالكامل قبل هذا التعديل ──
   const [editReq, setEditReq] = useState<PurchaseRequest | null>(null);
   const [editDept, setEditDept] = useState("");
@@ -7615,6 +7633,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                     <p className="font-bold text-[#1B3A6B]">{fmt(req.totalAmount)}</p>
                   </div>
                   <Btn small variant="ghost" onClick={(e: any) => { e.stopPropagation(); printSingle(req); }}><Printer size={12} />PDF</Btn>
+                  {onSettlePayment && req.status === "approved" && (req.totalAmount - (req.paidAmount || 0)) > 0 && <Btn small variant="success" onClick={(e: any) => { e.stopPropagation(); openSettle(req); }}><DollarSign size={12} />تسديد</Btn>}
                   {onEditPurchaseRequest && <Btn small variant="ghost" onClick={(e: any) => { e.stopPropagation(); openEdit(req); }}><Pencil size={12} />تعديل</Btn>}
                   <ChevronDown size={15} className={`text-[#999] transition-transform flex-shrink-0 ${isExp ? "rotate-180" : ""}`} />
                 </div>
@@ -7652,6 +7671,21 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                     <div className="p-2 rounded-lg" style={{ backgroundColor: "#E8F5E9" }}><p className="text-[#999]">مبلغ الدفع</p><p className="font-semibold text-[#388E3C]">{fmt(req.paidAmount || 0)}</p></div>
                     <div className="p-2 rounded-lg" style={{ backgroundColor: "#FFEBEE" }}><p className="text-[#999]">متبقي للشركة</p><p className="font-semibold text-[#D32F2F]">{fmt(Math.max(0, req.totalAmount - (req.paidAmount || 0)))}</p></div>
                   </div>
+
+                  {/* سجل دفعات التسديد */}
+                  {req.payments && req.payments.length > 0 && (
+                    <div className="rounded-lg" style={{ border: "1px solid #E0E0E0" }}>
+                      <p className="text-xs font-bold text-[#1B3A6B] px-3 py-2" style={{ borderBottom: "1px solid #F0F0F0", backgroundColor: "#F5F8FF" }}>💳 سجل الدفعات ({req.payments.length})</p>
+                      <div className="divide-y" style={{ borderColor: "#F0F0F0" }}>
+                        {req.payments.slice().reverse().map(pm => (
+                          <div key={pm.id} className="px-3 py-2 text-xs flex items-start justify-between gap-3">
+                            <p className="text-[#555] break-words flex-1">{pm.note}</p>
+                            <span className="font-bold text-[#388E3C] flex-shrink-0">{fmt(pm.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Note */}
                   {req.note && <div className="text-xs text-[#555] p-3 rounded-lg" style={{ backgroundColor: "white", border: "1px solid #E0E0E0" }}>📋 {req.note}</div>}
@@ -7709,6 +7743,29 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
         message={`هل أنت متأكد من حذف طلب الشراء #${delConfId}؟ لا يمكن التراجع عن هذا الإجراء.`}
         danger
       />
+
+      {/* ── تسديد دفعة (كاملة/جزئية) لطلب شراء ── */}
+      <Modal open={!!settleReq} onClose={() => { setSettleReq(null); setSettleAmt(""); }} title={`تسديد دفعة — طلب شراء #${settleReq?.id ?? ""}`}
+        footer={<><Btn variant="success" loading={settling} onClick={confirmSettle}><DollarSign size={16} />تأكيد التسديد</Btn><Btn variant="outline" onClick={() => { setSettleReq(null); setSettleAmt(""); }}>إلغاء</Btn></>}>
+        {settleReq && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="p-2 rounded-lg text-center" style={{ backgroundColor: "#F5F5F5" }}><p className="text-[#999]">الإجمالي</p><p className="font-bold text-[#1B3A6B]">{fmt(settleReq.totalAmount)}</p></div>
+              <div className="p-2 rounded-lg text-center" style={{ backgroundColor: "#E8F5E9" }}><p className="text-[#999]">مدفوع سابقاً</p><p className="font-bold text-[#388E3C]">{fmt(settleReq.paidAmount || 0)}</p></div>
+              <div className="p-2 rounded-lg text-center" style={{ backgroundColor: "#FFEBEE" }}><p className="text-[#999]">المتبقي</p><p className="font-bold text-[#D32F2F]">{fmt(settleRemaining)}</p></div>
+            </div>
+            <InputField label="المبلغ المراد تسديده (₪)" required type="number" placeholder="0" value={settleAmt} onChange={setSettleAmt} />
+            {settleAmtNum > settleRemaining && <p className="text-xs text-[#D32F2F]">⚠️ المبلغ أكبر من المتبقي على الطلب</p>}
+            <div className="p-3 rounded-xl flex items-start gap-2.5" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+              <FileText size={15} className="text-[#1B3A6B] flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-[#1B3A6B] mb-1">الملاحظة التي ستُسجَّل تلقائياً</p>
+                <p className="text-xs text-[#555]">تم سداد دفعة بقيمة {fmt(settleAmtNum)} بتاريخ {_localISO()} والباقي {fmt(settleNewRemaining)} لطلب الشراء #{settleReq.id}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* ── تعديل طلب الشراء — المدير يقدر يعدّل أي معلومة، بغض النظر عن حالة الطلب ── */}
       <Modal open={!!editReq} onClose={closeEdit} title={`تعديل طلب شراء #${editReq?.id ?? ""}`} wide
@@ -15725,7 +15782,7 @@ export default function App() {
         setAttendance((dbAttendance as any[]).map((r: any) => ({ id: r.id, empId: r.emp_id || "", empName: r.emp_name || "", dept: r.dept || "", date: r.date ? String(r.date).slice(0, 10) : "", dayName: r.day_name || "", checkIn: r.check_in ? String(r.check_in).slice(0, 5) : "", checkOut: r.check_out ? String(r.check_out).slice(0, 5) : "", totalHours: r.total_hours != null ? Number(r.total_hours) : undefined })));
       }
       if (dbPurchaseRequests && (dbPurchaseRequests as any[]).length > 0) {
-        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined })));
+        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [] })));
       }
       if (dbDiagnoses && (dbDiagnoses as any[]).length > 0) {
         setDiagnoses((dbDiagnoses as any[]).map((d: any) => ({ id: d.id, code: d.code || "", name: d.name || "", category: d.category || "أخرى", dept: d.dept || "surgery" })));
@@ -15882,6 +15939,35 @@ export default function App() {
     if (orig.status === "approved" && orig.drawerTxId && updated.paidAmount !== orig.paidAmount) {
       api.drawers.transactions.update(orig.drawerTxId, { amount: updated.paidAmount }).catch(() => { });
     }
+  };
+  // ── تسديد دفعة (كاملة أو جزئية) لطلب شراء مُعتمَد — يُنشئ سجل دفعة منفصل
+  //    (بدل الكتابة فوق حقل paidAmount المفرد فقط)، مع ملاحظة تلقائية، وسحب
+  //    حقيقي من صندوق القسم، وسند صرف حقيقي — بنفس مبدأ سندات القبض لتحصيل
+  //    التأمين (كل دفعة حقيقية لازم تظهر بحسابات النظام الموحّدة). ──
+  const onSettlePurchaseRequestPayment = async (id: number, amount: number) => {
+    const req = purchaseRequests.find(r => r.id === id); if (!req) return;
+    const remaining = Math.max(0, req.totalAmount - (req.paidAmount || 0));
+    const amt = Math.min(Math.max(0, amount), remaining);
+    if (amt <= 0) return;
+    const newRemaining = Math.max(0, remaining - amt);
+    const now = new Date();
+    const dateTimeStr = `${_localISO()} ${now.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" })}`;
+    const note = `تم سداد دفعة بقيمة ${fmt(amt)} بتاريخ ${dateTimeStr} والباقي ${fmt(newRemaining)} لطلب الشراء #${id}`;
+    const tempId = Date.now();
+    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, paidAmount: (r.paidAmount || 0) + amt, payments: [...(r.payments || []), { id: tempId, requestId: id, amount: amt, note, date: new Date().toISOString() }] } : r));
+    try {
+      const txId = await doWithdraw(req.dept, amt, note, "دفعة مورد");
+      let voucherId: number | null = null;
+      try {
+        const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: amt, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "دفعة مورد", notes: note, drawer_tx_id: txId || null });
+        if (rv && (rv as any).id) { voucherId = (rv as any).id; setPaymentVouchersGlobal(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]); }
+      } catch { /* نكمل حتى لو فشل إنشاء سند الصرف */ }
+      const r = await api.finance.purchaseRequests.payments.create(id, { amount: amt, note, drawer_tx_id: txId || null, payment_voucher_id: voucherId });
+      if (r && (r as any).payment) {
+        const realId = (r as any).payment.id;
+        setPurchaseRequests(p => p.map(x => x.id === id ? { ...x, payments: (x.payments || []).map(pm => pm.id === tempId ? { ...pm, id: realId } : pm) } : x));
+      }
+    } catch { /* silent — التحديث المحلي بقي كما هو حتى لو فشل الاتصال */ }
   };
   // ── تعديل تفاصيل جلسة (canEditSession) — يشمل بيانات الجلسة الأساسية والتشخيص
   //    والأدوية وإحالات المختبر/الأشعة. الأصناف الفرعية (تشخيص/أدوية/إحالات) لا
@@ -16105,7 +16191,7 @@ export default function App() {
       case "image-catalog": return <ImageCatalogScreen toast={toast} />;
       case "fin-profit": return <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts} />;
       case "fin-expenses": return <FinExpensesScreen drawers={drawers} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} />;
-      case "fin-purchase-reqs": return <FinAllPurchaseReqsScreen purchaseRequests={purchaseRequests} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} onEditPurchaseRequest={onEditPurchaseRequest} toast={toast} customDepts={customDepts} suppliers={suppliersRoot} />;
+      case "fin-purchase-reqs": return <FinAllPurchaseReqsScreen purchaseRequests={purchaseRequests} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} onEditPurchaseRequest={onEditPurchaseRequest} onSettlePayment={onSettlePurchaseRequestPayment} toast={toast} customDepts={customDepts} suppliers={suppliersRoot} />;
       case "fin-charts": return <FinChartsScreen drawers={drawers} debts={debts} employees={employees} invoices={invoices} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} />;
       case "fin-summary": return <FinancialSummaryScreen drawers={drawers} loggedUser={loggedUser} employees={employees} insurances={insurances} customDepts={customDepts} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={sessions} purchaseRequests={purchaseRequests} allPaymentVouchers={paymentVouchersGlobal} allReceiptVouchers={receiptVouchersGlobal} employeeAdvances={employeeAdvances} />;
 
