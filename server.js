@@ -145,6 +145,13 @@ pool
     `ALTER TABLE staff_dept_permissions ADD COLUMN IF NOT EXISTS can_edit_date      BOOLEAN DEFAULT false`,
   )
   .catch(() => {});
+// ── تعديل تفاصيل الجلسات (تشخيص/أدوية/فحوصات/مبلغ) — صلاحية جديدة يتحكم بها
+//    المدير لكل موظف/قسم لحاله، منفصلة عن تعديل بيانات المريض الشخصية ──
+pool
+  .query(
+    `ALTER TABLE staff_dept_permissions ADD COLUMN IF NOT EXISTS can_edit_session   BOOLEAN DEFAULT false`,
+  )
+  .catch(() => {});
 pool
   .query(
     `ALTER TABLE staff_dept_permissions ADD COLUMN IF NOT EXISTS can_edit_voucher   BOOLEAN DEFAULT false`,
@@ -656,6 +663,69 @@ pool
   .query(`ALTER TABLE lab_tests ADD COLUMN IF NOT EXISTS kit_inventory_id INTEGER REFERENCES lab_inventory(id) ON DELETE SET NULL`)
   .then(() => console.log("[migration] lab_tests_kit_inventory_link applied"))
   .catch((e) => console.error("[migration] lab_tests_kit_inventory_link:", e.message));
+
+// ── Lab inventory unit cost (fixes: kit consumption never affected profit) ──
+// Adds a per-unit cost on each inventory item so that automatic kit deduction
+// at test-registration time can also record the real cost as a lab expense —
+// previously the test catalog's "cost" fields were manual, informational-only
+// numbers never wired into any profit/expense calculation anywhere.
+pool
+  .query(`ALTER TABLE lab_inventory ADD COLUMN IF NOT EXISTS cost_per_unit NUMERIC(12,2) DEFAULT 0`)
+  .then(() => console.log("[migration] lab_inventory_cost_per_unit applied"))
+  .catch((e) => console.error("[migration] lab_inventory_cost_per_unit:", e.message));
+
+// ── Insurance claim linkage on invoices (فواتير شركات التأمين): رقم كشفية
+//    التأمين + ربط الفاتورة بالمريض صاحب المطالبة — لازمة لطباعة كشف حساب
+//    فعلي قابل لتقديمه لشركة التأمين ──
+pool
+  .query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS claim_no VARCHAR(100)`)
+  .then(() => console.log("[migration] invoices_claim_no applied"))
+  .catch((e) => console.error("[migration] invoices_claim_no:", e.message));
+pool
+  .query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS patient_id VARCHAR(30)`)
+  .then(() => console.log("[migration] invoices_patient_id applied"))
+  .catch((e) => console.error("[migration] invoices_patient_id:", e.message));
+pool
+  .query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS patient_name VARCHAR(200)`)
+  .then(() => console.log("[migration] invoices_patient_name applied"))
+  .catch((e) => console.error("[migration] invoices_patient_name:", e.message));
+
+// ── Supplier linkage on purchase requests (شركة المورد) — كانت تُكتب كنص حر
+//    داخل حقل الملاحظات فقط، وليست عموداً حقيقياً قابلاً للفلترة أو الربط
+//    بدليل شركات الموردين ──
+pool
+  .query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS supplier VARCHAR(200)`)
+  .then(() => console.log("[migration] purchase_requests_supplier applied"))
+  .catch((e) => console.error("[migration] purchase_requests_supplier:", e.message));
+
+// ── ربط طلبات الشراء وسندات الصرف/القبض بحركة الصندوق (drawer_transactions)
+//    التي أنشأتها فعلياً — يحل مشكلة: عند حذف الطلب/السند بعد اعتماده، كانت
+//    حركة السحب/الإيداع المرتبطة تبقى معلّقة للأبد في سجل الصندوق (رصيد غير
+//    صحيح + "ملاحظات" عالقة لا تُحذف)، لأنه لم يكن هناك أي رابط بينهما.
+//    الآن نحفظ رقم الحركة الحقيقي من قاعدة البيانات وقت إنشائها، لنستطيع لاحقاً
+//    حذفها أو تعديل مبلغها مباشرة عبر /drawers/transactions/:id بدل ترك أثر دائم ──
+pool
+  .query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS drawer_tx_id INTEGER`)
+  .then(() => console.log("[migration] purchase_requests_drawer_tx_id applied"))
+  .catch((e) => console.error("[migration] purchase_requests_drawer_tx_id:", e.message));
+pool
+  .query(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS drawer_tx_id INTEGER`)
+  .then(() => console.log("[migration] payment_vouchers_drawer_tx_id applied"))
+  .catch((e) => console.error("[migration] payment_vouchers_drawer_tx_id:", e.message));
+pool
+  .query(`ALTER TABLE receipt_vouchers ADD COLUMN IF NOT EXISTS drawer_tx_id INTEGER`)
+  .then(() => console.log("[migration] receipt_vouchers_drawer_tx_id applied"))
+  .catch((e) => console.error("[migration] receipt_vouchers_drawer_tx_id:", e.message));
+
+// ── تعليم سندات الصرف الشخصية "مُستهلَكة" بعد احتسابها ضمن صرف راتب —
+//    بنفس مبدأ عمود employee_advances.repaid تماماً. قبل هذا العمود كانت
+//    دالة حساب صافي الراتب تجمع كل سندات الصرف الشخصية للموظف منذ استخدام
+//    النظام بدون أي تحديد بتاريخ، فيُخصم نفس السند من راتب كل شهر جديد للأبد
+//    بدل أن يُخصم مرة واحدة فقط عند أول صرف راتب يشمله ──
+pool
+  .query(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS applied_to_payroll BOOLEAN DEFAULT false`)
+  .then(() => console.log("[migration] payment_vouchers_applied_to_payroll applied"))
+  .catch((e) => console.error("[migration] payment_vouchers_applied_to_payroll:", e.message));
 
 // ── Base path (set APP_BASE_PATH env var on Hostinger, e.g. /45.159.160.11) ──
 const BASE = process.env.APP_BASE_PATH || "";

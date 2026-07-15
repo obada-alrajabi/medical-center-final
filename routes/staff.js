@@ -14,7 +14,7 @@ const PERM_COLS_ALLOWED = new Set([
   'can_lab_session', 'can_lab_catalog', 'can_rad_session', 'can_rad_catalog',
   'can_purchase_reqs', 'can_lab_queue', 'can_lab_inventory', 'can_rad_queue',
   'can_rehab_session', 'can_rehab_catalog', 'can_rehab_queue', 'can_print',
-  'can_vouchers', 'can_delete_patient', 'can_edit_patient', 'can_edit_date',
+  'can_vouchers', 'can_delete_patient', 'can_edit_patient', 'can_edit_date', 'can_edit_session',
   'can_edit_voucher', 'can_delete_voucher', 'can_register_patient', 'can_print_export',
   'can_queue', 'can_queue_add', 'can_queue_edit_status', 'can_queue_delete',
   'can_catalog_add', 'can_catalog_edit', 'can_catalog_delete',

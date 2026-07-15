@@ -5,7 +5,7 @@ export type Route = { screen: string; dept?: string; patientId?: string };
 export type PatientRecord = { id:string; name:string; age:number; phone:string; blood:string; insurance:boolean; dept:string; debt:number; date:string; gender?:string; address?:string; chronic?:string; allergy?:string };
 export type DrawerTx = { id:number; type:"in"|"out"; title:string; category:string; beneficiary?:string; amount:number; balance:number; time:string; date:string; auto?:boolean };
 export type DrawerState = { balance:number; txs:DrawerTx[]; openingBalance?:number; openingBalanceDate?:string };
-export type Invoice = { id:string; company:string; date:string; total:number; paid:number; remaining:number; status:"paid"|"partial"|"unpaid"; dept:string };
+export type Invoice = { id:string; company:string; date:string; total:number; paid:number; remaining:number; status:"paid"|"partial"|"unpaid"; dept:string; claimNo?:string; patientId?:string; patientName?:string };
 export type InsuranceCo = { id:number; name:string; phone:string; discountClinic:number; discountLab:number; discountRad:number };
 export type DebtRow = { id:number; patient:string; pid:string; dept:string; amount:number; date:string; days:number; phone:string; smsSent?:boolean };
 export type AttendanceRecord = { id:number; empId:string; empName:string; dept:string; date:string; dayName:string; checkIn:string; checkOut:string; totalHours?:number; };
@@ -17,7 +17,7 @@ export type RadImage = { id:number; code:string; name:string; device:string; pri
 export type PatientSession = { id:number; patientId:string; dept:string; doctor:string; date:string; diagnoses:string[]; medications:{name:string;dose:string;freq:string;duration:string}[]; notes:string; labRefs:string[]; radRefs:string[]; amount:number; paid:number; debt:number };
 export type DiagnosisEntry = { id:number; code:string; name:string; category:string; dept?:string };
 export type PurchaseItem = { id:number; name:string; qty:number; unit:string; estimatedPrice:number; note:string };
-export type PurchaseRequest = { id:number; dept:string; requestedBy:string; date:string; items:PurchaseItem[]; totalAmount:number; paidAmount:number; status:"pending"|"approved"|"rejected"; approvedBy?:string; approvedDate?:string; rejectionReason?:string; note:string };
+export type PurchaseRequest = { id:number; dept:string; requestedBy:string; date:string; items:PurchaseItem[]; totalAmount:number; paidAmount:number; status:"pending"|"approved"|"rejected"; approvedBy?:string; approvedDate?:string; rejectionReason?:string; note:string; supplier?:string; drawerTxId?:number };
 export type EmployeeAdvance = { id:number; staffId?:number|null; empName:string; dept:string; amount:number; date:string; note:string; repaid:boolean; repaidDate?:string };
 export type StaffAdvanceRequest = { id:number; staffId:number; staffName:string; dept:string; amount:number; date:string; reason:string; status:"pending"|"approved"|"rejected"; reviewedBy?:string; reviewDate?:string; rejectionReason?:string };
 export type ExternalDebt = { id:number; dir:"given"|"received"; party:string; amount:number; date:string; note:string; status:"pending"|"settled"; settledDate?:string };
@@ -47,6 +47,7 @@ export type DeptPermissions = {
   canDeletePatient?: boolean;
   canEditPatient?: boolean;
   canEditDate?: boolean;
+  canEditSession?: boolean;
   canViewRevenue?: boolean;
   canAddDeposit?: boolean;
   canWithdraw?: boolean;

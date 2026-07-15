@@ -253,12 +253,12 @@ router.get('/inventory/:id', async (req, res) => {
 });
 
 router.post('/inventory', requireAdmin, async (req, res) => {
-  const { name, item_type, qty, threshold, unit, notes } = req.body;
+  const { name, item_type, qty, threshold, unit, notes, cost_per_unit } = req.body;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO lab_inventory (name,item_type,qty,threshold,unit,notes)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [name, item_type ?? null, qty ?? 0, threshold ?? 0, unit ?? null, notes ?? null]
+      `INSERT INTO lab_inventory (name,item_type,qty,threshold,unit,notes,cost_per_unit)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [name, item_type ?? null, qty ?? 0, threshold ?? 0, unit ?? null, notes ?? null, cost_per_unit ?? 0]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -271,17 +271,18 @@ router.put('/inventory/:id', requireAdmin, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM lab_inventory WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { name, item_type, qty, threshold, unit, notes } = req.body;
+    const { name, item_type, qty, threshold, unit, notes, cost_per_unit } = req.body;
     const { rows } = await pool.query(
-      `UPDATE lab_inventory SET name=$1,item_type=$2,qty=$3,threshold=$4,unit=$5,notes=$6
-       WHERE id=$7 RETURNING *`,
+      `UPDATE lab_inventory SET name=$1,item_type=$2,qty=$3,threshold=$4,unit=$5,notes=$6,cost_per_unit=$7
+       WHERE id=$8 RETURNING *`,
       [
-        name      !== undefined ? name      : c.name,
-        item_type !== undefined ? item_type : c.item_type,
-        qty       !== undefined ? qty       : c.qty,
-        threshold !== undefined ? threshold : c.threshold,
-        unit      !== undefined ? unit      : c.unit,
-        notes     !== undefined ? notes     : c.notes,
+        name          !== undefined ? name          : c.name,
+        item_type     !== undefined ? item_type     : c.item_type,
+        qty           !== undefined ? qty           : c.qty,
+        threshold     !== undefined ? threshold     : c.threshold,
+        unit          !== undefined ? unit          : c.unit,
+        notes         !== undefined ? notes         : c.notes,
+        cost_per_unit !== undefined ? cost_per_unit : c.cost_per_unit,
         req.params.id,
       ]
     );

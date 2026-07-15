@@ -37,13 +37,13 @@ router.get('/invoices/:id', async (req, res) => {
 });
 
 router.post('/invoices', requireFinancialAuth, async (req, res) => {
-  const { id, company, date, total, paid, status, dept, notes } = req.body;
+  const { id, company, date, total, paid, status, dept, notes, claim_no, patient_id, patient_name } = req.body;
   const t = total ?? 0; const p = paid ?? 0;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO invoices (id,company,date,total,paid,status,dept,notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [id, company, date, t, p, status ?? 'unpaid', dept ?? null, notes ?? null]
+      `INSERT INTO invoices (id,company,date,total,paid,status,dept,notes,claim_no,patient_id,patient_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [id, company, date, t, p, status ?? 'unpaid', dept ?? null, notes ?? null, claim_no ?? null, patient_id ?? null, patient_name ?? null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -56,10 +56,10 @@ router.put('/invoices/:id', requireFinancialAuth, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM invoices WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { company, date, total, paid, status, dept, notes } = req.body;
+    const { company, date, total, paid, status, dept, notes, claim_no, patient_id, patient_name } = req.body;
     const { rows } = await pool.query(
-      `UPDATE invoices SET company=$1,date=$2,total=$3,paid=$4,status=$5,dept=$6,notes=$7,updated_at=NOW()
-       WHERE id=$8 RETURNING *`,
+      `UPDATE invoices SET company=$1,date=$2,total=$3,paid=$4,status=$5,dept=$6,notes=$7,claim_no=$8,patient_id=$9,patient_name=$10,updated_at=NOW()
+       WHERE id=$11 RETURNING *`,
       [
         company !== undefined ? company : c.company,
         date    !== undefined ? date    : c.date,
@@ -68,6 +68,9 @@ router.put('/invoices/:id', requireFinancialAuth, async (req, res) => {
         status  !== undefined ? status  : c.status,
         dept    !== undefined ? dept    : c.dept,
         notes   !== undefined ? notes   : c.notes,
+        claim_no     !== undefined ? claim_no     : c.claim_no,
+        patient_id   !== undefined ? patient_id   : c.patient_id,
+        patient_name !== undefined ? patient_name : c.patient_name,
         req.params.id,
       ]
     );
@@ -296,14 +299,14 @@ router.get('/purchase-requests/:id', async (req, res) => {
 });
 
 router.post('/purchase-requests', requireFinancialAuth, async (req, res) => {
-  const { dept, requested_by, date, total_amount, paid_amount, status, note, items } = req.body;
+  const { dept, requested_by, date, total_amount, paid_amount, status, note, items, supplier, drawer_tx_id } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO purchase_requests (dept,requested_by,date,total_amount,paid_amount,status,note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [dept ?? null, requested_by ?? null, date, total_amount ?? 0, paid_amount ?? 0, status ?? 'pending', note ?? null]
+      `INSERT INTO purchase_requests (dept,requested_by,date,total_amount,paid_amount,status,note,supplier,drawer_tx_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [dept ?? null, requested_by ?? null, date, total_amount ?? 0, paid_amount ?? 0, status ?? 'pending', note ?? null, supplier ?? null, drawer_tx_id ?? null]
     );
     const pr = rows[0];
     if (items && items.length) {
@@ -330,11 +333,11 @@ router.put('/purchase-requests/:id', requireFinancialAuth, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM purchase_requests WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { dept, requested_by, date, total_amount, paid_amount, status, approved_by, approved_date, rejection_reason, note } = req.body;
+    const { dept, requested_by, date, total_amount, paid_amount, status, approved_by, approved_date, rejection_reason, note, supplier, drawer_tx_id } = req.body;
     const { rows } = await pool.query(
       `UPDATE purchase_requests SET dept=$1,requested_by=$2,date=$3,total_amount=$4,
-       paid_amount=$5,status=$6,approved_by=$7,approved_date=$8,rejection_reason=$9,note=$10
-       WHERE id=$11 RETURNING *`,
+       paid_amount=$5,status=$6,approved_by=$7,approved_date=$8,rejection_reason=$9,note=$10,supplier=$11,drawer_tx_id=$12
+       WHERE id=$13 RETURNING *`,
       [
         dept             !== undefined ? dept             : c.dept,
         requested_by     !== undefined ? requested_by     : c.requested_by,
@@ -346,6 +349,8 @@ router.put('/purchase-requests/:id', requireFinancialAuth, async (req, res) => {
         approved_date    !== undefined ? approved_date    : c.approved_date,
         rejection_reason !== undefined ? rejection_reason : c.rejection_reason,
         note             !== undefined ? note             : c.note,
+        supplier         !== undefined ? supplier         : c.supplier,
+        drawer_tx_id     !== undefined ? drawer_tx_id     : c.drawer_tx_id,
         req.params.id,
       ]
     );
@@ -458,7 +463,7 @@ router.get('/receipt-vouchers/:id', async (req, res) => {
 // voucher (creation moved money twice, cancellation reversed it once). That
 // side effect has been removed so creation and cancellation are symmetric.
 router.post('/receipt-vouchers', requireFinancialAuth, async (req, res) => {
-  const { date, amount, received_from_type, received_from_id, received_from_name, reason, dept, notes, approved_by } = req.body;
+  const { date, amount, received_from_type, received_from_id, received_from_name, reason, dept, notes, approved_by, drawer_tx_id } = req.body;
   try {
     const year = new Date(Date.now()+3*60*60*1000).getUTCFullYear();
     const { rows: [{ next_num }] } = await pool.query(
@@ -466,9 +471,9 @@ router.post('/receipt-vouchers', requireFinancialAuth, async (req, res) => {
     );
     const voucher_no = `RV-${year}-${String(next_num).padStart(4,'0')}`;
     const { rows } = await pool.query(
-      `INSERT INTO receipt_vouchers (voucher_no,date,amount,received_from_type,received_from_id,received_from_name,reason,dept,notes,approved_by)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [voucher_no, date, amount, received_from_type, received_from_id||null, received_from_name, reason, dept||null, notes||null, approved_by||null]
+      `INSERT INTO receipt_vouchers (voucher_no,date,amount,received_from_type,received_from_id,received_from_name,reason,dept,notes,approved_by,drawer_tx_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [voucher_no, date, amount, received_from_type, received_from_id||null, received_from_name, reason, dept||null, notes||null, approved_by||null, drawer_tx_id||null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -479,9 +484,9 @@ router.put('/receipt-vouchers/:id', requireAdmin, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM receipt_vouchers WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { date, amount, received_from_type, received_from_id, received_from_name, reason, dept, notes, approved_by } = req.body;
+    const { date, amount, received_from_type, received_from_id, received_from_name, reason, dept, notes, approved_by, drawer_tx_id } = req.body;
     const { rows } = await pool.query(
-      `UPDATE receipt_vouchers SET date=$1,amount=$2,received_from_type=$3,received_from_id=$4,received_from_name=$5,reason=$6,dept=$7,notes=$8,approved_by=$9 WHERE id=$10 RETURNING *`,
+      `UPDATE receipt_vouchers SET date=$1,amount=$2,received_from_type=$3,received_from_id=$4,received_from_name=$5,reason=$6,dept=$7,notes=$8,approved_by=$9,drawer_tx_id=$10 WHERE id=$11 RETURNING *`,
       [
         date               !== undefined ? date               : c.date,
         amount             !== undefined ? amount             : c.amount,
@@ -492,6 +497,7 @@ router.put('/receipt-vouchers/:id', requireAdmin, async (req, res) => {
         dept               !== undefined ? dept               : c.dept,
         notes              !== undefined ? notes              : c.notes,
         approved_by        !== undefined ? approved_by        : c.approved_by,
+        drawer_tx_id        !== undefined ? drawer_tx_id       : c.drawer_tx_id,
         req.params.id,
       ]
     );
@@ -536,7 +542,7 @@ router.get('/payment-vouchers/:id', async (req, res) => {
 // previous auto drawer_transaction + balance mutation was removed (it
 // double-counted every payment voucher).
 router.post('/payment-vouchers', requireFinancialAuth, async (req, res) => {
-  const { date, amount, paid_to_type, paid_to_id, paid_to_name, reason, dept, category, notes, approved_by } = req.body;
+  const { date, amount, paid_to_type, paid_to_id, paid_to_name, reason, dept, category, notes, approved_by, drawer_tx_id } = req.body;
   try {
     const year = new Date(Date.now()+3*60*60*1000).getUTCFullYear();
     const { rows: [{ next_num }] } = await pool.query(
@@ -544,9 +550,9 @@ router.post('/payment-vouchers', requireFinancialAuth, async (req, res) => {
     );
     const voucher_no = `PV-${year}-${String(next_num).padStart(4,'0')}`;
     const { rows } = await pool.query(
-      `INSERT INTO payment_vouchers (voucher_no,date,amount,paid_to_type,paid_to_id,paid_to_name,reason,dept,category,notes,approved_by)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [voucher_no, date, amount, paid_to_type, paid_to_id||null, paid_to_name, reason, dept||null, category||null, notes||null, approved_by||null]
+      `INSERT INTO payment_vouchers (voucher_no,date,amount,paid_to_type,paid_to_id,paid_to_name,reason,dept,category,notes,approved_by,drawer_tx_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [voucher_no, date, amount, paid_to_type, paid_to_id||null, paid_to_name, reason, dept||null, category||null, notes||null, approved_by||null, drawer_tx_id||null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -557,9 +563,9 @@ router.put('/payment-vouchers/:id', requireAdmin, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM payment_vouchers WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { date, amount, paid_to_type, paid_to_id, paid_to_name, reason, dept, category, notes, approved_by } = req.body;
+    const { date, amount, paid_to_type, paid_to_id, paid_to_name, reason, dept, category, notes, approved_by, drawer_tx_id, applied_to_payroll } = req.body;
     const { rows } = await pool.query(
-      `UPDATE payment_vouchers SET date=$1,amount=$2,paid_to_type=$3,paid_to_id=$4,paid_to_name=$5,reason=$6,dept=$7,category=$8,notes=$9,approved_by=$10 WHERE id=$11 RETURNING *`,
+      `UPDATE payment_vouchers SET date=$1,amount=$2,paid_to_type=$3,paid_to_id=$4,paid_to_name=$5,reason=$6,dept=$7,category=$8,notes=$9,approved_by=$10,drawer_tx_id=$11,applied_to_payroll=$12 WHERE id=$13 RETURNING *`,
       [
         date        !== undefined ? date        : c.date,
         amount      !== undefined ? amount      : c.amount,
@@ -571,6 +577,8 @@ router.put('/payment-vouchers/:id', requireAdmin, async (req, res) => {
         category    !== undefined ? category    : c.category,
         notes       !== undefined ? notes       : c.notes,
         approved_by !== undefined ? approved_by : c.approved_by,
+        drawer_tx_id !== undefined ? drawer_tx_id : c.drawer_tx_id,
+        applied_to_payroll !== undefined ? applied_to_payroll : c.applied_to_payroll,
         req.params.id,
       ]
     );

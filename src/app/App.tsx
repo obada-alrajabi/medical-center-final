@@ -50,6 +50,7 @@ import {
   makeDefaultDeptPerms, inRangeDDMMYYYY,
 } from "./utils";
 import { fireToast } from "./toastStore";
+import { openPrintPdf } from "./printPdfEngine";
 import {
   Badge, KPICard, Modal, ConfirmModal, Card, InputField, Btn, ToastContainer,
   THead, TRow, TD, EmptyState, AccessDeniedScreen,
@@ -318,7 +319,7 @@ const initialEmployees: Employee[] = [];
 
 // ─── STAFF INITIAL DATA ───────────────────────────────────────────────────────
 const initialStaff: StaffMember[] = [];
-const initialInventory: { id: number; name: string; itemType: string; tests: string[]; qty: number; threshold: number; status: "ok" | "low" | "critical" | "empty"; params: KitParam[]; unit?: string; notes?: string }[] = [];
+const initialInventory: { id: number; name: string; itemType: string; tests: string[]; qty: number; threshold: number; status: "ok" | "low" | "critical" | "empty"; params: KitParam[]; unit?: string; unitCost?: number; notes?: string }[] = [];
 const labSessions: { id: number; patient: string; tests: string[]; time: string; status: "pending" | "done" }[] = [];
 const rehabSessions: { id: number; patient: string; services: string[]; time: string; status: "pending" | "done" }[] = [];
 const initialRehabServices: RehabServiceItem[] = [];
@@ -981,7 +982,12 @@ ${footerHtml}</div>
 </body></html>`;
 };
 
-const _printViaIframe = (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true, dept?: string | null) => {
+// ── المسار القديم عبر iframe + window.print(): كان يعتمد على خدع CSS
+//    (position:fixed + @page margin) غير متّسقة بين المتصفحات، وهذا هو
+//    السبب الجذري لتقطّع تطبيق الترويسة/الهوامش أحياناً. أُبقي هنا فقط
+//    كشبكة أمان (fallback) تلقائية إن فشل المحرك الجديد (canvas + PDF) لأي
+//    سبب — لا يُستدعى مباشرة بأي زر طباعة بعد الآن ──
+const _printViaIframeLegacy = (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true, dept?: string | null) => {
   const doc = _buildPrintDoc(html, title, pdfMode, from, to, withHeader, dept);
   const iframe = document.createElement("iframe");
   iframe.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;opacity:0;pointer-events:none;";
@@ -993,6 +999,58 @@ const _printViaIframe = (html: string, title: string, pdfMode: boolean, from?: s
     try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } catch (_) { }
     setTimeout(() => { try { document.body.removeChild(iframe); } catch (_) { } }, 6000);
   }, 600);
+};
+
+// ── المحرك الدائم: يبني نفس شذرة المحتوى (head/meta + المحتوى + footer)
+//    التي كان يبنيها `_buildPrintDoc`، لكن بدل تغليفها بمستند HTML كامل
+//    يُطبع عبر متصفح، يمرّرها لمحرك canvas+PDF (`printPdfEngine.ts`) الذي
+//    يبني ملف PDF حقيقي بهوامش وترويسة ثابتة بايتياً — لا اعتماد على أي
+//    سلوك طباعة خاص بمتصفح معيّن. لو فشل المحرك الجديد لأي سبب (متصفح قديم،
+//    تعذّر تحميل صورة الترويسة، إلخ) نرجع تلقائياً للمسار القديم حتى لا
+//    ينقطع عمل المستخدم إطلاقاً ──
+const _printViaIframe = async (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true, dept?: string | null) => {
+  try {
+    const { date, time } = _nowDT();
+    const scope = _resolvePrintScope(dept);
+    const ps = gAllPrintSettings[scope] || _defaultPrintSettingsRow(scope);
+    const userName = gReportContext.userName;
+    const userRole = gReportContext.userRole;
+    const periodTxt = from || to ? `${from ? new Date(from).toLocaleDateString("en-GB") : "..."} — ${to ? new Date(to).toLocaleDateString("en-GB") : "..."}` : null;
+    const metaItems: string[] = [];
+    if (userName) metaItems.push(`<span class="rm-item">👤 أعدّه: <strong>${userName}</strong>${userRole ? " · " + userRole : ""}</span>`);
+    if (periodTxt) metaItems.push(`<span class="rm-item">📅 الفترة: <strong>${periodTxt}</strong></span>`);
+    else metaItems.push(`<span class="rm-item">📅 تاريخ التقرير: <strong>${date}</strong></span>`);
+    const metaRow = `<div class="rm">${metaItems.join("")}</div>`;
+    const effectiveLh = withHeader && ps.with_header !== false ? (ps.letterhead_image || "") : "";
+    const head = effectiveLh
+      ? ""
+      : (withHeader
+        ? `<div class="ch"><div><b class="ct">${title}</b><div class="cs">مركز وعيادة الدكتور مهند سليمان جابر</div></div><div class="cm">تاريخ الطباعة: ${date}<br/>${time}</div></div>${metaRow}`
+        : `${metaRow}`);
+    const footerHtml = effectiveLh
+      ? ""
+      : `<div class="footer">مركز وعيادة الدكتور مهند سليمان جابر — طُبع في ${date} الساعة ${time}${userName ? ` — بواسطة: ${userName}` : ""}</div>`;
+    const bodyHtml = `${head}${html}${footerHtml}`;
+    const topMargin = withHeader ? ps.margin_top : Math.max(ps.margin_top, 45);
+    await openPrintPdf({
+      title,
+      bodyHtml,
+      settings: {
+        paperSize: ps.paper_size || "A4",
+        orientation: ps.orientation || "portrait",
+        marginTop: topMargin,
+        marginRight: ps.margin_right,
+        marginBottom: ps.margin_bottom,
+        marginLeft: ps.margin_left,
+        letterheadImage: effectiveLh || null,
+        fontFamily: ps.font_family || "Tajawal",
+        fontSize: ps.font_size || 13,
+      },
+    });
+  } catch (err) {
+    console.error("فشل محرك الطباعة الجديد (canvas/PDF) — الرجوع للمسار الاحتياطي القديم:", err);
+    _printViaIframeLegacy(html, title, pdfMode, from, to, withHeader, dept);
+  }
 };
 // `dept`: pass the ambient department id (e.g. "lab"/"surgery"/"rehab"/"radiology")
 // when the print button lives inside that department's own screens, so the
@@ -1239,9 +1297,9 @@ function PurchaseRequestModal({ open, onClose, dept, onSubmit, requestedBy }: { 
 function TopBar({ pageTitle, sidebarCollapsed, isMobile, onToggle, notifications = [], onDismissNotif, onClearAllNotif }: { pageTitle: string; sidebarCollapsed: boolean; isMobile: boolean; onToggle: () => void; notifications?: AppNotification[]; onDismissNotif?: (id: string) => void; onClearAllNotif?: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [nowT, setNowT] = useState(new Date());
-  useEffect(() => { const t = setInterval(() => setNowT(new Date()), 30000); return () => clearInterval(t); }, []);
+  useEffect(() => { const t = setInterval(() => setNowT(new Date()), 60000); return () => clearInterval(t); }, []);
   const today = nowT.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const timeStr = nowT.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const timeStr = nowT.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   const mr = isMobile ? 0 : sidebarCollapsed ? 64 : 260;
   const count = notifications.length;
   const urgentCount = notifications.filter(n => n.qty === 0 || n.qty <= Math.floor(n.threshold * 0.4)).length;
@@ -2210,7 +2268,7 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
 // ─── DEPT PURCHASE REQS ─────────────────────────────────────────────────────────
 
 type RecPurchItem = { id: number; name: string; qty: string; unit: string; price: string };
-function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, toast, isAdmin, dept: screenDept = "surgery", staffName }: { purchaseRequests: PurchaseRequest[]; onSubmitPurchaseRequest: (req: Omit<PurchaseRequest, "id" | "status">) => void; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; toast: (m: string, t?: any) => void; isAdmin?: boolean; dept?: string; staffName?: string }) {
+function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, toast, isAdmin, dept: screenDept = "surgery", staffName, suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onSubmitPurchaseRequest: (req: Omit<PurchaseRequest, "id" | "status">) => void; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; toast: (m: string, t?: any) => void; isAdmin?: boolean; dept?: string; staffName?: string; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
   const [tab, setTab] = useState<"list" | "new">("list");
   const [company, setCompany] = useState("");
   const [paidAmt, setPaidAmt] = useState("");
@@ -2235,13 +2293,14 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
 
   const handleSubmit = () => {
     if (items.some(i => !i.name.trim())) { toast("أدخل اسم جميع الأصناف", "error"); return; }
-    if (!company.trim()) { toast("أدخل اسم الشركة", "error"); return; }
+    if (!company.trim()) { toast("اختر شركة المورد", "error"); return; }
     const purchItems: PurchaseItem[] = items.map((i, idx) => ({ id: idx + 1, name: i.name, qty: parseFloat(i.qty) || 1, unit: i.unit, estimatedPrice: parseFloat(i.price) || 0, note: "" }));
     onSubmitPurchaseRequest({
       dept: screenDept, requestedBy: staffName || (screenDept === "surgery" ? "موظف الجراحة والطوارئ" : screenDept === "lab" ? "موظف المختبر" : screenDept === "rehab" ? "موظف قسم العلاج التأهيلي" : screenDept === "radiology" ? "موظف قسم الأشعة الطبية" : "موظف"), date: `${today} — ${nowTime}`,
       items: purchItems, totalAmount: totalCalc,
       paidAmount: parseFloat(paidAmt) || totalCalc,
-      note: `شركة: ${company} | المبلغ المدفوع: ${paidAmt || totalCalc} | المتبقي للشركة (دين على المركز): ${autoRemain}${note ? ` | ${note}` : ""}`
+      supplier: company,
+      note
     });
     toast("✅ تم تقديم طلب الشراء — في انتظار موافقة المدير", "info");
     setCompany(""); setPaidAmt(""); setNote("");
@@ -2275,9 +2334,12 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
         <div className="space-y-3">
           {recReqs.length === 0 && <EmptyState msg="لا توجد طلبات شراء بعد — اضغط على طلب جديد" />}
           {recReqs.map(req => {
-            const companyName = req.note.match(/شركة:\s*([^|]+)/)?.[1]?.trim() || "—";
-            const paidInfo = req.note.match(/المبلغ المدفوع:\s*([^|]+)/)?.[1]?.trim() || String(req.paidAmount || 0);
-            const remainInfo = req.note.match(/المتبقي للشركة(?:\s*\(.*?\))?:\s*([^|]+)/)?.[1]?.trim() || String(req.totalAmount - (req.paidAmount || 0));
+            // ── تحاول أولاً القراءة من الحقول الحقيقية (supplier/paidAmount) — الطلبات
+            //    القديمة قبل هذا التعديل كانت تُخزِّن هذه المعلومات كنص حر داخل
+            //    الملاحظات فقط، فنُبقي القراءة منها كخيار احتياطي عرضي لها فقط ──
+            const companyName = req.supplier || req.note.match(/شركة:\s*([^|]+)/)?.[1]?.trim() || "—";
+            const paidInfo = req.paidAmount != null ? String(req.paidAmount) : (req.note.match(/المبلغ المدفوع:\s*([^|]+)/)?.[1]?.trim() || "0");
+            const remainInfo = String(Math.max(0, req.totalAmount - (req.paidAmount || 0)));
             return (
               <div key={req.id} className="bg-white rounded-xl p-4 shadow-sm space-y-3" style={{ border: `2px solid ${req.status === "pending" ? "#FFE082" : req.status === "approved" ? "#A5D6A7" : "#FFCDD2"}` }}>
                 <div className="flex items-start justify-between gap-2">
@@ -2339,7 +2401,14 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <InputField label="اسم الشركة" required placeholder="اسم الشركة الموردة..." value={company} onChange={setCompany} />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">شركة المورد <span className="text-[#D32F2F]">*</span></label>
+              <select value={company} onChange={e => setCompany(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                <option value="">— اختر شركة المورد —</option>
+                {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+              </select>
+              {suppliers.length === 0 && <p className="text-[10px] text-[#D32F2F]">لا توجد شركات موردين مسجَّلة بعد — أضفها أولاً من الإعدادات ← شركات الموردين</p>}
+            </div>
             <InputField label="المبلغ الذي سيتم دفعه (₪)" type="number" placeholder={String(totalCalc || "")} value={paidAmt} onChange={setPaidAmt} />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -2379,7 +2448,7 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
 
 // ─── OPEN PATIENT ──────────────────────────────────────────────────────────────
 
-function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = [], loggedUser, patientDeleteRequests = [], setPatientDeleteRequests, deletedPatientIds = [], setDeletedPatientIds, onAdminDeletePatient, diagnoses = [], setDiagnoses, rehabPlans, setRehabPlans, rehabQueueEntries, setRehabQueueEntries, doDeposit, toast: rehabToast }: { dept: string; onNavigate: (r: Route) => void; sessions: PatientSession[]; debts: DebtRow[]; customDepts?: Array<{ id: string; name: string; short: string }>; loggedUser?: LoggedUser | null; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; deletedPatientIds?: string[]; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; rehabPlans?: RehabPlan[]; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; rehabQueueEntries?: RehabQueueEntry[]; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>>; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; toast?: (m: string, t?: any) => void }) {
+function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = [], loggedUser, patientDeleteRequests = [], setPatientDeleteRequests, deletedPatientIds = [], setDeletedPatientIds, onAdminDeletePatient, diagnoses = [], setDiagnoses, rehabPlans, setRehabPlans, rehabQueueEntries, setRehabQueueEntries, doDeposit, toast: rehabToast, perms }: { dept: string; onNavigate: (r: Route) => void; sessions: PatientSession[]; debts: DebtRow[]; customDepts?: Array<{ id: string; name: string; short: string }>; loggedUser?: LoggedUser | null; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; deletedPatientIds?: string[]; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; rehabPlans?: RehabPlan[]; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; rehabQueueEntries?: RehabQueueEntry[]; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>>; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; toast?: (m: string, t?: any) => void; perms?: DeptPermissions }) {
   const isAdmin = loggedUser?.type === "admin";
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<typeof mockPatients[0] | null>(null);
@@ -2499,8 +2568,8 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
             </div>
           </Modal>
         )}
-        {/* ── Admin: edit registration date modal ── */}
-        {isAdmin && selected && (
+        {/* ── تعديل تاريخ التسجيل — للمدير دائماً، وللموظف إذا فُعِّلت له صلاحية canEditDate ── */}
+        {(isAdmin || perms?.canEditDate) && selected && (
           <Modal open={adminDateModal} onClose={() => setAdminDateModal(false)} title={`تعديل تاريخ تسجيل — ${selected.name}`}
             footer={<><Btn variant="success" onClick={() => {
               if (!adminDateVal.trim()) return;
@@ -2513,7 +2582,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
             <div className="space-y-3">
               <div className="p-3 rounded-xl flex items-start gap-3" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
                 <AlertCircle size={15} className="text-[#F57C00] flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-[#795548]">صلاحية المدير فقط — تعديل تاريخ تسجيل المريض في النظام.</p>
+                <p className="text-xs text-[#795548]">تعديل تاريخ تسجيل المريض في النظام.</p>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-[#555]">تاريخ التسجيل الجديد</label>
@@ -2573,13 +2642,11 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
                   </div>
                   <div className="flex gap-2 flex-wrap flex-shrink-0">
                     <Btn small variant="outline" onClick={() => onNavigate({ screen: "patient-file", dept, patientId: p.id })}><Eye size={14} />الملف الكامل</Btn>
-                    <Btn small variant="outline" onClick={() => { setEditForm({ ...p }); setEditModal(true); }}><Pencil size={13} />تعديل</Btn>
+                    {(isAdmin || perms?.canEditPatient) && <Btn small variant="outline" onClick={() => { setEditForm({ ...p }); setEditModal(true); }}><Pencil size={13} />تعديل</Btn>}
                     {dept === "rehab" ? (() => { const ap = (rehabPlans || []).find(rp => rp.patientId === p.id && rp.status === "active"); return ap ? (<Btn small variant="success" onClick={() => { const now = new Date().toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }); const date = _today(); const entry: RehabQueueEntry = { id: Date.now(), patientId: ap.patientId, patientName: ap.patientName, planId: ap.id, diagnosis: ap.diagnosis, specialist: ap.specialist, sessionNumber: ap.completedSessions + 1, time: now, date, status: "pending" }; if (setRehabQueueEntries) setRehabQueueEntries(prev => [...prev, entry]); api.rehab.queue.create({ patient_id: ap.patientId, patient_name: ap.patientName, plan_id: ap.id, diagnosis: ap.diagnosis, specialist: ap.specialist, session_number: ap.completedSessions + 1, session_time: now, session_date: date, status: "pending" }).then(r => { if (r && setRehabQueueEntries) setRehabQueueEntries(prev => prev.map(e => e.id === entry.id ? { ...e, id: (r as any).id } : e)); }).catch(() => { }); if (rehabToast) rehabToast(`تم تسجيل حضور ${p.name} — الجلسة ${ap.completedSessions + 1} ✓`, "success"); }}><Activity size={14} />تسجيل حضور جلسة</Btn>) : (<Btn small variant="secondary" onClick={() => onNavigate({ screen: "rehab-new-plan", dept, patientId: p.id })}><Plus size={14} />خطة علاجية جديدة</Btn>); })() : <Btn small variant="secondary" onClick={() => onNavigate(dept === "lab" ? { screen: "lab-session", dept, patientId: p.id } : dept === "radiology" ? { screen: "rad-session", dept, patientId: p.id } : { screen: "new-session", dept, patientId: p.id })}><Plus size={14} />جلسة</Btn>}
+                    {(isAdmin || perms?.canEditDate) && <Btn small variant="outline" onClick={() => { const parts = p.date.split("/"); const iso = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : p.date; setAdminDateVal(iso); setAdminDateModal(true); }}><Calendar size={13} />تعديل التاريخ</Btn>}
                     {isAdmin ? (
-                      <>
-                        <Btn small variant="outline" onClick={() => { const parts = p.date.split("/"); const iso = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : p.date; setAdminDateVal(iso); setAdminDateModal(true); }}><Calendar size={13} />تعديل التاريخ</Btn>
-                        <Btn small variant="danger" onClick={() => setAdminDelModal(true)}><Trash2 size={13} />حذف مباشر</Btn>
-                      </>
+                      <Btn small variant="danger" onClick={() => setAdminDelModal(true)}><Trash2 size={13} />حذف مباشر</Btn>
                     ) : (() => { const existReq = patientDeleteRequests.find(r => r.patientId === p.id && r.status === "pending"); return existReq ? (<span className="text-xs px-2 py-1 rounded-lg font-medium" style={{ backgroundColor: "#FFF3E0", color: "#F57C00", border: "1px solid #FFE0B2" }}>طلب حذف قيد المراجعة</span>) : (<Btn small variant="danger" onClick={() => { setDelModal(true); setDelReason(""); }}><Trash2 size={13} />طلب حذف</Btn>); })()}
                   </div>
                 </div>
@@ -2667,6 +2734,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [insClaimNo, setInsClaimNo] = useState("");
   const [prefillSearch, setPrefillSearch] = useState("");
   const [fileId] = useState(() => generatePatientId());
   const [dupWarning, setDupWarning] = useState<typeof mockPatients[0] | null>(null);
@@ -2818,7 +2886,10 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       }
       // ── Create session record (so diagnoses/medications/labs/rads are not lost) ──
       const sessionTotal = isLab ? testTotalNP : isRad ? imgTotalNP : basePrice;
-      const sessionNet = Math.max(0, sessionTotal - discAmt);
+      // ── دين المريض يجب ألا يشمل الجزء المغطى من شركة التأمين (insDiscAmt) —
+      //    ذاك الجزء يُسجَّل كدين منفصل على شركة التأمين (invoices بالأسفل)،
+      //    وإلا لصار احتساب نفس المبلغ مرتين (مرة على المريض ومرة على التأمين). ──
+      const sessionNet = Math.max(0, sessionTotal - discAmt - insDiscAmt);
       const sessionPaid = parseFloat(form.paid) || 0;
       const sessionDebt = Math.max(0, sessionNet - sessionPaid);
       if (sessionPaid > 0) doDeposit(dept, sessionPaid, `دفعة مريض — ${form.name}`, "إيراد مريض");
@@ -2891,8 +2962,8 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       }
       if (insComp && insDiscAmt > 0 && setInvoices) {
         const insId = `ins-${Date.now()}`;
-        setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept }]);
-        api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept });
+        setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: effectiveId, patientName: form.name }]);
+        api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: effectiveId, patient_name: form.name });
       }
     }
     setTimeout(() => { setSaving(false); setSaved(true); toast(prefillPatient ? "تم تسجيل الزيارة في الملف الأصلي للمريض ✓" : "تم تسجيل المريض بنجاح ✓"); }, 800);
@@ -3424,9 +3495,13 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           {insComp && insDiscPct > 0 && (
             <div className="mb-4 p-3 rounded-xl flex items-start gap-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
               <Shield size={16} className="text-[#1B3A6B] mt-0.5 flex-shrink-0" />
-              <div>
+              <div className="flex-1">
                 <p className="text-sm font-semibold text-[#1B3A6B]">تأمين: {insComp.name} — خصم {insDiscPct}%</p>
                 <p className="text-xs text-[#555] mt-0.5">قيمة الخصم <strong className="text-[#1B3A6B]">{fmt(insDiscAmt)}</strong> ستُسجَّل تلقائياً كدين على شركة التأمين في نظام الفواتير</p>
+                <div className="mt-2 flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-[#1B3A6B]">رقم كشفية التأمين <span className="text-[#999] font-normal">(اختياري)</span></label>
+                  <input value={insClaimNo} onChange={e => setInsClaimNo(e.target.value)} placeholder="رقم الكشفية / رقم الموافقة" className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #BBDEFB", backgroundColor: "white" }} />
+                </div>
               </div>
             </div>
           )}
@@ -3517,7 +3592,7 @@ function PatientSearchScreen({ onNavigate, debts, customDepts = [] }: { onNaviga
 
 // ─── PATIENT FILE ──────────────────────────────────────────────────────────────
 
-function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, sessionFiles, setSessionFiles, setReceiptVouchers }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>> }) {
+function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, sessionFiles, setSessionFiles, setReceiptVouchers, perms }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; perms?: DeptPermissions }) {
   const isAdmin = loggedUser?.type === "admin";
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
   const handleDeleteSession = async (id: number) => {
@@ -3545,6 +3620,42 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   const [adminDelModal, setAdminDelModal] = useState(false);
   const [printModal, setPrintModal] = useState(false);
   const [printOpts, setPrintOpts] = useState({ info: true, sessions: true, meds: true, refs: true });
+  // ── تعديل تفاصيل الجلسة (canEditSession) ──
+  const [editSessionModal, setEditSessionModal] = useState<PatientSession | null>(null);
+  const [esDoctor, setEsDoctor] = useState("");
+  const [esDate, setEsDate] = useState("");
+  const [esNotes, setEsNotes] = useState("");
+  const [esAmount, setEsAmount] = useState("");
+  const [esPaid, setEsPaid] = useState("");
+  const [esDiagnoses, setEsDiagnoses] = useState<string[]>([]);
+  const [esDiagInput, setEsDiagInput] = useState("");
+  const [esMedications, setEsMedications] = useState<{ name: string; dose: string; freq: string; duration: string }[]>([]);
+  const [esLabRefs, setEsLabRefs] = useState<string[]>([]);
+  const [esLabInput, setEsLabInput] = useState("");
+  const [esRadRefs, setEsRadRefs] = useState<string[]>([]);
+  const [esRadInput, setEsRadInput] = useState("");
+  const openEditSession = (s: PatientSession) => {
+    setEditSessionModal(s);
+    setEsDoctor(s.doctor); setEsDate(s.date); setEsNotes(s.notes);
+    setEsAmount(String(s.amount)); setEsPaid(String(s.paid));
+    setEsDiagnoses([...s.diagnoses]); setEsDiagInput("");
+    setEsMedications(s.medications.map(m => ({ ...m })));
+    setEsLabRefs([...s.labRefs]); setEsLabInput("");
+    setEsRadRefs([...s.radRefs]); setEsRadInput("");
+  };
+  const esAmountNum = parseFloat(esAmount) || 0;
+  const esPaidNum = parseFloat(esPaid) || 0;
+  const esDebt = Math.max(0, esAmountNum - esPaidNum);
+  const saveEditSession = () => {
+    if (!editSessionModal) return;
+    onEditSession?.(editSessionModal.id, {
+      doctor: esDoctor, date: esDate, notes: esNotes, amount: esAmountNum, paid: esPaidNum,
+      diagnoses: esDiagnoses, medications: esMedications.filter(m => m.name.trim()),
+      labRefs: esLabRefs, radRefs: esRadRefs,
+    });
+    fireToast("تم تحديث تفاصيل الجلسة ✓");
+    setEditSessionModal(null);
+  };
   useEffect(() => { const found = mockPatients.find(x => x.id === patientId); if (found) setP(found); }, [patientId]);
   useEffect(() => {
     if (!p?.name) return;
@@ -3698,8 +3809,8 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   }, [dept, isAdmin]);
   return (
     <div className="space-y-5">
-      {/* ── Admin: edit registration date modal ── */}
-      {isAdmin && (
+      {/* ── تعديل تاريخ التسجيل — للمدير دائماً، وللموظف إذا فُعِّلت له صلاحية canEditDate ── */}
+      {(isAdmin || perms?.canEditDate) && (
         <Modal open={adminDateModal} onClose={() => setAdminDateModal(false)} title={`تعديل تاريخ تسجيل — ${p.name}`}
           footer={<><Btn variant="success" onClick={() => {
             if (!adminDateVal.trim()) return;
@@ -3711,7 +3822,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
           <div className="space-y-3">
             <div className="p-3 rounded-xl flex items-start gap-3" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
               <AlertCircle size={15} className="text-[#F57C00] flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-[#795548]">صلاحية المدير فقط — تعديل تاريخ تسجيل المريض في النظام.</p>
+              <p className="text-xs text-[#795548]">تعديل تاريخ تسجيل المريض في النظام.</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-[#555]">تاريخ التسجيل الجديد</label>
@@ -3828,6 +3939,108 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
         </div>
       </Modal>
 
+      {/* ── تعديل تفاصيل الجلسة (canEditSession) ── */}
+      {editSessionModal && (
+        <Modal open={true} onClose={() => setEditSessionModal(null)} title={`تعديل تفاصيل الجلسة — ${deptShort(editSessionModal.dept)} · ${editSessionModal.date}`}
+          footer={<><Btn variant="success" onClick={saveEditSession}><Save size={14} />حفظ التعديلات</Btn><Btn variant="outline" onClick={() => setEditSessionModal(null)}>إلغاء</Btn></>}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <InputField label="الطبيب" value={esDoctor} onChange={setEsDoctor} />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">التاريخ</label>
+                <input type="text" value={esDate} onChange={e => setEsDate(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <InputField label="المبلغ الإجمالي (₪)" type="number" value={esAmount} onChange={setEsAmount} />
+              <InputField label="المبلغ المدفوع (₪)" type="number" value={esPaid} onChange={setEsPaid} />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">الدين المحسوب</label>
+                <div className={`h-10 px-3 rounded-lg text-sm flex items-center font-bold ${esDebt > 0 ? "text-[#D32F2F]" : "text-[#388E3C]"}`} style={{ border: "1px solid #E0E0E0", backgroundColor: "#F5F5F5" }}>{fmt(esDebt)}</div>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">ملاحظات</label>
+              <textarea value={esNotes} onChange={e => setEsNotes(e.target.value)} rows={2} className="px-3 py-2 rounded-lg text-sm outline-none resize-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+            </div>
+
+            {/* التشخيصات */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">التشخيصات</label>
+              <div className="flex gap-2">
+                <input type="text" value={esDiagInput} onChange={e => setEsDiagInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && esDiagInput.trim()) { e.preventDefault(); setEsDiagnoses(prev => [...prev, esDiagInput.trim()]); setEsDiagInput(""); } }} placeholder="أضف تشخيصاً واضغط إدخال" className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                <Btn small variant="outline" onClick={() => { if (esDiagInput.trim()) { setEsDiagnoses(prev => [...prev, esDiagInput.trim()]); setEsDiagInput(""); } }}><Plus size={13} />إضافة</Btn>
+              </div>
+              {esDiagnoses.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {esDiagnoses.map((d, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+                      {d}
+                      <button onClick={() => setEsDiagnoses(prev => prev.filter((_, idx) => idx !== i))} className="text-[#D32F2F] font-bold px-0.5">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* الأدوية */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-[#555]">الأدوية</label>
+                <Btn small variant="outline" onClick={() => setEsMedications(prev => [...prev, { name: "", dose: "", freq: "", duration: "" }])}><Plus size={13} />إضافة دواء</Btn>
+              </div>
+              {esMedications.map((m, i) => (
+                <div key={i} className="grid grid-cols-5 gap-2 items-center">
+                  <input placeholder="الاسم" value={m.name} onChange={e => setEsMedications(prev => prev.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))} className="h-9 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                  <input placeholder="الجرعة" value={m.dose} onChange={e => setEsMedications(prev => prev.map((x, idx) => idx === i ? { ...x, dose: e.target.value } : x))} className="h-9 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                  <input placeholder="التكرار" value={m.freq} onChange={e => setEsMedications(prev => prev.map((x, idx) => idx === i ? { ...x, freq: e.target.value } : x))} className="h-9 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                  <input placeholder="المدة" value={m.duration} onChange={e => setEsMedications(prev => prev.map((x, idx) => idx === i ? { ...x, duration: e.target.value } : x))} className="h-9 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                  <button onClick={() => setEsMedications(prev => prev.filter((_, idx) => idx !== i))} className="text-[#D32F2F] text-xs font-bold justify-self-start">حذف</button>
+                </div>
+              ))}
+            </div>
+
+            {/* إحالات المختبر */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">إحالات المختبر</label>
+              <div className="flex gap-2">
+                <input type="text" value={esLabInput} onChange={e => setEsLabInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && esLabInput.trim()) { e.preventDefault(); setEsLabRefs(prev => [...prev, esLabInput.trim()]); setEsLabInput(""); } }} placeholder="أضف فحصاً واضغط إدخال" className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                <Btn small variant="outline" onClick={() => { if (esLabInput.trim()) { setEsLabRefs(prev => [...prev, esLabInput.trim()]); setEsLabInput(""); } }}><Plus size={13} />إضافة</Btn>
+              </div>
+              {esLabRefs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {esLabRefs.map((r, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ backgroundColor: "#F3E5F5", border: "1px solid #E1BEE7" }}>
+                      {r}
+                      <button onClick={() => setEsLabRefs(prev => prev.filter((_, idx) => idx !== i))} className="text-[#D32F2F] font-bold px-0.5">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* إحالات الأشعة */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">إحالات الأشعة</label>
+              <div className="flex gap-2">
+                <input type="text" value={esRadInput} onChange={e => setEsRadInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && esRadInput.trim()) { e.preventDefault(); setEsRadRefs(prev => [...prev, esRadInput.trim()]); setEsRadInput(""); } }} placeholder="أضف تصويراً واضغط إدخال" className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} />
+                <Btn small variant="outline" onClick={() => { if (esRadInput.trim()) { setEsRadRefs(prev => [...prev, esRadInput.trim()]); setEsRadInput(""); } }}><Plus size={13} />إضافة</Btn>
+              </div>
+              {esRadRefs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {esRadRefs.map((r, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ backgroundColor: "#FFF3E0", border: "1px solid #FFE0B2" }}>
+                      {r}
+                      <button onClick={() => setEsRadRefs(prev => prev.filter((_, idx) => idx !== i))} className="text-[#D32F2F] font-bold px-0.5">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* ── HEADER ── */}
       <div className="bg-white rounded-2xl overflow-hidden" style={{ border: "1px solid #E0E0E0" }}>
         <div className="p-4 sm:p-5" style={{ background: "linear-gradient(135deg,#1B3A6B,#0D4480)" }}>
@@ -3851,14 +4064,12 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
           {/* Row 2: action buttons */}
           <div className="flex gap-1.5 flex-wrap">
             <Btn small variant="outline-white" onClick={() => onNavigate({ screen: "open-patient", dept })}><ChevronRight size={13} />رجوع</Btn>
-            <Btn small variant="outline-white" onClick={() => { setEditForm({ ...p }); setEditModal(true); }}><Pencil size={13} />تعديل البيانات</Btn>
+            {(isAdmin || perms?.canEditPatient) && <Btn small variant="outline-white" onClick={() => { setEditForm({ ...p }); setEditModal(true); }}><Pencil size={13} />تعديل البيانات</Btn>}
             {liveDebt > 0 && doDeposit && <Btn small variant="danger" onClick={() => setDebtModal(true)}><DollarSign size={13} />سداد دين</Btn>}
             <Btn small variant="secondary" onClick={() => onNavigate(dept === "lab" ? { screen: "lab-session", dept, patientId: p.id } : dept === "radiology" ? { screen: "rad-session", dept, patientId: p.id } : { screen: "new-session", dept, patientId: p.id })}><Plus size={13} />جلسة جديدة</Btn>
+            {(isAdmin || perms?.canEditDate) && <Btn small variant="outline-white" onClick={() => { const parts = p.date.split("/"); const iso = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : p.date; setAdminDateVal(iso); setAdminDateModal(true); }}><Calendar size={13} />تعديل التاريخ</Btn>}
             {isAdmin ? (
-              <>
-                <Btn small variant="outline-white" onClick={() => { const parts = p.date.split("/"); const iso = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : p.date; setAdminDateVal(iso); setAdminDateModal(true); }}><Calendar size={13} />تعديل التاريخ</Btn>
-                <Btn small variant="danger" onClick={() => setAdminDelModal(true)}><Trash2 size={13} />حذف مباشر</Btn>
-              </>
+              <Btn small variant="danger" onClick={() => setAdminDelModal(true)}><Trash2 size={13} />حذف مباشر</Btn>
             ) : (existDelReq ? <span className="text-xs px-2 py-1 rounded-lg font-medium" style={{ backgroundColor: "#FFF3E0", color: "#F57C00", border: "1px solid #FFE0B2" }}>طلب حذف قيد المراجعة</span> : <Btn small variant="danger" onClick={() => { setPatDelModal(true); setPatDelReason(""); }}><Trash2 size={13} />طلب حذف</Btn>)}
             <Btn small variant="outline-white" onClick={() => setPrintModal(true)}><Printer size={13} />طباعة الملف</Btn>
             <Btn small variant="outline-white" onClick={() => {
@@ -3958,15 +4169,25 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                 ) : (
                   <div className="flex items-center gap-1.5 text-xs text-[#BBB] pt-1 border-t border-[#F0F0F0]"><Lock size={11} /><span>البيانات المالية لهذه الزيارة خاصة بقسم آخر</span></div>
                 )}
-                {isAdmin && (
-                  <div className="flex justify-end pt-2 border-t border-[#F0F0F0]">
-                    <button
-                      disabled={deletingSessionId === s.id}
-                      onClick={e => { e.stopPropagation(); handleDeleteSession(s.id); }}
-                      className="flex items-center gap-1.5 text-xs text-[#D32F2F] hover:text-[#B71C1C] disabled:opacity-40 transition-colors px-2 py-1 rounded-lg hover:bg-[#FFEBEE]"
-                    >
-                      <Trash2 size={12} />{deletingSessionId === s.id ? "جارٍ الحذف..." : "حذف هذه الجلسة"}
-                    </button>
+                {(isAdmin || perms?.canEditSession) && (
+                  <div className="flex justify-end gap-2 pt-2 border-t border-[#F0F0F0]">
+                    {(isAdmin || perms?.canEditSession) && (
+                      <button
+                        onClick={e => { e.stopPropagation(); openEditSession(s); }}
+                        className="flex items-center gap-1.5 text-xs text-[#1B3A6B] hover:text-[#0D2A4E] transition-colors px-2 py-1 rounded-lg hover:bg-[#EBF3FB]"
+                      >
+                        <Pencil size={12} />تعديل الجلسة
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        disabled={deletingSessionId === s.id}
+                        onClick={e => { e.stopPropagation(); handleDeleteSession(s.id); }}
+                        className="flex items-center gap-1.5 text-xs text-[#D32F2F] hover:text-[#B71C1C] disabled:opacity-40 transition-colors px-2 py-1 rounded-lg hover:bg-[#FFEBEE]"
+                      >
+                        <Trash2 size={12} />{deletingSessionId === s.id ? "جارٍ الحذف..." : "حذف هذه الجلسة"}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -4534,14 +4755,17 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
 
 // ─── LAB SESSION ───────────────────────────────────────────────────────────────
 
-function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, inventory = [], setInventory, computeKitStatus, checkAndNotify, labTests: _labTests = initialLabTests }: {
+function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patientId, inventory = [], setInventory, computeKitStatus, checkAndNotify, labTests: _labTests = initialLabTests, insurances = [], setInvoices }: {
   toast: (m: string, t?: any) => void; doDeposit: (dept: string, amount: number, title: string, type: string) => void;
+  doWithdraw?: (dept: string, amount: number, title: string, cat?: string, ben?: string) => void;
   setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; debts: DebtRow[]; patientId?: string;
   inventory?: typeof initialInventory;
   setInventory?: React.Dispatch<React.SetStateAction<typeof initialInventory>>;
   computeKitStatus?: (qty: number, threshold: number) => "ok" | "low" | "critical" | "empty";
   checkAndNotify?: (itemName: string, dept: string, deptLabel: string, qty: number, threshold: number) => void;
   labTests?: LabTest[];
+  insurances?: InsuranceCo[];
+  setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
 }) {
   const preselected = patientId ? mockPatients.find(p => p.id === patientId) || null : null;
   const [view, setView] = useState<"register" | "board">(preselected ? "register" : "board");
@@ -4552,6 +4776,8 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
   const [patSearch, setPatSearch] = useState("");
   const [newPat, setNewPat] = useState({ name: "", pid: "", phone: "+970", dob: "", email: "", address: "", blood: "", gender: "male" as "male" | "female", allergies: false, chronic: false, insurance: false });
   const [payMode, setPayMode] = useState<"cash" | "insurance" | "company">("cash");
+  const [insuranceCompany, setInsuranceCompany] = useState("");
+  const [insClaimNo, setInsClaimNo] = useState("");
   const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
   const [selTests, setSelTests] = useState<string[]>([]);
   const [testSearch, setTestSearch] = useState(""); const [catFilter, setCatFilter] = useState("الكل");
@@ -4571,13 +4797,19 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
   });
   const selTestsData = selTests.map(c => _labTests.find(t => t.code === c)!).filter(Boolean);
   const testTotal = selTestsData.reduce((s, t) => s + t.price, 0);
-  const discAmt = Math.min(parseFloat(discount) || 0, testTotal); const netTotal = testTotal - discAmt;
+  const discAmt = Math.min(parseFloat(discount) || 0, testTotal);
+  // ── التأمين الصحي: نفس منطق NewPatientScreen — الجزء الذي تغطيه شركة التأمين
+  //    يُستثنى من دين/مبلغ المريض ويُسجَّل كدين منفصل على شركة التأمين. ──
+  const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
+  const insDiscPct = insComp ? insComp.discountLab : 0;
+  const insDiscAmt = Math.min(testTotal - discAmt, testTotal * insDiscPct / 100);
+  const netTotal = Math.max(0, testTotal - discAmt - insDiscAmt);
   const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netTotal - paidAmt); const creditAmt = Math.max(0, paidAmt - netTotal);
   const patName = selPat ? selPat.name : newPat.name; const patId = selPat ? selPat.id : (newPat.pid.trim() || generatePatientId());
   const prevDebt = selPat ? debts.filter(d => d.pid === selPat.id).reduce((s, d) => s + d.amount, 0) : 0;
   const totalAllDebts = debts.reduce((s, d) => s + d.amount, 0);
   const toggle = (code: string) => setSelTests(p => p.includes(code) ? p.filter(x => x !== code) : [...p, code]);
-  const reset = () => { if (!patientId) { setStep(0); setSelPat(null); } else { setStep(2); setSelPat(preselected); } setSelTests([]); setDiscount(""); setPaid(""); setPayMode("cash"); setLabTypeFilter("internal"); };
+  const reset = () => { if (!patientId) { setStep(0); setSelPat(null); } else { setStep(2); setSelPat(preselected); } setSelTests([]); setDiscount(""); setPaid(""); setPayMode("cash"); setInsuranceCompany(""); setInsClaimNo(""); setLabTypeFilter("internal"); };
   const handleSave = async () => {
     const today = _today(); const labTime = _nowHHMM();
     if (!patName.trim() || selTests.length === 0) return;
@@ -4602,6 +4834,12 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
     }
     if (paidAmt > 0) doDeposit("lab", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
     if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "المختبر", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "المختبر", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen) ──
+    if (insComp && insDiscAmt > 0 && setInvoices) {
+      const insId = `ins-${Date.now()}`;
+      setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "lab", claimNo: insClaimNo.trim() || undefined, patientId: effectivePatId, patientName: patName }]);
+      api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "lab", claim_no: insClaimNo.trim() || null, patient_id: effectivePatId, patient_name: patName });
+    }
 
     // ── خصم الكيتات تلقائياً لكل فحص مُختار — عبر الربط الحقيقي (kitInventoryId)
     //    المسجَّل بدليل الفحوصات، وليس مطابقة اسم نصية بين الفحص وصنف المستلزمات
@@ -4612,6 +4850,10 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
     const emptyKits: string[] = [];
     const deductedKitsInfo: { name: string; newQty: number; threshold: number }[] = [];
     const linkedInventoryIds = selectedTestObjs.map(t => t.kitInventoryId).filter((id): id is number => id != null);
+    // ── ملاحظة: تكلفة شراء الكيت أصلاً بتنخصم من صندوق القسم مرة وحدة وقت
+    //    اعتماد طلب الشراء (doWithdraw بـ onApprovePurchaseRequest) — الخصم
+    //    هون عند الاستخدام هو تسجيل كمية مستهلكة فقط بالمخزون، بدون أي خصم
+    //    مالي إضافي من الصندوق، تجنباً لاحتساب نفس التكلفة مرتين. ──
     if (setInventory && computeKitStatus && linkedInventoryIds.length > 0) {
       setInventory(prev => prev.map(kit => {
         const timesNeeded = linkedInventoryIds.filter(id => id === kit.id).length;
@@ -4621,7 +4863,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
         const newQty = kit.qty - deductAmt;
         deductedKits.push(kit.name);
         deductedKitsInfo.push({ name: kit.name, newQty, threshold: kit.threshold });
-        api.lab.inventory.update(kit.id, { name: kit.name, item_type: kit.itemType, qty: newQty, threshold: kit.threshold, unit: kit.unit, notes: kit.notes });
+        api.lab.inventory.update(kit.id, { name: kit.name, item_type: kit.itemType, qty: newQty, threshold: kit.threshold, unit: kit.unit, cost_per_unit: kit.unitCost, notes: kit.notes });
         return { ...kit, qty: newQty, status: computeKitStatus(newQty, kit.threshold) };
       }));
       // ── تحقق فوري من حد التنبيه بعد الخصم ─────────────────────────────
@@ -4886,6 +5128,25 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
                     </button>
                   ))}
                 </div>
+                {payMode === "insurance" && (
+                  <div className="mt-4 flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#555]">شركة التأمين</label>
+                    <select value={insuranceCompany} onChange={e => setInsuranceCompany(e.target.value)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                      <option value="">— اختر شركة التأمين —</option>
+                      {insurances.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                    {insComp && insDiscPct > 0 && (
+                      <div className="mt-2 p-2 rounded-lg flex flex-col gap-2 text-xs text-[#1B3A6B]" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+                        <span className="flex items-center gap-2"><Shield size={12} />خصم تأمين {insDiscPct}% — دين على {insComp.name}: <strong>{fmt(insDiscAmt)}</strong></span>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-semibold text-[#1B3A6B]">رقم كشفية التأمين <span className="text-[#999] font-normal">(اختياري)</span></label>
+                          <input value={insClaimNo} onChange={e => setInsClaimNo(e.target.value)} placeholder="رقم الكشفية / رقم الموافقة" className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #BBDEFB", backgroundColor: "white" }} />
+                        </div>
+                      </div>
+                    )}
+                    {insuranceCompany && !insComp && <p className="text-xs text-[#D32F2F]">لم يُعثر على شركة التأمين المحددة</p>}
+                  </div>
+                )}
               </Card>
               <Card title="تفاصيل المبلغ">
                 <div className="space-y-3">
@@ -4893,6 +5154,7 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
                   <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الخصم (₪)</label><input type="number" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="0" min="0" className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
                   <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">المبلغ المدفوع (₪)</label><input type="number" value={paid} onChange={e => setPaid(e.target.value)} placeholder="0" min="0" className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
                   <div className="border-t border-[#E0E0E0] pt-3 space-y-2">
+                    {insComp && insDiscAmt > 0 && <div className="flex justify-between text-sm"><span className="text-[#555]">تغطية التأمين ({insComp.name}):</span><span className="font-semibold text-[#1B3A6B]">{fmt(insDiscAmt)}</span></div>}
                     {discAmt > 0 && <div className="flex justify-between text-sm"><span className="text-[#555]">بعد الخصم:</span><span className="font-semibold">{fmt(netTotal)}</span></div>}
                     <div className={`flex items-center justify-between p-3 rounded-xl font-bold text-sm ${debtAmt > 0 ? "bg-[#FFEBEE] text-[#D32F2F]" : "bg-[#E8F5E9] text-[#388E3C]"}`} style={{ border: `1px solid ${debtAmt > 0 ? "#FFCDD2" : "#C8E6C9"}` }}>
                       <span>{debtAmt > 0 ? "الباقي على المريض:" : creditAmt > 0 ? "رصيد لصالح المريض:" : "مسدد بالكامل ✓"}</span>
@@ -5048,10 +5310,12 @@ function LabSessionScreen({ toast, doDeposit, setDebts, debts, patientId, invent
 
 // ─── RAD SESSION ───────────────────────────────────────────────────────────────
 
-function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radImages: _radImgs = initialRadImages }: {
+function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radImages: _radImgs = initialRadImages, insurances = [], setInvoices }: {
   toast: (m: string, t?: any) => void; doDeposit: (dept: string, amount: number, title: string, type: string) => void;
   setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; debts: DebtRow[]; patientId?: string;
   radImages?: RadImage[];
+  insurances?: InsuranceCo[];
+  setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
 }) {
   const preselected = patientId ? mockPatients.find(p => p.id === patientId) || null : null;
   const [view, setView] = useState<"register" | "board">(preselected ? "register" : "board");
@@ -5064,6 +5328,8 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const [patSearch, setPatSearch] = useState("");
   const [newPat, setNewPat] = useState({ name: "", pid: "", phone: "+970", dob: "", email: "", address: "", blood: "", gender: "male" as "male" | "female", allergies: false, chronic: false, insurance: false });
   const [payMode, setPayMode] = useState<"cash" | "insurance" | "company">("cash");
+  const [insuranceCompany, setInsuranceCompany] = useState("");
+  const [insClaimNo, setInsClaimNo] = useState("");
   const [selImgs, setSelImgs] = useState<number[]>([]);
   const [deviceFilter, setDeviceFilter] = useState("الكل");
   const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
@@ -5084,13 +5350,18 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const filteredImgs = _radImgs.filter(t => deviceFilter === "الكل" || t.device === deviceFilter);
   const selImgsData = selImgs.map(id => _radImgs.find(t => t.id === id)!).filter(Boolean);
   const imgTotal = selImgsData.reduce((s, t) => s + t.price, 0);
-  const discAmt = Math.min(parseFloat(discount) || 0, imgTotal); const netTotal = imgTotal - discAmt;
+  const discAmt = Math.min(parseFloat(discount) || 0, imgTotal);
+  // ── التأمين الصحي: نفس منطق NewPatientScreen/LabSessionScreen ──
+  const insComp = payMode === "insurance" ? insurances.find(c => c.name === insuranceCompany) : undefined;
+  const insDiscPct = insComp ? insComp.discountRad : 0;
+  const insDiscAmt = Math.min(imgTotal - discAmt, imgTotal * insDiscPct / 100);
+  const netTotal = Math.max(0, imgTotal - discAmt - insDiscAmt);
   const paidAmt = parseFloat(paid) || 0; const debtAmt = Math.max(0, netTotal - paidAmt); const creditAmt = Math.max(0, paidAmt - netTotal);
   const patName = selPat ? selPat.name : newPat.name; const patId = selPat ? selPat.id : (newPat.pid.trim() || generatePatientId());
   const prevDebt = selPat ? debts.filter(d => d.pid === selPat.id).reduce((s, d) => s + d.amount, 0) : 0;
   const totalAllDebts = debts.reduce((s, d) => s + d.amount, 0);
   const toggleImg = (id: number) => setSelImgs(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
-  const reset = () => { if (!patientId) { setStep(0); setSelPat(null); } else { setStep(2); setSelPat(preselected); } setSelImgs([]); setDiscount(""); setPaid(""); setPayMode("cash"); };
+  const reset = () => { if (!patientId) { setStep(0); setSelPat(null); } else { setStep(2); setSelPat(preselected); } setSelImgs([]); setDiscount(""); setPaid(""); setPayMode("cash"); setInsuranceCompany(""); setInsClaimNo(""); };
   const handleSave = async () => {
     const today = _today(); const radTime = _nowHHMM();
     if (!patName.trim() || selImgs.length === 0) return;
@@ -5117,6 +5388,12 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     }
     if (paidAmt > 0) doDeposit("radiology", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
     if (debtAmt > 0) { const nd: DebtRow = { id: Date.now(), patient: patName, pid: effectivePatId, dept: "الأشعة", amount: debtAmt, date: today, days: 0, phone: selPat?.phone || newPat.phone || "—" }; setDebts(p => [nd, ...p]); api.finance.debts.create({ patient: patName, patient_id: effectivePatId, dept: "الأشعة", amount: debtAmt, date: api.parseDateISO(today), phone: selPat?.phone || newPat.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { }); }
+    // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen/LabSessionScreen) ──
+    if (insComp && insDiscAmt > 0 && setInvoices) {
+      const insId = `ins-${Date.now()}`;
+      setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "radiology", claimNo: insClaimNo.trim() || undefined, patientId: effectivePatId, patientName: patName }]);
+      api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "radiology", claim_no: insClaimNo.trim() || null, patient_id: effectivePatId, patient_name: patName });
+    }
     const radImgNames = selImgsData.map(t => t.name);
     const radLid = Date.now();
     setBoard(p => [{ id: radLid, patient: patName, patientId: effectivePatId, images: radImgNames, time: radTime, status: "pending" as const }, ...p]);
@@ -5347,6 +5624,25 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
                     </button>
                   ))}
                 </div>
+                {payMode === "insurance" && (
+                  <div className="mt-4 flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#555]">شركة التأمين</label>
+                    <select value={insuranceCompany} onChange={e => setInsuranceCompany(e.target.value)} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                      <option value="">— اختر شركة التأمين —</option>
+                      {insurances.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                    {insComp && insDiscPct > 0 && (
+                      <div className="mt-2 p-2 rounded-lg flex flex-col gap-2 text-xs text-[#1B3A6B]" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+                        <span className="flex items-center gap-2"><Shield size={12} />خصم تأمين {insDiscPct}% — دين على {insComp.name}: <strong>{fmt(insDiscAmt)}</strong></span>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-semibold text-[#1B3A6B]">رقم كشفية التأمين <span className="text-[#999] font-normal">(اختياري)</span></label>
+                          <input value={insClaimNo} onChange={e => setInsClaimNo(e.target.value)} placeholder="رقم الكشفية / رقم الموافقة" className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #BBDEFB", backgroundColor: "white" }} />
+                        </div>
+                      </div>
+                    )}
+                    {insuranceCompany && !insComp && <p className="text-xs text-[#D32F2F]">لم يُعثر على شركة التأمين المحددة</p>}
+                  </div>
+                )}
               </Card>
               <Card title="تفاصيل المبلغ">
                 <div className="space-y-3">
@@ -5354,6 +5650,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
                   <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الخصم (₪)</label><input type="number" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="0" min="0" className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
                   <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">المبلغ المدفوع (₪)</label><input type="number" value={paid} onChange={e => setPaid(e.target.value)} placeholder="0" min="0" className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
                   <div className="border-t border-[#E0E0E0] pt-3 space-y-2">
+                    {insComp && insDiscAmt > 0 && <div className="flex justify-between text-sm"><span className="text-[#555]">تغطية التأمين ({insComp.name}):</span><span className="font-semibold text-[#1B3A6B]">{fmt(insDiscAmt)}</span></div>}
                     {discAmt > 0 && <div className="flex justify-between text-sm"><span className="text-[#555]">بعد الخصم:</span><span className="font-semibold">{fmt(netTotal)}</span></div>}
                     <div className={`flex items-center justify-between p-3 rounded-xl font-bold text-sm ${debtAmt > 0 ? "bg-[#FFEBEE] text-[#D32F2F]" : "bg-[#E8F5E9] text-[#388E3C]"}`} style={{ border: `1px solid ${debtAmt > 0 ? "#FFCDD2" : "#C8E6C9"}` }}>
                       <span>{debtAmt > 0 ? "الباقي على المريض:" : creditAmt > 0 ? "رصيد لصالح المريض:" : "مسدد بالكامل ✓"}</span>
@@ -6168,7 +6465,7 @@ function RehabQueueScreen({ isAdmin = false, perms }: { isAdmin?: boolean; perms
   );
 }
 
-function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavigate, toast, doDeposit, setDebts, rehabServices = [], insurances = [] }: { patientId?: string; dept: string; rehabPlans: RehabPlan[]; setRehabPlans: React.Dispatch<React.SetStateAction<RehabPlan[]>>; onNavigate: (r: Route) => void; toast: (m: string, t?: any) => void; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; rehabServices?: RehabServiceItem[]; insurances?: InsuranceCo[] }) {
+function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavigate, toast, doDeposit, setDebts, rehabServices = [], insurances = [], setInvoices }: { patientId?: string; dept: string; rehabPlans: RehabPlan[]; setRehabPlans: React.Dispatch<React.SetStateAction<RehabPlan[]>>; onNavigate: (r: Route) => void; toast: (m: string, t?: any) => void; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; rehabServices?: RehabServiceItem[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>> }) {
   // ── نفس شاشة "التشخيص والعلاج" + "التفاصيل المالية للكشفية" المستخدَمة عند
   //    تسجيل مريض جديد بقسم التأهيل (NewPatientScreen) — لتوحيد التجربة بين
   //    "مريض جديد" و"خطة علاجية جديدة" لمريض مسجَّل مسبقاً، بدل شاشة قديمة
@@ -6198,14 +6495,17 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
   const [discountType, setDiscountType] = useState<"amount" | "percent">("amount");
   const [paidStr, setPaidStr] = useState("");
   const [insuranceCompany, setInsuranceCompany] = useState("");
+  const [insClaimNo, setInsClaimNo] = useState("");
   useEffect(() => { if (rehabTotal > 0) setPriceStr(String(rehabTotal)); }, [rehabTotal]);
   const basePrice = parseFloat(priceStr) || 0;
   const discAmt = discountType === "percent" ? basePrice * (parseFloat(discount) || 0) / 100 : (parseFloat(discount) || 0);
   const paidAmt = parseFloat(paidStr) || 0;
-  const remaining = basePrice - discAmt - paidAmt;
   const insComp = insurances.find(c => c.name === insuranceCompany);
   const insDiscPct = insComp ? insComp.discountClinic : 0;
   const insDiscAmt = basePrice * insDiscPct / 100;
+  // ── دين المريض يستثني الجزء المغطى من التأمين (insDiscAmt) — ذاك الجزء
+  //    يُسجَّل كدين منفصل على شركة التأمين عبر setInvoices بالأسفل. ──
+  const remaining = Math.max(0, basePrice - discAmt - insDiscAmt - paidAmt);
 
   const step2Valid = () => {
     if (!rehabDiagnosis.trim()) { toast("أدخل التشخيص التأهيلي / الفيزيائي", "error"); return false; }
@@ -6227,15 +6527,22 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
         rehabAdl && `أنشطة الحياة اليومية: ${rehabAdl}`,
         rehabRecommendations && `توصيات: ${rehabRecommendations}`,
       ].filter(Boolean).join(" | ");
-      const newPlan: RehabPlan = { id: Date.now(), patientId: patientId || "", patientName: patient?.name || "", diagnosis: rehabDiagnosis, totalSessions: rehabSessionCount, completedSessions: 0, pricePerSession: sessionVal, planPrice: basePrice - discAmt, pricingMode: "plan", specialist, status: "active", startDate: today };
+      const planPriceNet = Math.max(0, basePrice - discAmt - insDiscAmt);
+      const newPlan: RehabPlan = { id: Date.now(), patientId: patientId || "", patientName: patient?.name || "", diagnosis: rehabDiagnosis, totalSessions: rehabSessionCount, completedSessions: 0, pricePerSession: sessionVal, planPrice: planPriceNet, pricingMode: "plan", specialist, status: "active", startDate: today };
       setRehabPlans(prev => [...(prev || []), newPlan]);
-      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: sessionVal, plan_price: basePrice - discAmt, pricing_mode: "plan", specialist, status: "active", start_date: today, clinical_notes: clinicalNotes }).then(r => { if (r) setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: (r as any).id } : p)); }).catch(() => { });
+      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: sessionVal, plan_price: planPriceNet, pricing_mode: "plan", specialist, status: "active", start_date: today, clinical_notes: clinicalNotes }).then(r => { if (r) setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: (r as any).id } : p)); }).catch(() => { });
       if (paidAmt > 0 && doDeposit) doDeposit("rehab", paidAmt, `دفعة خطة علاجية — ${patient?.name || ""}`, "إيراد مريض");
       // ── نفس مبدأ NewPatientScreen: أي مبلغ متبقٍ يُسجَّل كدين على المريض تلقائياً ──
       if (remaining > 0 && setDebts && patientId) {
         const nd: DebtRow = { id: Date.now() + 1, patient: patient?.name || "", pid: patientId, dept: "التأهيلي", amount: remaining, date: today, days: 0, phone: patient?.phone || "" };
         setDebts(prev => [nd, ...prev]);
         api.finance.debts.create({ patient: patient?.name || "", patient_id: patientId, dept: "التأهيلي", amount: remaining, date: _localISO(), phone: patient?.phone || "" }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
+      }
+      // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen) — كان مفقوداً هنا تماماً ──
+      if (insComp && insDiscAmt > 0 && setInvoices) {
+        const insId = `ins-${Date.now()}`;
+        setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "rehab", claimNo: insClaimNo.trim() || undefined, patientId: patientId, patientName: patient?.name || "" }]);
+        api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "rehab", claim_no: insClaimNo.trim() || null, patient_id: patientId, patient_name: patient?.name || "" });
       }
       toast(`تم إنشاء الخطة العلاجية لـ ${patient?.name || "المريض"} ✓`, "success");
       onNavigate({ screen: "open-patient", dept });
@@ -6364,9 +6671,13 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
           {insComp && insDiscPct > 0 && (
             <div className="mb-4 p-3 rounded-xl flex items-start gap-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
               <Shield size={16} className="text-[#1B3A6B] mt-0.5 flex-shrink-0" />
-              <div>
+              <div className="flex-1">
                 <p className="text-sm font-semibold text-[#1B3A6B]">تأمين: {insComp.name} — خصم {insDiscPct}%</p>
                 <p className="text-xs text-[#555] mt-0.5">قيمة الخصم <strong className="text-[#1B3A6B]">{fmt(insDiscAmt)}</strong> ستُسجَّل تلقائياً كدين على شركة التأمين في نظام الفواتير</p>
+                <div className="mt-2 flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-[#1B3A6B]">رقم كشفية التأمين <span className="text-[#999] font-normal">(اختياري)</span></label>
+                  <input value={insClaimNo} onChange={e => setInsClaimNo(e.target.value)} placeholder="رقم الكشفية / رقم الموافقة" className="h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #BBDEFB", backgroundColor: "white" }} />
+                </div>
               </div>
             </div>
           )}
@@ -6883,7 +7194,7 @@ function ImageCatalogScreen({ toast, perms }: { toast: (m: string, t?: any) => v
 // ─── FIN: ALL DRAWERS (overview + withdrawals) ────────────────────────────────
 
 
-function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, toast, customDepts = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }> }) {
+function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, onEditPurchaseRequest, toast, customDepts = [], suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; onEditPurchaseRequest?: (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [deptFilter, setDeptFilter] = useState("all");
   const [searchQ, setSearchQ] = useState("");
@@ -6891,6 +7202,36 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [delConfId, setDelConfId] = useState<number | null>(null);
+  // ── تعديل طلب الشراء (المدير فقط) — كان مفقوداً بالكامل قبل هذا التعديل ──
+  const [editReq, setEditReq] = useState<PurchaseRequest | null>(null);
+  const [editDept, setEditDept] = useState("");
+  const [editRequestedBy, setEditRequestedBy] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editSupplier, setEditSupplier] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [editPaid, setEditPaid] = useState("");
+  const [editItems, setEditItems] = useState<PurchaseItem[]>([]);
+  const openEdit = (req: PurchaseRequest) => {
+    setEditReq(req);
+    setEditDept(req.dept); setEditRequestedBy(req.requestedBy); setEditDate(req.date);
+    setEditSupplier(req.supplier || ""); setEditNote(req.note || ""); setEditPaid(String(req.paidAmount || 0));
+    setEditItems(req.items.map(it => ({ ...it })));
+  };
+  const closeEdit = () => setEditReq(null);
+  const editAddItem = () => setEditItems(p => [...p, { id: -Date.now(), name: "", qty: 1, unit: "قطعة", estimatedPrice: 0, note: "" }]);
+  const editRemoveItem = (id: number) => setEditItems(p => p.filter(it => it.id !== id));
+  const editUpdateItem = (id: number, k: keyof PurchaseItem, v: any) => setEditItems(p => p.map(it => it.id === id ? { ...it, [k]: v } : it));
+  const editTotal = editItems.reduce((s, it) => s + (it.qty || 0) * (it.estimatedPrice || 0), 0);
+  const saveEdit = () => {
+    if (!editReq) return;
+    if (editItems.some(it => !it.name.trim())) { toast("أدخل اسم جميع الأصناف", "error"); return; }
+    onEditPurchaseRequest?.(editReq.id, {
+      dept: editDept, requestedBy: editRequestedBy, date: editDate, supplier: editSupplier,
+      note: editNote, paidAmount: parseFloat(editPaid) || 0, items: editItems,
+    });
+    toast(`✅ تم تحديث طلب الشراء #${editReq.id}`, "success");
+    closeEdit();
+  };
 
   const DEPT_NAMES: Record<string, string> = {
     surgery: "الجراحة والطوارئ",
@@ -6935,67 +7276,45 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
     toast("✅ تم تصدير Excel بنجاح", "success");
   };
 
+  // ── طباعة موحّدة: الاثنين تحت كانوا يبنوا مستند HTML كامل خاص فيهم ويفتحوا
+  //    نافذة طباعة مباشرة (window.open)، فكانوا يتجاوزوا تماماً محرك الطباعة
+  //    الموحّد (printHtml) — يعني الترويسة والهوامش المُعدَّة من الإدارة ما
+  //    كانت تنطبّق عليهم إطلاقاً مهما ضُبطت. الآن يبنيان جزء HTML فقط (بنفس
+  //    كلاسات الـ CSS المشتركة .kpi/table/tfoot المستخدمة بكل شاشات الطباعة)
+  //    ويمرّرانه عبر printHtml() ليمرّ بنفس محرك الترويسة/الهوامش/الخط تماماً
+  //    مثل أي زر طباعة آخر بالنظام ──
   const printAll = () => {
-    const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"/><title>طلبات الشراء — جميع الأقسام</title>
-    <style>body{font-family:Arial,sans-serif;font-size:12px;direction:rtl;margin:20px}
-    h1{font-size:18px;color:#1B3A6B;margin-bottom:4px}
-    .meta{color:#666;font-size:11px;margin-bottom:16px}
-    table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11px}
-    th{background:#1B3A6B;color:white;padding:6px 8px;text-align:right}
-    td{border:1px solid #ddd;padding:6px 8px}
-    tr:nth-child(even){background:#f9f9f9}
-    .pending{color:#FF8F00;font-weight:bold}.approved{color:#388E3C;font-weight:bold}.rejected{color:#D32F2F;font-weight:bold}
-    .items{font-size:10px;color:#555}
-    tfoot td{background:#E8F5E9;font-weight:bold}
-    </style></head><body>
-    <h1>طلبات الشراء — مركز وعيادة الدكتور مهند سليمان جابر</h1>
-    <div class="meta">تاريخ التصدير: ${new Date().toLocaleDateString("en-GB")} · إجمالي الطلبات المعروضة: ${filtered.length} · الإجمالي المالي: ${filteredTotal.toLocaleString("ar-SA")} ₪</div>
+    const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات المعروضة</div><div class="kpi-v">${filtered.length}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">الإجمالي المالي</div><div class="kpi-v out">${fmt(filteredTotal)}</div></div></div>
     <table><thead><tr><th>#</th><th>القسم</th><th>مقدم الطلب</th><th>التاريخ</th><th>الأصناف</th><th>الإجمالي</th><th>الحالة</th><th>ملاحظات</th></tr></thead>
     <tbody>${filtered.map(r => `<tr>
       <td>${r.id}</td><td>${DEPT_NAMES[r.dept] || r.dept}</td><td>${r.requestedBy}</td><td>${r.date}</td>
-      <td class="items">${r.items.map(it => `${it.name} (${it.qty} ${it.unit} × ${it.estimatedPrice} ₪)`).join("<br/>")}</td>
-      <td><strong>${r.totalAmount.toLocaleString("ar-SA")} ₪</strong></td>
-      <td class="${r.status}">${r.status === "pending" ? "⏳ معلق" : r.status === "approved" ? "✅ مُوافق" : "❌ مرفوض"}</td>
+      <td style="font-size:10px;color:#555">${r.items.map(it => `${it.name} (${it.qty} ${it.unit} × ${fmt(it.estimatedPrice)})`).join("<br/>")}</td>
+      <td><strong>${fmt(r.totalAmount)}</strong></td>
+      <td class="${r.status === "pending" ? "" : r.status === "approved" ? "in" : "out"}">${r.status === "pending" ? "⏳ معلق" : r.status === "approved" ? "✅ مُوافق" : "❌ مرفوض"}</td>
       <td style="font-size:10px">${r.status === "approved" ? `وافق: ${r.approvedBy || "المدير"}<br/>${r.approvedDate || ""}` : r.status === "rejected" ? `سبب: ${r.rejectionReason || "—"}` : "—"}</td>
     </tr>`).join("")}</tbody>
-    <tfoot><tr><td colspan="5" style="text-align:right">الإجمالي الكلي</td><td colspan="3">${filteredTotal.toLocaleString("ar-SA")} ₪</td></tr></tfoot>
-    </table></body></html>`;
-    const w = window.open("", "_blank"); if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 600); }
+    <tfoot><tr><td colspan="5" style="text-align:right">الإجمالي الكلي</td><td colspan="3">${fmt(filteredTotal)}</td></tr></tfoot>
+    </table>`;
+    printHtml(html, "طلبات الشراء — جميع الأقسام");
     toast("جارٍ فتح نافذة الطباعة / PDF", "info");
   };
 
   const printSingle = (req: PurchaseRequest) => {
-    const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"/><title>طلب شراء #${req.id}</title>
-    <style>body{font-family:Arial,sans-serif;font-size:13px;direction:rtl;max-width:720px;margin:24px auto}
-    h1{font-size:20px;color:#1B3A6B}h2{font-size:14px;color:#1B3A6B;border-bottom:2px solid #1B3A6B;padding-bottom:4px;margin-top:20px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
-    .box{background:#f5f5f5;padding:10px;border-radius:6px}
-    .label{font-size:10px;color:#999;margin-bottom:2px}
-    table{width:100%;border-collapse:collapse;font-size:12px}
-    th{background:#1B3A6B;color:white;padding:6px 8px;text-align:right}
-    td{border:1px solid #ddd;padding:6px 8px}
-    tr:nth-child(even){background:#f9f9f9}
-    .total-row{background:#E8F5E9;font-weight:bold}
-    .stamp{margin-top:24px;padding:12px;border:2px solid #ccc;border-radius:8px;color:#388E3C;font-weight:bold;font-size:13px}
-    .rejected-stamp{border-color:#D32F2F;color:#D32F2F}
-    </style></head><body>
-    <h1>طلب شراء #${req.id}</h1>
-    <div class="grid">
-      <div class="box"><div class="label">القسم</div><strong>${DEPT_NAMES[req.dept] || req.dept}</strong></div>
-      <div class="box"><div class="label">مقدم الطلب</div><strong>${req.requestedBy}</strong></div>
-      <div class="box"><div class="label">التاريخ والوقت</div><strong>${req.date}</strong></div>
-      <div class="box"><div class="label">الحالة</div><strong>${req.status === "pending" ? "⏳ معلق" : req.status === "approved" ? "✅ مُوافق عليه" : "❌ مرفوض"}</strong></div>
+    const html = `<div class="kpi">
+      <div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${DEPT_NAMES[req.dept] || req.dept}</div></div>
+      <div class="kpi-box"><div class="kpi-l">مقدم الطلب</div><div class="kpi-v">${req.requestedBy}</div></div>
+      <div class="kpi-box"><div class="kpi-l">التاريخ والوقت</div><div class="kpi-v">${req.date}</div></div>
+      <div class="kpi-box"><div class="kpi-l">الحالة</div><div class="kpi-v">${req.status === "pending" ? "⏳ معلق" : req.status === "approved" ? "✅ مُوافق عليه" : "❌ مرفوض"}</div></div>
     </div>
-    ${req.note ? `<p><strong>ملاحظات الطلب:</strong> ${req.note}</p>` : ""}
+    ${req.note ? `<p style="font-size:12px"><strong>ملاحظات الطلب:</strong> ${req.note}</p>` : ""}
     <h2>تفاصيل الأصناف المطلوبة</h2>
     <table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>السعر التقديري</th><th>الإجمالي</th></tr></thead>
-    <tbody>${req.items.map((it, i) => `<tr><td>${i + 1}</td><td>${it.name}</td><td>${it.qty}</td><td>${it.unit}</td><td>${it.estimatedPrice.toLocaleString("ar-SA")} ₪</td><td>${(it.qty * it.estimatedPrice).toLocaleString("ar-SA")} ₪</td></tr>`).join("")}
-    <tr class="total-row"><td colspan="5">الإجمالي الكلي</td><td>${req.totalAmount.toLocaleString("ar-SA")} ₪</td></tr>
+    <tbody>${req.items.map((it, i) => `<tr><td>${i + 1}</td><td>${it.name}</td><td>${it.qty}</td><td>${it.unit}</td><td>${fmt(it.estimatedPrice)}</td><td>${fmt(it.qty * it.estimatedPrice)}</td></tr>`).join("")}
+    <tr><td colspan="5" style="font-weight:bold;background:#EBF3FB">الإجمالي الكلي</td><td style="font-weight:bold;background:#EBF3FB">${fmt(req.totalAmount)}</td></tr>
     </tbody></table>
-    ${req.status === "approved" ? `<div class="stamp">✅ تمت الموافقة على الطلب<br/>وافق عليه: ${req.approvedBy || "المدير العام"} — ${req.approvedDate || ""}</div>` :
-        req.status === "rejected" ? `<div class="stamp rejected-stamp">❌ تم رفض الطلب<br/>سبب الرفض: ${req.rejectionReason || "—"}</div>` : `<div class="stamp" style="border-color:#FF8F00;color:#FF8F00">⏳ الطلب معلق — بانتظار الموافقة</div>`}
-    </body></html>`;
-    const w = window.open("", "_blank"); if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 600); }
+    ${req.status === "approved" ? `<div class="kpi" style="margin-top:16px"><div class="kpi-box in" style="flex:1"><div class="kpi-v in">✅ تمت الموافقة على الطلب — وافق عليه: ${req.approvedBy || "المدير العام"} — ${req.approvedDate || ""}</div></div></div>` :
+        req.status === "rejected" ? `<div class="kpi" style="margin-top:16px"><div class="kpi-box" style="flex:1"><div class="kpi-v out">❌ تم رفض الطلب — سبب الرفض: ${req.rejectionReason || "—"}</div></div></div>` : `<div class="kpi" style="margin-top:16px"><div class="kpi-box" style="flex:1"><div class="kpi-v">⏳ الطلب معلق — بانتظار الموافقة</div></div></div>`}`;
+    printHtml(html, `طلب شراء #${req.id}`);
   };
 
   return (
@@ -7073,6 +7392,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                     <span className="font-bold text-[#1B3A6B] text-sm">{DEPT_NAMES[req.dept] || req.dept}</span>
                     {statusBadge(req.status)}
                     <span className="text-xs text-[#999]">{req.items.length} صنف</span>
+                    {req.supplier && <Badge color="info">{req.supplier}</Badge>}
                   </div>
                   <p className="text-xs text-[#999] mt-0.5 truncate">{req.date} · {req.requestedBy}</p>
                 </div>
@@ -7081,6 +7401,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                     <p className="font-bold text-[#1B3A6B]">{fmt(req.totalAmount)}</p>
                   </div>
                   <Btn small variant="ghost" onClick={(e: any) => { e.stopPropagation(); printSingle(req); }}><Printer size={12} />PDF</Btn>
+                  {onEditPurchaseRequest && <Btn small variant="ghost" onClick={(e: any) => { e.stopPropagation(); openEdit(req); }}><Pencil size={12} />تعديل</Btn>}
                   <ChevronDown size={15} className={`text-[#999] transition-transform flex-shrink-0 ${isExp ? "rotate-180" : ""}`} />
                 </div>
               </div>
@@ -7109,6 +7430,13 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                         </tr>
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* Supplier & payment summary */}
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="p-2 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><p className="text-[#999]">شركة المورد</p><p className="font-semibold text-[#333]">{req.supplier || "—"}</p></div>
+                    <div className="p-2 rounded-lg" style={{ backgroundColor: "#E8F5E9" }}><p className="text-[#999]">مبلغ الدفع</p><p className="font-semibold text-[#388E3C]">{fmt(req.paidAmount || 0)}</p></div>
+                    <div className="p-2 rounded-lg" style={{ backgroundColor: "#FFEBEE" }}><p className="text-[#999]">متبقي للشركة</p><p className="font-semibold text-[#D32F2F]">{fmt(Math.max(0, req.totalAmount - (req.paidAmount || 0)))}</p></div>
                   </div>
 
                   {/* Note */}
@@ -7167,6 +7495,56 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
         message={`هل أنت متأكد من حذف طلب الشراء #${delConfId}؟ لا يمكن التراجع عن هذا الإجراء.`}
         danger
       />
+
+      {/* ── تعديل طلب الشراء — المدير يقدر يعدّل أي معلومة، بغض النظر عن حالة الطلب ── */}
+      <Modal open={!!editReq} onClose={closeEdit} title={`تعديل طلب شراء #${editReq?.id ?? ""}`} wide
+        footer={<><Btn variant="secondary" onClick={saveEdit}><Save size={16} />حفظ التعديلات</Btn><Btn variant="outline" onClick={closeEdit}>إلغاء</Btn></>}>
+        {editReq && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">القسم</label>
+                <select value={editDept} onChange={e => setEditDept(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                  {ALL_DEPTS.filter(d => d.id !== "all").map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+              <InputField label="مقدّم الطلب" value={editRequestedBy} onChange={setEditRequestedBy} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <InputField label="التاريخ" value={editDate} onChange={setEditDate} />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">شركة المورد</label>
+                <select value={editSupplier} onChange={e => setEditSupplier(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                  <option value="">— بدون شركة محددة —</option>
+                  {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between"><p className="text-xs font-bold text-[#555]">الأصناف</p><button onClick={editAddItem} className="flex items-center gap-1 text-xs text-[#0D7377] font-medium hover:underline"><Plus size={13} />إضافة صنف</button></div>
+              {editItems.map((it, idx) => (
+                <div key={it.id} className="grid grid-cols-12 gap-2 items-end p-3 rounded-xl" style={{ backgroundColor: "#FAFAFA", border: "1px solid #E0E0E0" }}>
+                  <div className="col-span-4"><InputField label={`الصنف ${idx + 1}`} required placeholder="اسم الصنف..." value={it.name} onChange={v => editUpdateItem(it.id, "name", v)} /></div>
+                  <div className="col-span-2"><InputField label="الكمية" type="number" value={String(it.qty)} onChange={v => editUpdateItem(it.id, "qty", parseFloat(v) || 1)} /></div>
+                  <div className="col-span-2">
+                    <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الوحدة</label>
+                      <select value={it.unit} onChange={e => editUpdateItem(it.id, "unit", e.target.value)} className="h-10 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FFF" }}>
+                        {PURCHASE_UNITS.map(u => <option key={u}>{u}</option>)}
+                      </select></div>
+                  </div>
+                  <div className="col-span-3"><InputField label="السعر التقديري (₪)" type="number" value={String(it.estimatedPrice)} onChange={v => editUpdateItem(it.id, "estimatedPrice", parseFloat(v) || 0)} /></div>
+                  <div className="col-span-1 pb-0.5">{editItems.length > 1 && <button onClick={() => editRemoveItem(it.id)} className="w-9 h-9 rounded-lg bg-[#FFEBEE] text-[#D32F2F] flex items-center justify-center hover:bg-[#FFCDD2] transition-colors"><X size={14} /></button>}</div>
+                </div>
+              ))}
+              <p className="text-xs font-semibold text-[#1B3A6B] text-left">الإجمالي: {fmt(editTotal)}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <InputField label="المبلغ المدفوع (₪)" type="number" value={editPaid} onChange={setEditPaid} />
+              <InputField label="ملاحظات" value={editNote} onChange={setEditNote} />
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -7514,7 +7892,7 @@ function FinChartsScreen({ drawers, debts, employees, invoices = [], sessions = 
 
 function numToAr(n: number): string { const ones = ["صفر", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"]; const tens = ["", "عشرة", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"]; if (n <= 0) return "صفر"; if (n < 20) return ones[n]; if (n < 100) { const t = Math.floor(n / 10), o = n % 10; return o === 0 ? tens[t] : `${ones[o]} و${tens[t]}`; } if (n < 1000) { const h = Math.floor(n / 100), r = n % 100; const hs = h === 1 ? "مئة" : h === 2 ? "مئتان" : `${ones[h]} مئة`; return r === 0 ? hs : `${hs} و${numToAr(r)}`; } if (n < 1000000) { const k = Math.floor(n / 1000), r = n % 1000; const ks = k === 1 ? "ألف" : k === 2 ? "ألفان" : k < 11 ? `${ones[k]} آلاف` : `${numToAr(k)} ألف`; return r === 0 ? ks : `${ks} و${numToAr(r)}`; } const m = Math.floor(n / 1000000), r = n % 1000000; const ms = m === 1 ? "مليون" : m === 2 ? "مليونان" : `${numToAr(m)} مليون`; return r === 0 ? ms : `${ms} و${numToAr(r)}`; }
 
-function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurances = [], customDepts = [], doDeposit, doWithdraw, suppliers = [], sessions = [], purchaseRequests = [], allPaymentVouchers = [], allReceiptVouchers = [], employeeAdvances = [], deptIdsFilter }: { drawers: Record<string, DrawerState>; loggedUser?: LoggedUser | null; employees?: Employee[]; insurances?: InsuranceCo[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; doDeposit?: (dept: string, amt: number, title: string, cat: string) => void; doWithdraw?: (dept: string, amt: number, title: string, cat: string, ben?: string) => void; suppliers?: { id: number; name: string; type: string; phone: string }[]; sessions?: PatientSession[]; purchaseRequests?: PurchaseRequest[]; allPaymentVouchers?: any[]; allReceiptVouchers?: any[]; employeeAdvances?: EmployeeAdvance[]; deptIdsFilter?: string[] }) {
+function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurances = [], customDepts = [], doDeposit, doWithdraw, suppliers = [], sessions = [], purchaseRequests = [], allPaymentVouchers = [], allReceiptVouchers = [], employeeAdvances = [], deptIdsFilter }: { drawers: Record<string, DrawerState>; loggedUser?: LoggedUser | null; employees?: Employee[]; insurances?: InsuranceCo[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; doDeposit?: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>; doWithdraw?: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>; suppliers?: { id: number; name: string; type: string; phone: string }[]; sessions?: PatientSession[]; purchaseRequests?: PurchaseRequest[]; allPaymentVouchers?: any[]; allReceiptVouchers?: any[]; employeeAdvances?: EmployeeAdvance[]; deptIdsFilter?: string[] }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [receiptVouchers, setReceiptVouchers] = useState<any[]>([]);
@@ -7580,8 +7958,8 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const withdrawCats = Object.entries(wcMap).map(([name, value]) => ({ name, value })).filter(d => d.value > 0);
 
   // ── Voucher Types ──
-  type RV = { id: number; voucher_no: string; date: string; amount: number; received_from_type: "patient" | "insurance" | "other"; received_from_id?: string; received_from_name: string; reason: string; dept?: string; notes?: string; approved_by?: string; created_at: string };
-  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; category?: string; notes?: string; approved_by?: string; created_at: string };
+  type RV = { id: number; voucher_no: string; date: string; amount: number; received_from_type: "patient" | "insurance" | "other"; received_from_id?: string; received_from_name: string; reason: string; dept?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
+  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; category?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
 
   useEffect(() => { Promise.all([api.finance.receiptVouchers.getAll(), api.finance.paymentVouchers.getAll()]).then(([rv, pv]) => { const filterDept = (arr: any[]) => deptIdsFilter?.length ? arr.filter(v => deptIdsFilter.includes(v.dept || "")) : arr; if (rv) setReceiptVouchers(filterDept(rv as any[]).map(v => ({ ...v, amount: Number(v.amount) }))); if (pv) setPaymentVouchers(filterDept(pv as any[]).map(v => ({ ...v, amount: Number(v.amount) }))); setVouchersLoaded(true); }).catch(() => { }); }, []);
 
@@ -7596,8 +7974,31 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
     if (rvModal.f.received_from_type !== "other" && !rvModal.f.received_from_id) { fireToast("يجب اختيار الاسم من القائمة", "error"); return; }
     try {
       const body = { ...rvModal.f, amount: parseFloat(rvModal.f.amount) || 0 };
-      if (rvModal.mode === "add") { const r = await api.finance.receiptVouchers.create(body); if (r) setReceiptVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]); if (doDeposit && body.dept) doDeposit(body.dept, body.amount, body.reason, "سند قبض"); fireToast("تم إنشاء سند القبض ✓", "success"); }
-      else if (rvModal.id) { const r = await api.finance.receiptVouchers.update(rvModal.id, body); if (r) setReceiptVouchers(p => p.map(v => v.id === rvModal.id ? { ...(r as any), amount: Number((r as any).amount) } : v)); fireToast("تم تحديث سند القبض ✓", "success"); }
+      if (rvModal.mode === "add") {
+        const r = await api.finance.receiptVouchers.create(body);
+        if (r) setReceiptVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
+        // ── نحفظ رقم حركة الإيداع الحقيقي على السند نفسه، لنستطيع لاحقاً حذفه
+        //    بدقة عند حذف السند بدل ترك أثر دائم في سجل الصندوق ──
+        if (doDeposit && body.dept && r) {
+          const rid = (r as any).id;
+          doDeposit(body.dept, body.amount, body.reason, "سند قبض").then(txId => {
+            if (!txId) return;
+            setReceiptVouchers(p => p.map(v => v.id === rid ? { ...v, drawer_tx_id: txId } : v));
+            api.finance.receiptVouchers.update(rid, { drawer_tx_id: txId }).catch(() => { });
+          });
+        }
+        fireToast("تم إنشاء سند القبض ✓", "success");
+      }
+      else if (rvModal.id) {
+        const prevTarget = receiptVouchers.find(v => v.id === rvModal.id);
+        const r = await api.finance.receiptVouchers.update(rvModal.id, body);
+        if (r) setReceiptVouchers(p => p.map(v => v.id === rvModal.id ? { ...(r as any), amount: Number((r as any).amount) } : v));
+        // ── إذا تغيّر المبلغ، نصحّح مبلغ حركة الإيداع الحقيقية المرتبطة أيضاً ──
+        if (prevTarget?.drawer_tx_id && prevTarget.amount !== body.amount) {
+          api.drawers.transactions.update(prevTarget.drawer_tx_id, { amount: body.amount }).catch(() => { });
+        }
+        fireToast("تم تحديث سند القبض ✓", "success");
+      }
       setRvModal(m => ({ ...m, open: false }));
     } catch { fireToast("خطأ في حفظ سند القبض — حاول مجدداً", "error"); }
   };
@@ -7610,8 +8011,13 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
       const res = await api.finance.receiptVouchers.delete(id);
       if (res === null) { fireToast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setReceiptVouchers(p => p.filter(v => v.id !== id));
-      // ── تصفير الأثر المالي: عكس عملية doDeposit الأصلية ──
-      if (doWithdraw && target.dept) doWithdraw(target.dept, target.amount, `إلغاء سند قبض ${target.voucher_no} — ${target.reason}`, "إلغاء سند قبض", target.received_from_name);
+      if (target.drawer_tx_id) {
+        // ── حذف حقيقي لحركة الإيداع المرتبطة (بدون أي أثر متبقٍ) ──
+        api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
+      } else if (doWithdraw && target.dept) {
+        // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id ──
+        doWithdraw(target.dept, target.amount, `إلغاء سند قبض ${target.voucher_no} — ${target.reason}`, "إلغاء سند قبض", target.received_from_name);
+      }
       fireToast(`تم حذف سند القبض ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { fireToast("خطأ في حذف سند القبض — حاول مجدداً", "error"); }
   };
@@ -7632,8 +8038,31 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
     const empName = (loggedUser?.type === "staff" ? loggedUser.staff.name || loggedUser.staff.username : loggedUser?.adminName) || "الموظف";
     try {
       const body = { ...pvModal.f, amount: parseFloat(pvModal.f.amount) || 0, paid_to_type: "staff", paid_to_name: empName, category: "مصروفات شخصية" };
-      if (pvModal.mode === "add") { const r = await api.finance.paymentVouchers.create(body); if (r) setPaymentVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]); if (doWithdraw && body.dept) doWithdraw(body.dept, body.amount, body.reason, "سند صرف", (body as any).paid_to_name); fireToast("تم إنشاء سند الصرف ✓", "success"); }
-      else if (pvModal.id) { const r = await api.finance.paymentVouchers.update(pvModal.id, body); if (r) setPaymentVouchers(p => p.map(v => v.id === pvModal.id ? { ...(r as any), amount: Number((r as any).amount) } : v)); fireToast("تم تحديث سند الصرف ✓", "success"); }
+      if (pvModal.mode === "add") {
+        const r = await api.finance.paymentVouchers.create(body);
+        if (r) setPaymentVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
+        // ── نحفظ رقم حركة السحب الحقيقي على السند نفسه، لنستطيع لاحقاً حذفه
+        //    بدقة عند حذف السند بدل ترك أثر دائم في سجل الصندوق ──
+        if (doWithdraw && body.dept && r) {
+          const rid = (r as any).id;
+          doWithdraw(body.dept, body.amount, body.reason, "سند صرف", (body as any).paid_to_name).then(txId => {
+            if (!txId) return;
+            setPaymentVouchers(p => p.map(v => v.id === rid ? { ...v, drawer_tx_id: txId } : v));
+            api.finance.paymentVouchers.update(rid, { drawer_tx_id: txId }).catch(() => { });
+          });
+        }
+        fireToast("تم إنشاء سند الصرف ✓", "success");
+      }
+      else if (pvModal.id) {
+        const prevTarget = paymentVouchers.find(v => v.id === pvModal.id);
+        const r = await api.finance.paymentVouchers.update(pvModal.id, body);
+        if (r) setPaymentVouchers(p => p.map(v => v.id === pvModal.id ? { ...(r as any), amount: Number((r as any).amount) } : v));
+        // ── إذا تغيّر المبلغ، نصحّح مبلغ حركة السحب الحقيقية المرتبطة أيضاً ──
+        if (prevTarget?.drawer_tx_id && prevTarget.amount !== body.amount) {
+          api.drawers.transactions.update(prevTarget.drawer_tx_id, { amount: body.amount }).catch(() => { });
+        }
+        fireToast("تم تحديث سند الصرف ✓", "success");
+      }
       setPvModal(m => ({ ...m, open: false }));
     } catch { fireToast("خطأ في حفظ سند الصرف — حاول مجدداً", "error"); }
   };
@@ -7646,8 +8075,13 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
       const res = await api.finance.paymentVouchers.delete(id);
       if (res === null) { fireToast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setPaymentVouchers(p => p.filter(v => v.id !== id));
-      // ── تصفير الأثر المالي: عكس عملية doWithdraw الأصلية ──
-      if (doDeposit && target.dept) doDeposit(target.dept, target.amount, `إلغاء سند صرف ${target.voucher_no} — ${target.reason}`, "إلغاء سند صرف");
+      if (target.drawer_tx_id) {
+        // ── حذف حقيقي لحركة السحب المرتبطة (بدون أي أثر متبقٍ) ──
+        api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
+      } else if (doDeposit && target.dept) {
+        // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id ──
+        doDeposit(target.dept, target.amount, `إلغاء سند صرف ${target.voucher_no} — ${target.reason}`, "إلغاء سند صرف");
+      }
       fireToast(`تم حذف سند الصرف ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { fireToast("خطأ في حذف سند الصرف — حاول مجدداً", "error"); }
   };
@@ -8254,7 +8688,7 @@ function ExternalDebtsScreen({ externalDebts, setExternalDebts, drawers, doWithd
 
 // ─── PAYROLL ───────────────────────────────────────────────────────────────────
 
-function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], staffList = [], sessions = [], paymentVouchers = [] }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[] }) {
+function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], staffList = [], sessions = [], paymentVouchers = [], setPaymentVouchers }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[]; setPaymentVouchers?: React.Dispatch<React.SetStateAction<any[]>> }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [confirmModal, setConfirmModal] = useState<Employee | null>(null); const [paying, setPaying] = useState(false);
   const [payFrom, setPayFrom] = useState(""); const [payTo, setPayTo] = useState("");
@@ -8291,9 +8725,13 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const getStaffMember = (e: { name: string; staffId?: number | null }) =>
     (e.staffId != null ? staffList.find(s => s.id === e.staffId) : undefined) || staffList.find(s => s.name === e.name);
   // ── الخصومات الفعلية = سندات الصرف المسجَّلة للموظف من "السندات وحساباتها"
-  //    (وليس حقل employees.expenses الساكن الذي لا يتحدث تلقائياً عند صرف أي سند) ──
-  const getExpenses = (e: Employee) => paymentVouchers
-    .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name)
+  //    (وليس حقل employees.expenses الساكن الذي لا يتحدث تلقائياً عند صرف أي سند)
+  //    — بشرط ألا تكون قد احتُسبت واستُهلكت ضمن راتب سابق (applied_to_payroll)،
+  //    وإلا كان نفس السند سينخصم من راتب كل شهر جديد للأبد بدل أن يُخصم مرة
+  //    واحدة فقط، بنفس مبدأ عمود employeeAdvances.repaid تماماً ──
+  const getUnappliedVouchers = (e: Employee) => paymentVouchers
+    .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name && !v.applied_to_payroll);
+  const getExpenses = (e: Employee) => getUnappliedVouchers(e)
     .reduce((s, v: any) => s + (Number(v.amount) || 0), 0);
   const getCommission = (e: Employee) => {
     const sm = getStaffMember(e);
@@ -8329,12 +8767,19 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     if (!confirmModal) return;
     const split = getPaySplit(confirmModal);
     if (getPaySplitTotalAvailable(split) < calcNet(confirmModal)) { toast("⚠️ رصيد الصندوق غير كافٍ", "warning"); return; }
+    // ── نلتقط سندات الصرف اللي دخلت فعلياً بحساب هذا الراتب *قبل* الصرف، لنعلّمها
+    //    "مُستهلَكة" بعده مباشرة — فما تنخصم مرة ثانية من رواتب الأشهر الجاية ──
+    const consumedVoucherIds = getUnappliedVouchers(confirmModal).map((v: any) => v.id);
     setPaying(true);
     setTimeout(() => {
       const paidDate = "29/06/2026";
       split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${confirmModal.name} — يونيو 2026`, "راتب موظف", confirmModal.name));
       setEmployees(p => p.map(e => e.id === confirmModal.id ? { ...e, status: "paid" as const, paidDate } : e));
       api.staff.employees.update(confirmModal.id, { status: "paid", paid_date: _localISO(), commission: getCommission(confirmModal), net_salary: calcNet(confirmModal) });
+      if (consumedVoucherIds.length) {
+        setPaymentVouchers?.(p => p.map((v: any) => consumedVoucherIds.includes(v.id) ? { ...v, applied_to_payroll: true } : v));
+        consumedVoucherIds.forEach(vid => api.finance.paymentVouchers.update(vid, { applied_to_payroll: true }).catch(() => { }));
+      }
       setPaying(false); setConfirmModal(null);
       toast(split.length > 1 ? `تم صرف راتب ${confirmModal.name} ✓ — مقسّم على ${split.length} صناديق أقسام` : `تم صرف راتب ${confirmModal.name} ✓ — خُصم من صندوق القسم`);
     }, 700);
@@ -8480,8 +8925,8 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
   // ── حقل "الفحوصات المرتبطة" النصي القديم أُزيل: الربط الحقيقي بين الفحص
   //    والصنف صار من دليل الفحوصات نفسه (kitInventoryId)، وهاد الحقل النصي هون
   //    كان أصلاً غير محفوظ بقاعدة البيانات إطلاقاً (يُصفَّر مع كل تحديث). ──
-  type ItemForm = { name: string; itemType: string; unit: string; qty: string; threshold: string; notes: string; params: KitParam[] };
-  const emptyForm: ItemForm = { name: "", itemType: "مستلزم طبي", unit: "عدد", qty: "", threshold: "", notes: "", params: [] };
+  type ItemForm = { name: string; itemType: string; unit: string; unitCost: string; qty: string; threshold: string; notes: string; params: KitParam[] };
+  const emptyForm: ItemForm = { name: "", itemType: "مستلزم طبي", unit: "عدد", unitCost: "", qty: "", threshold: "", notes: "", params: [] };
   const [itemModal, setItemModal] = useState<{ open: boolean; mode: "add" | "edit" | "addQty"; id: number; f: ItemForm; addAmt: string }>({ open: false, mode: "add", id: 0, f: emptyForm, addAmt: "" });
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -8489,23 +8934,24 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
   const [statusFilter, setStatusFilter] = useState("");
   const isKit = (type: string) => ["كيت تشخيصي", "كاشف كيميائي"].includes(type);
   const openAdd = () => setItemModal({ open: true, mode: "add", id: 0, f: { ...emptyForm }, addAmt: "" });
-  const openEdit = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "edit", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", qty: String(item.qty), threshold: String(item.threshold), notes: item.notes || "", params: [...(item.params || [])] }, addAmt: "" });
-  const openAddQty = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "addQty", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", qty: String(item.qty), threshold: String(item.threshold), notes: "", params: [] }, addAmt: "" });
+  const openEdit = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "edit", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", unitCost: String(item.unitCost || 0), qty: String(item.qty), threshold: String(item.threshold), notes: item.notes || "", params: [...(item.params || [])] }, addAmt: "" });
+  const openAddQty = (item: typeof initialInventory[0]) => setItemModal({ open: true, mode: "addQty", id: item.id, f: { name: item.name, itemType: item.itemType || "مستلزم طبي", unit: item.unit || "عدد", unitCost: String(item.unitCost || 0), qty: String(item.qty), threshold: String(item.threshold), notes: "", params: [] }, addAmt: "" });
   const saveItem = () => {
     const qty = parseInt(itemModal.f.qty) || 0;
     const threshold = parseInt(itemModal.f.threshold) || 0;
     if (!itemModal.f.name.trim() || !threshold) { toast("اسم الصنف وحد التنبيه إلزاميان", "error"); return; }
     const status = computeKitStatus(qty, threshold);
     const params = itemModal.f.params.filter(p => p.name.trim());
-    const record = { name: itemModal.f.name.trim(), itemType: itemModal.f.itemType, unit: itemModal.f.unit, tests: [] as string[], qty, threshold, status, params, notes: itemModal.f.notes.trim() };
+    const unitCost = parseFloat(itemModal.f.unitCost) || 0;
+    const record = { name: itemModal.f.name.trim(), itemType: itemModal.f.itemType, unit: itemModal.f.unit, unitCost, tests: [] as string[], qty, threshold, status, params, notes: itemModal.f.notes.trim() };
     if (itemModal.mode === "add") {
       const newId = Math.max(0, ...inventory.map(i => i.id)) + 1;
       setInventory(p => [...p, { id: newId, ...record }]);
-      api.lab.inventory.create({ name: record.name, item_type: record.itemType, qty: record.qty, threshold: record.threshold, unit: record.unit, notes: record.notes }).then(r => { if (r && (r as any).id) setInventory(p => p.map(i => i.id === newId ? { ...i, id: (r as any).id } : i)); }).catch(() => { });
+      api.lab.inventory.create({ name: record.name, item_type: record.itemType, qty: record.qty, threshold: record.threshold, unit: record.unit, cost_per_unit: record.unitCost, notes: record.notes }).then(r => { if (r && (r as any).id) setInventory(p => p.map(i => i.id === newId ? { ...i, id: (r as any).id } : i)); }).catch(() => { });
       toast(`تم إضافة "${itemModal.f.name}" إلى المخزون`, "success");
     } else {
       setInventory(p => p.map(i => i.id === itemModal.id ? { ...i, ...record } : i));
-      api.lab.inventory.update(itemModal.id, { name: record.name, item_type: record.itemType, qty: record.qty, threshold: record.threshold, unit: record.unit, notes: record.notes });
+      api.lab.inventory.update(itemModal.id, { name: record.name, item_type: record.itemType, qty: record.qty, threshold: record.threshold, unit: record.unit, cost_per_unit: record.unitCost, notes: record.notes });
       toast("تم حفظ التعديلات", "success");
       checkAndNotify?.(record.name, "lab", "مختبر التحاليل", qty, threshold);
     }
@@ -8562,7 +9008,7 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
 
         {visible.length === 0 ? <EmptyState msg={inventory.length === 0 ? "أضف أصناف المستلزمات لمتابعة المخزون" : "لا توجد نتائج بهذه الفلاتر"} /> : (
           <table className="w-full text-sm">
-            <THead cols={["اسم الصنف", "النوع", "الكمية", "الوحدة", "حد التنبيه", "الحالة", ""]} />
+            <THead cols={["اسم الصنف", "النوع", "الكمية", "الوحدة", "تكلفة الوحدة", "حد التنبيه", "الحالة", ""]} />
             <tbody>{visible.map((item, i) => {
               const s = cs(item);
               return (
@@ -8574,6 +9020,7 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
                   <TD><Badge color="secondary">{item.itemType}</Badge></TD>
                   <TD><span className="text-xl font-bold" style={{ color: sColor(s) }}>{item.qty}</span></TD>
                   <TD className="text-[#555] text-xs">{item.unit || "عدد"}</TD>
+                  <TD className="text-[#555]">{item.unitCost ? fmt(item.unitCost) : "—"}</TD>
                   <TD className="text-[#555]">{item.threshold}</TD>
                   <TD><span className="px-2.5 py-1 rounded-full text-xs font-bold" style={{ backgroundColor: sBg(s), color: sColor(s) }}>{sLabel(s)}</span></TD>
                   <TD><div className="flex gap-1 justify-end">
@@ -8612,6 +9059,7 @@ function InventoryScreen({ toast, inventory, setInventory, computeKitStatus, che
             <InputField label="الكمية الحالية" required type="number" placeholder="0" value={itemModal.f.qty} onChange={v => setF("qty", v)} />
             <InputField label="حد التنبيه (أدنى كمية)" required type="number" placeholder="10" value={itemModal.f.threshold} onChange={v => setF("threshold", v)} />
           </div>
+          <InputField label="تكلفة الوحدة (₪) — تُخصم تلقائياً كمصروف عند استهلاك الصنف بفحص مريض" type="number" placeholder="0" value={itemModal.f.unitCost} onChange={v => setF("unitCost", v)} />
           {itemModal.f.qty && itemModal.f.threshold && (() => { const q = parseInt(itemModal.f.qty) || 0; const t = parseInt(itemModal.f.threshold) || 0; const s = computeKitStatus(q, t); return <div className="p-2 rounded-lg text-xs font-medium" style={{ backgroundColor: sBg(s), color: sColor(s) }}>الحالة بعد الحفظ: {sLabel(s)} {s === "ok" ? "✓" : s === "empty" ? "🚫" : "⚠️"}</div> })()}
           <InputField label="ملاحظات (اختياري)" placeholder="مثال: للاستخدام الخارجي فقط، أو مخصص لفحص معين..." value={itemModal.f.notes} onChange={v => setF("notes", v)} />
           {/* معاملات الكيت — للكيتات والكواشف فقط */}
@@ -9603,12 +10051,12 @@ function PrintSettingsScreen({ toast }: { toast: (m: string, t?: any) => void })
 
 // ─── REPORTS ───────────────────────────────────────────────────────────────────
 
-function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [] }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }> }) {
+function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [], insurances = [], purchaseRequests = [], suppliers = [] }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; insurances?: InsuranceCo[]; purchaseRequests?: PurchaseRequest[]; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
   const allDepts = [...DEPARTMENTS, ...customDepts.map(d => ({ id: d.id, name: d.name, short: d.short }))];
   const deptShortById = (id: string) => allDepts.find(d => d.id === id)?.short || id;
   const [tab, setTab] = useState("patients");
   const [fromDate, setFromDate] = useState(() => _localISO()); const [toDate, setToDate] = useState(() => _localISO());
-  const TABS = [{ k: "patients", l: "كشوفات المرضى" }, { k: "companies", l: "كشوفات الشركات" }, { k: "insurance", l: "كشوفات التأمين" }, { k: "depts", l: "كشوفات الأقسام" }, { k: "custom", l: "التقارير المخصصة" }];
+  const TABS = [{ k: "patients", l: "كشوفات المرضى" }, { k: "companies", l: "كشوفات شركات التأمين" }, { k: "insurance", l: "ملخص المؤمَّنين" }, { k: "suppliers", l: "كشوفات شركات الموردين" }, { k: "depts", l: "كشوفات الأقسام" }, { k: "custom", l: "التقارير المخصصة" }];
   const parseStrDate = (s: string) => { if (!s) return null; const clean = s.trim(); if (clean.includes("/")) { const p = clean.split("/"); if (p.length === 3) { const d = parseInt(p[0]), m = parseInt(p[1]), y = parseInt(p[2]); if (!isNaN(y) && y > 2000) return new Date(y, m - 1, d, 12, 0, 0); } } const parts = clean.split("-"); if (parts.length === 3 && parts[0].length === 4) { const y = parseInt(parts[0]), m = parseInt(parts[1]), d = parseInt(parts[2]); if (!isNaN(y)) return new Date(y, m - 1, d, 12, 0, 0); } const iso = Date.parse(clean); if (!isNaN(iso)) { const dt = new Date(iso); dt.setHours(12, 0, 0, 0); return dt; } return null; };
   const inRange = (d: string) => { const date = parseStrDate(d); if (!fromDate || !toDate) return true; if (!date) return false; const from = parseStrDate(fromDate); if (from) from.setHours(0, 0, 0, 0); const to = parseStrDate(toDate); if (to) to.setHours(23, 59, 59, 999); return (from ? date >= from : true) && (to ? date <= to : true); };
   // ── Tab 1
@@ -9618,11 +10066,25 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   const patDebts = selPat ? debts.filter(d => d.pid === selPat.id && inRange(d.date)).reduce((s, d) => s + d.amount, 0) : 0;
   const patTotalAmt = patSessions.reduce((s, x) => s + x.amount, 0); const patTotalPaid = patSessions.reduce((s, x) => s + x.paid, 0);
   const p1List = mockPatients.filter(p => !p1Search.trim() || p.name.includes(p1Search) || p.id.includes(p1Search));
-  // ── Tab 2
+  // ── Tab 2 — كشوفات شركات التأمين (فواتير المطالبات) — القائمة تُبنى من شركات
+  //    التأمين المسجَّلة فعلياً (insurances) وليس من نص عشوائي، حتى لا تختلط
+  //    أبداً بشركات الموردين أو أي جهة أخرى؛ مع إبقاء أي اسم شركة قديم على فاتورة
+  //    محذوفة من دليل التأمين (حالة نادرة) لعدم إخفاء بيانات تاريخية. ──
   const [p2Company, setP2Company] = useState(""); const [p2Status, setP2Status] = useState("all");
-  const companies = [...new Set(invoices.map(i => i.company))];
+  const insuranceCompanyNames = insurances.map(c => c.name);
+  const orphanInvoiceCompanies = [...new Set(invoices.map(i => i.company))].filter(c => !insuranceCompanyNames.includes(c));
+  const companies = [...insuranceCompanyNames, ...orphanInvoiceCompanies];
   const compInvoices = invoices.filter(i => inRange(i.date) && (!p2Company || i.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && i.status === "paid") || (p2Status === "unpaid" && i.status !== "paid")));
   const compTotal = compInvoices.reduce((s, i) => s + i.total, 0); const compPaid = compInvoices.reduce((s, i) => s + i.paid, 0);
+  // ── Tab 6 — كشوفات شركات الموردين: قائمة الشركات تُبنى من دليل الموردين
+  //    الحقيقي (suppliers) — منفصل تماماً عن شركات التأمين — وتفلتر طلبات
+  //    الشراء المرتبطة بالشركة المحددة بغض النظر عن القسم أو الحالة. ──
+  const [p6Supplier, setP6Supplier] = useState(""); const [p6Status, setP6Status] = useState("all");
+  const supplierNames = suppliers.map(s => s.name);
+  const orphanSupplierNames = [...new Set(purchaseRequests.map(r => r.supplier).filter(Boolean))].filter((s): s is string => !supplierNames.includes(s as string));
+  const supplierOptions = [...supplierNames, ...orphanSupplierNames];
+  const supplierReqs = purchaseRequests.filter(r => inRange(r.date) && (!p6Supplier || r.supplier === p6Supplier) && (p6Status === "all" || r.status === p6Status));
+  const supplierTotal = supplierReqs.reduce((s, r) => s + r.totalAmount, 0); const supplierPaid = supplierReqs.reduce((s, r) => s + (r.paidAmount || 0), 0);
   // ── Tab 4
   const [p4Dept, setP4Dept] = useState("all");
   const deptRevs = allDepts.map(d => { const rev = sessions.filter(s => s.dept === d.id && inRange(s.date)).reduce((s, x) => s + x.amount, 0); const wd = (drawers[d.id]?.txs || []).filter(t => t.type === "out" && inRange(t.date)).reduce((s, t) => s + t.amount, 0) || 0; return { name: d.short, id: d.id, rev, wd, net: rev - wd }; });
@@ -9632,8 +10094,19 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   const p5Patients = mockPatients.filter(p => sessions.some(s => s.patientId === p.id && inRange(s.date)));
   const allFields = ["الاسم", "رقم الهوية", "القسم", "الجوال", "المبلغ", "المدفوع", "الدين", "التاريخ", "التشخيص", "التأمين"];
   const p5Toggle = (f: string) => setP5Fields(p => p.includes(f) ? p.filter(x => x !== f) : [...p, f]);
-  const insuredPatients = mockPatients.filter(p => p.insurance && sessions.some(s => s.patientId === p.id && inRange(s.date)));
-  const insuredSessions = sessions.filter(s => inRange(s.date) && insuredPatients.find(p => p.id === s.patientId));
+  // ── Tab 3 — ملخص المؤمَّنين: مبني على فواتير التأمين الفعلية (invoices) وليس
+  //    فقط علم "مؤمَّن" العام على المريض — هذا يسمح فعلياً بالفلترة حسب شركة
+  //    تأمين محددة وقسم محدد، وهو ما كان مفقوداً (الفلاتر كانت موجودة شكلياً
+  //    بدون value/onChange، وما كانت مربوطة بأي بيانات فعلياً). ──
+  const [p3Company, setP3Company] = useState(""); const [p3Dept, setP3Dept] = useState("");
+  const p3Invoices = invoices.filter(i => inRange(i.date) && (!p3Company || i.company === p3Company) && (!p3Dept || i.dept === p3Dept));
+  const p3PatientIds = [...new Set(p3Invoices.map(i => i.patientId).filter(Boolean))] as string[];
+  const p3PatientRows = p3PatientIds.map(pid => {
+    const invs = p3Invoices.filter(i => i.patientId === pid);
+    const name = invs[0]?.patientName || mockPatients.find(p => p.id === pid)?.name || "—";
+    const total = invs.reduce((s, i) => s + i.total, 0); const collected = invs.reduce((s, i) => s + i.paid, 0);
+    return { pid, name, claims: invs.length, total, collected, rate: total > 0 ? Math.round((collected / total) * 100) : 0 };
+  });
   return (
     <div className="space-y-5">
       <div className="flex gap-2 flex-wrap">{TABS.map(t => <button key={t.k} onClick={() => setTab(t.k)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t.k ? "bg-[#1B3A6B] text-white" : "bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{ border: "1px solid #E0E0E0" }}>{t.l}</button>)}</div>
@@ -9719,36 +10192,38 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
 
       {tab === "companies" && (
         <div className="space-y-4">
-          <Card title="فلاتر الشركات">
+          <Card title="فلاتر شركات التأمين">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <select value={p2Company} onChange={e => setP2Company(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل الشركات</option>{companies.map(c => <option key={c}>{c}</option>)}</select>
-              <select value={p2Status} onChange={e => setP2Status(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="all">كل الفواتير</option><option value="paid">مسددة فقط</option><option value="unpaid">غير مسددة</option></select>
-              <div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const p2Invs = invoices.filter(inv => (!p2Company || inv.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && inv.status === "paid") || (p2Status === "unpaid" && inv.status !== "paid"))); const rows = p2Invs.map(inv => [inv.company, inv.dept, "", fmt(inv.total), fmt(inv.paid), fmt(inv.remaining), inv.status === "paid" ? "مسدد" : "غير مسدد", inv.date]); const ws = XLSX.utils.aoa_to_sheet([["الشركة", "القسم", "الوصف", "المبلغ", "المدفوع", "المتبقي", "الحالة", "التاريخ"], ...rows]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "فواتير الشركات"); XLSX.writeFile(wb, `فواتير_${p2Company || "الشركات"}.xlsx`); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const p2Invs = invoices.filter(inv => (!p2Company || inv.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && inv.status === "paid") || (p2Status === "unpaid" && inv.status !== "paid"))); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي</div><div class="kpi-v">${fmt(p2Invs.reduce((s, i) => s + i.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">مسدَّد</div><div class="kpi-v in">${fmt(p2Invs.reduce((s, i) => s + i.paid, 0))}</div></div><div class="kpi-box"><div class="kpi-l">متبقي</div><div class="kpi-v out">${fmt(p2Invs.reduce((s, i) => s + i.remaining, 0))}</div></div></div><h2>فواتير الشركات${p2Company ? " — " + p2Company : ""}</h2><table><thead><tr><th>الشركة</th><th>القسم</th><th>المبلغ</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${p2Invs.map(i => `<tr><td>${i.company}</td><td>${i.dept}</td><td>${fmt(i.total)}</td><td class="in">${fmt(i.paid)}</td><td class="${i.remaining > 0 ? "out" : "in"}">${fmt(i.remaining)}</td><td>${i.status === "paid" ? "مسدد ✓" : "غير مسدد"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `كشف فواتير الشركات${p2Company ? " — " + p2Company : ""}`, fromDate, toDate); }}><Printer size={14} />PDF</Btn></div>
+              <select value={p2Company} onChange={e => setP2Company(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل شركات التأمين</option>{companies.map(c => <option key={c}>{c}</option>)}</select>
+              <select value={p2Status} onChange={e => setP2Status(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="all">كل المطالبات</option><option value="paid">محصَّلة فقط</option><option value="unpaid">غير محصَّلة</option></select>
+              <div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = compInvoices.map(inv => [inv.id, inv.company, inv.patientName || "—", inv.claimNo || "—", inv.dept, fmt(inv.total), fmt(inv.paid), fmt(inv.remaining), inv.status === "paid" ? "محصَّل" : inv.status === "partial" ? "جزئي" : "غير محصَّل", inv.date]); const ws = XLSX.utils.aoa_to_sheet([["رقم الفاتورة", "شركة التأمين", "اسم المريض", "رقم الكشفية", "القسم", "المبلغ", "المدفوع", "المتبقي", "الحالة", "التاريخ"], ...rows]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "كشف شركات التأمين"); XLSX.writeFile(wb, `كشف_تأمين_${p2Company || "الكل"}.xlsx`); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي المطالبات</div><div class="kpi-v">${fmt(compInvoices.reduce((s, i) => s + i.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">محصَّل</div><div class="kpi-v in">${fmt(compInvoices.reduce((s, i) => s + i.paid, 0))}</div></div><div class="kpi-box"><div class="kpi-l">متبقي</div><div class="kpi-v out">${fmt(compInvoices.reduce((s, i) => s + i.remaining, 0))}</div></div></div><h2>كشف حساب شركة تأمين${p2Company ? " — " + p2Company : ""}</h2><table><thead><tr><th>رقم الفاتورة</th><th>شركة التأمين</th><th>اسم المريض</th><th>رقم الكشفية</th><th>القسم</th><th>المبلغ</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${compInvoices.map(i => `<tr><td>${i.id}</td><td>${i.company}</td><td>${i.patientName || "—"}</td><td>${i.claimNo || "—"}</td><td>${deptShortById(i.dept)}</td><td>${fmt(i.total)}</td><td class="in">${fmt(i.paid)}</td><td class="${i.remaining > 0 ? "out" : "in"}">${fmt(i.remaining)}</td><td>${i.status === "paid" ? "محصَّل ✓" : "غير محصَّل"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `كشف حساب شركة تأمين${p2Company ? " — " + p2Company : ""}`, fromDate, toDate); }}><Printer size={14} />PDF</Btn></div>
             </div>
           </Card>
           {p2Company && <div className="p-5 rounded-2xl text-white" style={{ background: "linear-gradient(135deg,#0D7377,#0a5c60)" }}>
             <h2 className="text-lg font-bold">{p2Company}</h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-              {[{ l: "إجمالي الفواتير", v: fmt(compTotal) }, { l: "المسدَّد", v: fmt(compPaid) }, { l: "المتبقي", v: fmt(compTotal - compPaid) }].map(k => (
+              {[{ l: "إجمالي المطالبات", v: fmt(compTotal) }, { l: "المحصَّل", v: fmt(compPaid) }, { l: "المتبقي", v: fmt(compTotal - compPaid) }].map(k => (
                 <div key={k.l} className="bg-white/15 rounded-xl p-3 text-center"><p className="text-white/70 text-xs mb-1">{k.l}</p><p className="font-bold">{k.v}</p></div>
               ))}
             </div>
           </div>}
-          <Card title="فواتير الشركات">
-            {compInvoices.length === 0 ? <EmptyState msg="لا توجد فواتير تطابق الفلتر" /> : (
+          <Card title="مطالبات شركات التأمين">
+            {compInvoices.length === 0 ? <EmptyState msg="لا توجد مطالبات تطابق الفلتر" /> : (
               <table className="w-full text-sm">
-                <THead cols={["رقم الفاتورة", "الشركة", "التاريخ", "القسم", "الإجمالي", "المدفوع", "الباقي", "الحالة", ""]} />
+                <THead cols={["رقم الفاتورة", "شركة التأمين", "اسم المريض", "رقم الكشفية", "التاريخ", "القسم", "الإجمالي", "المدفوع", "الباقي", "الحالة", ""]} />
                 <tbody>{compInvoices.map((inv, i) => (
                   <TRow key={inv.id} i={i}>
                     <TD className="font-mono font-bold text-[#1B3A6B]">{inv.id}</TD>
                     <TD className="font-medium">{inv.company}</TD>
+                    <TD className="text-[#555]">{inv.patientName || "—"}</TD>
+                    <TD className="font-mono text-[#555]">{inv.claimNo || "—"}</TD>
                     <TD className="text-[#555]">{inv.date}</TD>
                     <TD><Badge color="info">{deptShortById(inv.dept)}</Badge></TD>
                     <TD className="font-semibold">{fmt(inv.total)}</TD>
                     <TD className="text-[#388E3C] font-medium">{fmt(inv.paid)}</TD>
                     <TD>{inv.remaining > 0 ? <span className="text-[#D32F2F] font-bold">{fmt(inv.remaining)}</span> : <span className="text-[#388E3C]">—</span>}</TD>
-                    <TD>{inv.status === "paid" ? <Badge color="success">مسدد</Badge> : inv.status === "partial" ? <Badge color="warning">جزئي</Badge> : <Badge color="danger">غير مسدد</Badge>}</TD>
-                    <TD><Btn small variant="ghost" onClick={() => toast("جارٍ التحضير...", "info")}><Printer size={13} /></Btn></TD>
+                    <TD>{inv.status === "paid" ? <Badge color="success">محصَّل</Badge> : inv.status === "partial" ? <Badge color="warning">جزئي</Badge> : <Badge color="danger">غير محصَّل</Badge>}</TD>
+                    <TD><Btn small variant="ghost" onClick={() => { const html = `<h2>مطالبة تأمين فردية</h2><table><tbody><tr><td>رقم الفاتورة</td><td>${inv.id}</td></tr><tr><td>شركة التأمين</td><td>${inv.company}</td></tr><tr><td>اسم المريض</td><td>${inv.patientName || "—"}</td></tr><tr><td>رقم الكشفية</td><td>${inv.claimNo || "—"}</td></tr><tr><td>القسم</td><td>${deptShortById(inv.dept)}</td></tr><tr><td>التاريخ</td><td>${inv.date}</td></tr><tr><td>المبلغ</td><td>${fmt(inv.total)}</td></tr><tr><td>المدفوع</td><td>${fmt(inv.paid)}</td></tr><tr><td>المتبقي</td><td>${fmt(inv.remaining)}</td></tr><tr><td>الحالة</td><td>${inv.status === "paid" ? "محصَّل ✓" : "غير محصَّل"}</td></tr></tbody></table>`; printHtml(html, `مطالبة تأمين — ${inv.company} — ${inv.id}`); }}><Printer size={13} /></Btn></TD>
                   </TRow>
                 ))}</tbody>
               </table>
@@ -9761,34 +10236,73 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
         <div className="space-y-4">
           <Card title="فلاتر التأمين">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <select className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل شركات التأمين</option></select>
-              <select className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option>كل الأقسام</option>{allDepts.map(d => <option key={d.id}>{d.short}</option>)}</select>
-              <Btn small variant="ghost" onClick={() => toast("جارٍ تحضير تقرير التأمين...", "info")}><Printer size={14} />تقرير PDF</Btn>
+              <select value={p3Company} onChange={e => setP3Company(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل شركات التأمين</option>{companies.map(c => <option key={c}>{c}</option>)}</select>
+              <select value={p3Dept} onChange={e => setP3Dept(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل الأقسام</option>{allDepts.map(d => <option key={d.id} value={d.id}>{d.short}</option>)}</select>
+              <Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">المرضى المؤمَّنون</div><div class="kpi-v">${p3PatientRows.length}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي المطالبات</div><div class="kpi-v">${fmt(p3PatientRows.reduce((s, r) => s + r.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">المحصَّل</div><div class="kpi-v in">${fmt(p3PatientRows.reduce((s, r) => s + r.collected, 0))}</div></div></div><h2>ملخص المؤمَّنين${p3Company ? " — " + p3Company : ""}</h2><table><thead><tr><th>اسم المريض</th><th>رقم الملف</th><th>عدد المطالبات</th><th>إجمالي المطالبات</th><th>المحصَّل</th><th>نسبة التحصيل</th></tr></thead><tbody>${p3PatientRows.map(r => `<tr><td>${r.name}</td><td>${r.pid}</td><td>${r.claims}</td><td>${fmt(r.total)}</td><td class="in">${fmt(r.collected)}</td><td>${r.rate}%</td></tr>`).join("")}</tbody></table>`; printHtml(html, `ملخص المؤمَّنين${p3Company ? " — " + p3Company : ""}`, fromDate, toDate); }}><Printer size={14} />تقرير PDF</Btn>
             </div>
           </Card>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <KPICard title="المرضى المؤمَّنون" value={String(insuredPatients.length)} Icon={Users} color="secondary" />
-            <KPICard title="إجمالي الجلسات" value={String(insuredSessions.length)} Icon={FileText} color="secondary" />
-            <KPICard title="إجمالي المطالبات" value={fmt(insuredSessions.reduce((s, x) => s + x.amount, 0))} Icon={DollarSign} color="primary" />
-            <KPICard title="المحصَّل (تقديري)" value={fmt(insuredSessions.reduce((s, x) => s + x.paid, 0))} Icon={CheckCircle} color="success" />
+            <KPICard title="المرضى المؤمَّنون" value={String(p3PatientRows.length)} Icon={Users} color="secondary" />
+            <KPICard title="عدد المطالبات" value={String(p3Invoices.length)} Icon={FileText} color="secondary" />
+            <KPICard title="إجمالي المطالبات" value={fmt(p3PatientRows.reduce((s, r) => s + r.total, 0))} Icon={DollarSign} color="primary" />
+            <KPICard title="المحصَّل" value={fmt(p3PatientRows.reduce((s, r) => s + r.collected, 0))} Icon={CheckCircle} color="success" />
           </div>
           <Card title="المرضى المؤمَّنون">
-            <table className="w-full text-sm">
-              <THead cols={["اسم المريض", "رقم الهوية", "الجلسات", "إجمالي الخدمات", "المحصَّل", "نسبة التغطية"]} />
-              <tbody>{insuredPatients.map((p, i) => {
-                const ps = insuredSessions.filter(s => s.patientId === p.id);
-                const total = ps.reduce((s, x) => s + x.amount, 0); const collected = ps.reduce((s, x) => s + x.paid, 0);
-                const rate = total > 0 ? Math.round((collected / total) * 100) : 0;
-                return <TRow key={p.id} i={i}>
-                  <TD className="font-medium">{p.name}</TD>
-                  <TD className="font-mono text-[#555]">{p.id}</TD>
-                  <TD>{ps.length}</TD>
-                  <TD className="font-semibold">{fmt(total)}</TD>
-                  <TD className="text-[#388E3C] font-medium">{fmt(collected)}</TD>
-                  <TD><div className="flex items-center gap-2"><div className="flex-1 h-1.5 bg-[#E0E0E0] rounded-full overflow-hidden"><div className="h-full bg-[#0D7377] rounded-full" style={{ width: `${rate}%` }} /></div><span className="text-xs font-bold">{rate}%</span></div></TD>
-                </TRow>;
-              })}</tbody>
-            </table>
+            {p3PatientRows.length === 0 ? <EmptyState msg="لا توجد مطالبات تأمين تطابق الفلتر" /> : (
+              <table className="w-full text-sm">
+                <THead cols={["اسم المريض", "رقم الملف", "عدد المطالبات", "إجمالي المطالبات", "المحصَّل", "نسبة التحصيل"]} />
+                <tbody>{p3PatientRows.map((r, i) => (
+                  <TRow key={r.pid} i={i}>
+                    <TD className="font-medium">{r.name}</TD>
+                    <TD className="font-mono text-[#555]">{r.pid}</TD>
+                    <TD>{r.claims}</TD>
+                    <TD className="font-semibold">{fmt(r.total)}</TD>
+                    <TD className="text-[#388E3C] font-medium">{fmt(r.collected)}</TD>
+                    <TD><div className="flex items-center gap-2"><div className="flex-1 h-1.5 bg-[#E0E0E0] rounded-full overflow-hidden"><div className="h-full bg-[#0D7377] rounded-full" style={{ width: `${r.rate}%` }} /></div><span className="text-xs font-bold">{r.rate}%</span></div></TD>
+                  </TRow>
+                ))}</tbody>
+              </table>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {tab === "suppliers" && (
+        <div className="space-y-4">
+          <Card title="فلاتر شركات الموردين">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+              <select value={p6Supplier} onChange={e => setP6Supplier(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="">كل شركات الموردين</option>{supplierOptions.map(s => <option key={s}>{s}</option>)}</select>
+              <select value={p6Status} onChange={e => setP6Status(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}><option value="all">كل الطلبات</option><option value="pending">⏳ معلقة</option><option value="approved">✅ مُوافق عليها</option><option value="rejected">❌ مرفوضة</option></select>
+              <div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = supplierReqs.map(r => [r.id, r.supplier || "—", deptShortById(r.dept), r.requestedBy, r.date, fmt(r.totalAmount), fmt(r.paidAmount || 0), fmt(Math.max(0, r.totalAmount - (r.paidAmount || 0))), r.status === "approved" ? "مُوافق" : r.status === "rejected" ? "مرفوض" : "معلق"]); const ws = XLSX.utils.aoa_to_sheet([["رقم الطلب", "الشركة", "القسم", "مقدّم الطلب", "التاريخ", "الإجمالي", "المدفوع", "المتبقي", "الحالة"], ...rows]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "كشف شركات الموردين"); XLSX.writeFile(wb, `كشف_موردين_${p6Supplier || "الكل"}.xlsx`); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${fmt(supplierTotal)}</div></div><div class="kpi-box"><div class="kpi-l">المدفوع</div><div class="kpi-v in">${fmt(supplierPaid)}</div></div><div class="kpi-box"><div class="kpi-l">المتبقي</div><div class="kpi-v out">${fmt(Math.max(0, supplierTotal - supplierPaid))}</div></div></div><h2>كشف حساب شركة مورد${p6Supplier ? " — " + p6Supplier : ""}</h2><table><thead><tr><th>رقم الطلب</th><th>الشركة</th><th>القسم</th><th>مقدّم الطلب</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${supplierReqs.map(r => `<tr><td>${r.id}</td><td>${r.supplier || "—"}</td><td>${deptShortById(r.dept)}</td><td>${r.requestedBy}</td><td>${r.date}</td><td>${fmt(r.totalAmount)}</td><td class="in">${fmt(r.paidAmount || 0)}</td><td class="${(r.totalAmount - (r.paidAmount || 0)) > 0 ? "out" : "in"}">${fmt(Math.max(0, r.totalAmount - (r.paidAmount || 0)))}</td><td>${r.status === "approved" ? "مُوافق ✓" : r.status === "rejected" ? "مرفوض" : "معلق"}</td></tr>`).join("")}</tbody></table>`; printHtml(html, `كشف حساب شركة مورد${p6Supplier ? " — " + p6Supplier : ""}`, fromDate, toDate); }}><Printer size={14} />PDF</Btn></div>
+            </div>
+          </Card>
+          {p6Supplier && <div className="p-5 rounded-2xl text-white" style={{ background: "linear-gradient(135deg,#1B3A6B,#0D4480)" }}>
+            <h2 className="text-lg font-bold">{p6Supplier}</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+              {[{ l: "إجمالي الطلبات", v: fmt(supplierTotal) }, { l: "المدفوع", v: fmt(supplierPaid) }, { l: "المتبقي", v: fmt(Math.max(0, supplierTotal - supplierPaid)) }].map(k => (
+                <div key={k.l} className="bg-white/15 rounded-xl p-3 text-center"><p className="text-white/70 text-xs mb-1">{k.l}</p><p className="font-bold">{k.v}</p></div>
+              ))}
+            </div>
+          </div>}
+          <Card title="طلبات الشراء">
+            {supplierReqs.length === 0 ? <EmptyState msg="لا توجد طلبات شراء تطابق الفلتر" /> : (
+              <table className="w-full text-sm">
+                <THead cols={["رقم الطلب", "الشركة", "القسم", "مقدّم الطلب", "التاريخ", "الإجمالي", "المدفوع", "الباقي", "الحالة"]} />
+                <tbody>{supplierReqs.map((r, i) => (
+                  <TRow key={r.id} i={i}>
+                    <TD className="font-mono font-bold text-[#1B3A6B]">#{r.id}</TD>
+                    <TD className="font-medium">{r.supplier || "—"}</TD>
+                    <TD><Badge color="info">{deptShortById(r.dept)}</Badge></TD>
+                    <TD className="text-[#555]">{r.requestedBy}</TD>
+                    <TD className="text-[#555]">{r.date}</TD>
+                    <TD className="font-semibold">{fmt(r.totalAmount)}</TD>
+                    <TD className="text-[#388E3C] font-medium">{fmt(r.paidAmount || 0)}</TD>
+                    <TD>{(r.totalAmount - (r.paidAmount || 0)) > 0 ? <span className="text-[#D32F2F] font-bold">{fmt(r.totalAmount - (r.paidAmount || 0))}</span> : <span className="text-[#388E3C]">—</span>}</TD>
+                    <TD>{r.status === "approved" ? <Badge color="success">مُوافق</Badge> : r.status === "rejected" ? <Badge color="danger">مرفوض</Badge> : <Badge color="warning">معلق</Badge>}</TD>
+                  </TRow>
+                ))}</tbody>
+              </table>
+            )}
           </Card>
         </div>
       )}
@@ -10549,6 +11063,7 @@ const AVAILABLE_DEPT_SUBITEMS: Record<string, PermSubItem> = {
       { key: "canDeletePatient", label: "حذف ملف المريض نهائياً" },
       { key: "canEditPatient", label: "تعديل بيانات المريض" },
       { key: "canEditDate", label: "تعديل التواريخ والحقول المؤرخة" },
+      { key: "canEditSession", label: "تعديل تفاصيل الجلسات (تشخيص، أدوية، فحوصات، مبالغ)" },
       { key: "canViewRevenue", label: "عرض الإيرادات والمبالغ المالية" },
       { key: "canAddDeposit", label: "إضافة دفعة / إيداع للصندوق" },
       { key: "canRegisterPatient", label: "تسجيل مريض جديد" },
@@ -10948,6 +11463,7 @@ function StaffManagementScreen({
           can_delete_patient: p.canDeletePatient ?? false,
           can_edit_patient: p.canEditPatient ?? false,
           can_edit_date: p.canEditDate ?? false,
+          can_edit_session: p.canEditSession ?? false,
           can_drawer_view: p.canDrawerView ?? false,
           can_drawer_view_balance: p.canDrawerViewBalance ?? false,
           can_drawer_adjust_balance: p.canDrawerAdjustBalance ?? false,
@@ -11796,11 +12312,14 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   const today = _today();
 
   // ── سندات الصرف الشخصية (سندات الصرف — "السندات وحساباتها" — المسجَّلة للموظف كـ "مصروفات شخصية") ──
+  //    الجدول أدناه يعرض كل السندات (سجل تاريخي كامل)، لكن "خصومات/مصاريف"
+  //    الملخّصة بالأعلى تحسب فقط السندات التي لم تُخصم بعد من راتب سابق
+  //    (applied_to_payroll=false) — لتطابق فعلياً ما سيُخصم من الراتب القادم ──
   const myExpenseVouchers = paymentVouchers
     .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === staff.name)
-    .map((v: any) => ({ id: v.id, date: v.date, amount: Number(v.amount) || 0, title: v.reason || v.category || "مصروف شخصي", deptId: v.dept || "" }))
+    .map((v: any) => ({ id: v.id, date: v.date, amount: Number(v.amount) || 0, title: v.reason || v.category || "مصروف شخصي", deptId: v.dept || "", applied: !!v.applied_to_payroll }))
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.id - a.id));
-  const totalPersonalExp = myExpenseVouchers.reduce((s, t) => s + t.amount, 0);
+  const totalPersonalExp = myExpenseVouchers.filter(t => !t.applied).reduce((s, t) => s + t.amount, 0);
 
   // ── قسيمة الراتب (فترة قابلة للتحديد) ──
   const curMonthStartISO = (() => { const d = _jlmNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; })();
@@ -11889,13 +12408,14 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
       <Card title={`سندات الصرف الشخصية (${myExpenseVouchers.length})`}>
         {myExpenseVouchers.length === 0 ? <EmptyState msg="لا توجد سندات صرف شخصية مسجَّلة" /> : (
           <table className="w-full text-sm">
-            <THead cols={["التاريخ", "البيان", "القسم", "المبلغ"]} />
+            <THead cols={["التاريخ", "البيان", "القسم", "المبلغ", "الحالة"]} />
             <tbody>{myExpenseVouchers.map((t, i) => (
               <TRow key={t.id} i={i}>
                 <TD className="text-xs text-[#555]">{t.date}</TD>
                 <TD>{t.title || "—"}</TD>
                 <TD className="text-xs text-[#777]">{DEPARTMENTS.find(d => d.id === t.deptId)?.short || t.deptId}</TD>
                 <TD className="font-bold text-[#D32F2F]">−{fmt(t.amount)}</TD>
+                <TD>{t.applied ? <Badge color="neutral">خُصم من راتب سابق</Badge> : <Badge color="warning">بانتظار الخصم</Badge>}</TD>
               </TRow>
             ))}</tbody>
           </table>
@@ -12082,7 +12602,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
 
 function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles,
   setStaffList, setCustomDepts, onAddDeptDrawer, setEmployees, setInsurances, adminAccounts = [], setAdminAccounts,
-  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers }: {
+  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers, setInventory, computeKitStatus, onEditSession }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -12105,6 +12625,8 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   onRejectPurchaseRequest: (id: number, reason: string) => void;
   onDeletePurchaseRequest?: (id: number) => void;
   inventory?: typeof initialInventory;
+  setInventory?: React.Dispatch<React.SetStateAction<typeof initialInventory>>;
+  computeKitStatus?: (qty: number, threshold: number) => "ok" | "low" | "critical" | "empty";
   hideRevenue?: boolean;
   employeeAdvances?: EmployeeAdvance[];
   attendance?: AttendanceRecord[];
@@ -12147,6 +12669,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>;
   setSuppliersRoot?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>>;
   setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
+  onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void;
 }) {
 
   const customDeptsAsDepts = customDepts.map(d => ({ ...d, Icon: Building2 as React.ElementType }));
@@ -12684,7 +13207,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
 
               {subScreen === "open-patient" && activeDept && (
-                <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} />
+                <OpenPatientScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} sessions={sessions} debts={debts} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} perms={deptPerms ?? undefined} />
               )}
               {subScreen === "new-patient" && activeDept && (
                 <NewPatientScreen dept={activeDept} doDeposit={doDeposit} setSessions={setSessions} setDebts={setDebts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />
@@ -12693,17 +13216,17 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />
               )}
               {subScreen === "patient-file" && activeDept && (
-                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} />
+                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} perms={deptPerms ?? undefined} />
               )}
 
               {subScreen === "purchase-reqs" && activeDept && (
-                <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={deptPerms?.canDeletePurchaseReqs ? onDeletePurchaseRequest : undefined} toast={staffToast} isAdmin={false} dept={activeDept} staffName={staff.name} />
+                <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={deptPerms?.canDeletePurchaseReqs ? onDeletePurchaseRequest : undefined} toast={staffToast} isAdmin={false} dept={activeDept} staffName={staff.name} suppliers={suppliersRoot} />
               )}
               {subScreen === "lab-session" && (
-                <LabSessionScreen toast={staffToast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} labTests={labTests} />
+                <LabSessionScreen toast={staffToast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} />
               )}
               {subScreen === "rad-session" && (
-                <RadSessionScreen toast={staffToast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} />
+                <RadSessionScreen toast={staffToast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} insurances={insurances} setInvoices={setInvoices} />
               )}
               {subScreen === "test-catalog" && <TestCatalogScreen toast={staffToast} labTests={labTests} setLabTests={setLabTests} perms={deptPerms || undefined} inventory={inventory} />}
               {subScreen === "image-catalog" && <ImageCatalogScreen toast={staffToast} perms={deptPerms || undefined} />}
@@ -12725,7 +13248,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} paymentVouchers={allPaymentVouchers} />
               )}
               {subScreen === "reports" && staff.canAccessReports && (
-                <ReportsScreen toast={staffToast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} />
+                <ReportsScreen toast={staffToast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} />
               )}
               {subScreen === "staff-mgmt" && staff.canManageStaff && setStaffList && setCustomDepts && onAddDeptDrawer && (
                 <StaffManagementScreen staffList={staffList} setStaffList={setStaffList} drawers={drawers} toast={staffToast} customDepts={customDepts} setCustomDepts={setCustomDepts} onAddDeptDrawer={onAddDeptDrawer} sessions={sessions} employees={employees} setEmployees={setEmployees} restrictedMode />
@@ -12769,6 +13292,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                   setDebts={setDebts}
                   rehabServices={rehabServices}
                   insurances={insurances}
+                  setInvoices={setInvoices}
                   onNavigate={r => { setRoute(r); setSubScreen(r.screen); }}
                   toast={staffToast}
                   doDeposit={doDeposit}
@@ -12813,15 +13337,15 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
 // ─── DEPT VOUCHERS SCREEN ─────────────────────────────────────────────────────
 function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, employees = [], insurances = [], suppliers = [], toast, loggedUser, perms }: {
   dept: string; deptName: string; drawers: Record<string, DrawerState>;
-  doDeposit: (dept: string, amt: number, title: string, cat: string) => void;
-  doWithdraw: (dept: string, amt: number, title: string, cat: string, ben?: string) => void;
+  doDeposit: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>;
+  doWithdraw: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>;
   employees?: Employee[]; insurances?: InsuranceCo[]; suppliers?: { id: number; name: string; type: string; phone: string }[];
   toast: (m: string, t?: ToastItem["type"]) => void;
   loggedUser?: LoggedUser | null;
   perms?: DeptPermissions;
 }) {
-  type RV = { id: number; voucher_no: string; date: string; amount: number; received_from_type: "patient" | "insurance" | "other"; received_from_id?: string; received_from_name: string; reason: string; dept?: string; notes?: string; approved_by?: string; created_at: string };
-  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; notes?: string; category?: string; approved_by?: string; created_at: string };
+  type RV = { id: number; voucher_no: string; date: string; amount: number; received_from_type: "patient" | "insurance" | "other"; received_from_id?: string; received_from_name: string; reason: string; dept?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
+  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; notes?: string; category?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
   const isAdminUser = loggedUser?.type === "admin";
   const canDeleteVoucher = isAdminUser || !!(perms?.canDeleteVoucher);
   const [tab, setTab] = useState<"rv" | "pv">("rv");
@@ -12852,7 +13376,14 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
       const r = await api.finance.receiptVouchers.create({ ...rvModal.f, amount: amt, dept });
       if (r) {
         setRvList(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
-        doDeposit(dept, amt, rvModal.f.reason, "سند قبض");
+        // ── نحفظ رقم حركة الإيداع الحقيقي على السند نفسه، لنستطيع لاحقاً حذفه
+        //    بدقة عند حذف السند بدل ترك أثر دائم في سجل الصندوق ──
+        doDeposit(dept, amt, rvModal.f.reason, "سند قبض").then(txId => {
+          if (!txId) return;
+          const rid = (r as any).id;
+          setRvList(p => p.map(v => v.id === rid ? { ...v, drawer_tx_id: txId } : v));
+          api.finance.receiptVouchers.update(rid, { drawer_tx_id: txId }).catch(() => { });
+        });
         toast("تم إنشاء سند القبض ✓", "success");
       }
       setRvModal(m => ({ ...m, open: false }));
@@ -12867,8 +13398,13 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
       const res = await api.finance.receiptVouchers.delete(id);
       if (res === null) { toast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setRvList(p => p.filter(v => v.id !== id));
-      // ── تصفير الأثر المالي: عكس doDeposit الأصلي ──
-      doWithdraw(dept, target.amount, `إلغاء سند قبض ${target.voucher_no} — ${target.reason}`, "إلغاء سند قبض", target.received_from_name);
+      if (target.drawer_tx_id) {
+        // ── حذف حقيقي لحركة الإيداع المرتبطة (بدون أي أثر متبقٍ) ──
+        api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
+      } else {
+        // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id: نعكس الأثر بحركة معاكسة كما كان سابقاً ──
+        doWithdraw(dept, target.amount, `إلغاء سند قبض ${target.voucher_no} — ${target.reason}`, "إلغاء سند قبض", target.received_from_name);
+      }
       toast(`تم حذف سند القبض ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { toast("خطأ في حذف سند القبض — حاول مجدداً", "error"); }
   };
@@ -12886,7 +13422,14 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
       const r = await api.finance.paymentVouchers.create({ ...pvModal.f, amount: amt, dept, paid_to_type: "staff", paid_to_name: empName, category: "مصروفات شخصية" });
       if (r) {
         setPvList(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
-        doWithdraw(dept, amt, pvModal.f.reason, "سند صرف", pvModal.f.paid_to_name);
+        // ── نحفظ رقم حركة السحب الحقيقي على السند نفسه، لنستطيع لاحقاً حذفه
+        //    بدقة عند حذف السند بدل ترك أثر دائم في سجل الصندوق ──
+        doWithdraw(dept, amt, pvModal.f.reason, "سند صرف", pvModal.f.paid_to_name).then(txId => {
+          if (!txId) return;
+          const rid = (r as any).id;
+          setPvList(p => p.map(v => v.id === rid ? { ...v, drawer_tx_id: txId } : v));
+          api.finance.paymentVouchers.update(rid, { drawer_tx_id: txId }).catch(() => { });
+        });
         toast("تم إنشاء سند الصرف ✓", "success");
       }
       setPvModal(m => ({ ...m, open: false }));
@@ -12901,8 +13444,13 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
       const res = await api.finance.paymentVouchers.delete(id);
       if (res === null) { toast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setPvList(p => p.filter(v => v.id !== id));
-      // ── تصفير الأثر المالي: عكس doWithdraw الأصلي ──
-      doDeposit(dept, target.amount, `إلغاء سند صرف ${target.voucher_no} — ${target.reason}`, "إلغاء سند صرف");
+      if (target.drawer_tx_id) {
+        // ── حذف حقيقي لحركة السحب المرتبطة (بدون أي أثر متبقٍ) ──
+        api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
+      } else {
+        // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id: نعكس الأثر بحركة معاكسة كما كان سابقاً ──
+        doDeposit(dept, target.amount, `إلغاء سند صرف ${target.voucher_no} — ${target.reason}`, "إلغاء سند صرف");
+      }
       toast(`تم حذف سند الصرف ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { toast("خطأ في حذف سند الصرف — حاول مجدداً", "error"); }
   };
@@ -13095,8 +13643,11 @@ function DeptDrawerScreen({ dept, deptName, drawers, doDeposit, doWithdraw, empl
       const newPaid = inv.total;
       await api.finance.invoices.update(inv.id, { paid: newPaid, status: "paid" });
       setInvoices?.(p => p.map(x => x.id === inv.id ? { ...x, paid: newPaid, remaining: 0, status: "paid" as const } : x));
-      doWithdraw(dept, inv.remaining, `تسوية فاتورة — ${inv.company}`, "تسوية فاتورة");
-      toast("تم تسوية الفاتورة ✓", "success");
+      // ── فواتير هذا النظام كلها ديون مستحقة للعيادة على شركات التأمين (مش
+      //    فواتير موردين نحن ندفعها) — تسويتها معناها استلام فلوس فعلياً، فلازم
+      //    تُضاف للصندوق (doDeposit) وليس تُخصم منه (doWithdraw كان معكوس). ──
+      doDeposit(dept, inv.remaining, `تحصيل من شركة تأمين — ${inv.company}`, "تحصيل تأمين");
+      toast("تم تحصيل مبلغ الفاتورة من شركة التأمين ✓", "success");
     } catch { toast("خطأ في تسوية الفاتورة", "error"); }
   };
   return (
@@ -13761,6 +14312,7 @@ function parseDeptPermissionsFromApi(permissions: any[]): Record<string, DeptPer
       canDeletePatient: !!(p.can_delete_patient),
       canEditPatient: !!(p.can_edit_patient),
       canEditDate: !!(p.can_edit_date),
+      canEditSession: !!(p.can_edit_session),
       canViewRevenue: !!(p.can_drawer_financials ?? p.can_view_revenue),
       canAddDeposit: !!(p.can_drawer_deposit ?? p.can_add_deposit),
       canWithdraw: !!(p.can_drawer_withdraw ?? p.can_withdraw),
@@ -14824,7 +15376,7 @@ export default function App() {
         setLabTests([...mapped]);
       }
       if (dbInventory && (dbInventory as any[]).length > 0) {
-        setInventory((dbInventory as any[]).map((i: any) => ({ id: i.id, name: i.name || "", itemType: i.item_type || "كيت", unit: i.unit || "وحدة", tests: [], qty: Number(i.qty) || 0, threshold: Number(i.threshold) || 0, status: computeKitStatus(Number(i.qty) || 0, Number(i.threshold) || 0) as any, params: [], notes: i.notes || "" })));
+        setInventory((dbInventory as any[]).map((i: any) => ({ id: i.id, name: i.name || "", itemType: i.item_type || "كيت", unit: i.unit || "وحدة", unitCost: Number(i.cost_per_unit) || 0, tests: [], qty: Number(i.qty) || 0, threshold: Number(i.threshold) || 0, status: computeKitStatus(Number(i.qty) || 0, Number(i.threshold) || 0) as any, params: [], notes: i.notes || "" })));
       }
       if (dbRadImages && (dbRadImages as any[]).length > 0) {
         const _mRad = (dbRadImages as any[]).map((r: any) => ({ id: r.id, code: r.code || "", name: r.name || "", device: r.device || "X-Ray", price: Number(r.price) || 0, timeVal: r.time_val || "", timeUnit: r.time_unit || "دقيقة", instructions: r.instructions || "", notes: r.notes || "" }));
@@ -14836,13 +15388,13 @@ export default function App() {
         setSessions((dbSessions as any[]).map((s: any) => ({ id: s.id, patientId: s.patient_id || "", dept: s.dept || "lab", doctor: s.doctor || "", date: isoToDisplay(s.date ? String(s.date).slice(0, 10) : ""), diagnoses: Array.isArray(s.diagnoses) ? s.diagnoses.filter(Boolean) : [], medications: Array.isArray(s.medications) ? s.medications.filter((m: any) => m && m.name) : [], notes: s.notes || "", labRefs: Array.isArray(s.lab_refs) ? s.lab_refs.filter(Boolean) : [], radRefs: Array.isArray(s.rad_refs) ? s.rad_refs.filter(Boolean) : [], amount: Number(s.amount) || 0, paid: Number(s.paid) || 0, debt: Number(s.debt) || 0 })));
       }
       if (dbInvoices && (dbInvoices as any[]).length > 0) {
-        setInvoices((dbInvoices as any[]).map((inv: any) => ({ id: inv.id, company: inv.company || "", date: isoToDisplay(inv.date ? String(inv.date).slice(0, 10) : ""), total: Number(inv.total) || 0, paid: Number(inv.paid) || 0, remaining: Number(inv.remaining) || 0, status: (inv.status || "unpaid") as "paid" | "partial" | "unpaid", dept: inv.dept || "lab" })));
+        setInvoices((dbInvoices as any[]).map((inv: any) => ({ id: inv.id, company: inv.company || "", date: isoToDisplay(inv.date ? String(inv.date).slice(0, 10) : ""), total: Number(inv.total) || 0, paid: Number(inv.paid) || 0, remaining: Number(inv.remaining) || 0, status: (inv.status || "unpaid") as "paid" | "partial" | "unpaid", dept: inv.dept || "lab", claimNo: inv.claim_no || undefined, patientId: inv.patient_id || undefined, patientName: inv.patient_name || undefined })));
       }
       if (dbAttendance && (dbAttendance as any[]).length > 0) {
         setAttendance((dbAttendance as any[]).map((r: any) => ({ id: r.id, empId: r.emp_id || "", empName: r.emp_name || "", dept: r.dept || "", date: r.date ? String(r.date).slice(0, 10) : "", dayName: r.day_name || "", checkIn: r.check_in ? String(r.check_in).slice(0, 5) : "", checkOut: r.check_out ? String(r.check_out).slice(0, 5) : "", totalHours: r.total_hours != null ? Number(r.total_hours) : undefined })));
       }
       if (dbPurchaseRequests && (dbPurchaseRequests as any[]).length > 0) {
-        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "" })));
+        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined })));
       }
       if (dbDiagnoses && (dbDiagnoses as any[]).length > 0) {
         setDiagnoses((dbDiagnoses as any[]).map((d: any) => ({ id: d.id, code: d.code || "", name: d.name || "", category: d.category || "أخرى", dept: d.dept || "surgery" })));
@@ -14901,19 +15453,32 @@ export default function App() {
   const toast = fireToast;
   const drawersRef = useRef(initialDrawers as Record<string, DrawerState>);
   useEffect(() => { drawersRef.current = drawers; }, [drawers]);
-  const doWithdraw = (dept: string, amount: number, title: string, cat?: string, ben?: string) => {
+  // ── doWithdraw/doDeposit يُرجعان الآن رقم حركة الصندوق الحقيقي من قاعدة
+  //    البيانات (Promise<number|null>) بدل عدم إرجاع شيء. هذا يسمح للمستدعي
+  //    (مثلاً عند اعتماد طلب شراء أو إنشاء سند صرف/قبض) بحفظ هذا الرقم على
+  //    السجل المرتبط (drawer_tx_id)، لنستطيع لاحقاً — عند حذف أو تعديل ذلك
+  //    السجل — حذف أو تصحيح حركة الصندوق الأصلية مباشرة بدل ترك أثر دائم أو
+  //    إنشاء حركة معاكسة جديدة (المشكلة القديمة). الاستدعاءات الحالية التي لا
+  //    تستخدم القيمة المُرجعة (fire-and-forget) تستمر بالعمل بلا أي تغيير ──
+  const doWithdraw = async (dept: string, amount: number, title: string, cat?: string, ben?: string): Promise<number | null> => {
     const currentBal = drawersRef.current[dept]?.balance ?? 0;
-    if (!drawersRef.current[dept] || currentBal < amount) return;
+    if (!drawersRef.current[dept] || currentBal < amount) return null;
     const _dt = _nowDT();
     setDrawers(d => { if (!d[dept] || d[dept].balance < amount) return d; const bal = d[dept].balance - amount; const tx: DrawerTx = { id: Date.now(), type: "out", title, category: cat || "", beneficiary: ben, amount, balance: bal, time: _dt.time, date: _dt.date }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
     // Server ledger computes the authoritative balance; no client balance sent.
-    api.drawers.transactions.create({ dept, type: "out", title, category: cat || "", beneficiary: ben, amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time });
+    try {
+      const r: any = await api.drawers.transactions.create({ dept, type: "out", title, category: cat || "", beneficiary: ben, amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time });
+      return r?.id ?? null;
+    } catch { return null; }
   };
-  const doDeposit = (dept: string, amount: number, title: string, cat?: string) => {
+  const doDeposit = async (dept: string, amount: number, title: string, cat?: string): Promise<number | null> => {
     const _dt = _nowDT();
     setDrawers(d => { const cur = d[dept]?.balance ?? 0; const bal = cur + amount; const tx: DrawerTx = { id: Date.now(), type: "in", title, category: cat || "", amount, balance: bal, time: _dt.time, date: _dt.date, auto: false }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
     // Server ledger computes the authoritative balance; no client balance sent.
-    api.drawers.transactions.create({ dept, type: "in", title, category: cat || "", amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time, is_opening_balance: cat === "رصيد افتتاحي" });
+    try {
+      const r: any = await api.drawers.transactions.create({ dept, type: "in", title, category: cat || "", amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time, is_opening_balance: cat === "رصيد افتتاحي" });
+      return r?.id ?? null;
+    } catch { return null; }
   };
   const doAdjustBalance = (dept: string, newBalance: number, reason: string) => {
     const cur = drawersRef.current[dept]?.balance ?? 0;
@@ -14933,14 +15498,21 @@ export default function App() {
   const onSubmitPurchaseRequest = (req: Omit<PurchaseRequest, "id" | "status">) => {
     const _prId = Date.now();
     setPurchaseRequests(p => [...p, { ...req, id: _prId, status: "pending" }]);
-    api.finance.purchaseRequests.create({ dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), items: req.items, total_amount: req.totalAmount, paid_amount: req.paidAmount || 0, note: req.note }).then(r => { if (r && (r as any).id) setPurchaseRequests(p => p.map(x => x.id === _prId ? { ...x, id: (r as any).id } : x)); }).catch(() => { });
+    api.finance.purchaseRequests.create({ dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), items: req.items, total_amount: req.totalAmount, paid_amount: req.paidAmount || 0, note: req.note, supplier: req.supplier || null }).then(r => { if (r && (r as any).id) setPurchaseRequests(p => p.map(x => x.id === _prId ? { ...x, id: (r as any).id } : x)); }).catch(() => { });
   };
   const onApprovePurchaseRequest = (id: number) => {
     const req = purchaseRequests.find(r => r.id === id); if (!req) return;
     const approvedPaidAmount = req.paidAmount !== undefined ? req.paidAmount : req.totalAmount;
-    doWithdraw(req.dept, approvedPaidAmount, `مشتريات مُعتمدة — طلب #${id}`, "مشتريات تشغيلية");
     setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, status: "approved", approvedBy: "المدير", approvedDate: _today() } : r));
     api.finance.purchaseRequests.update(id, { dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), total_amount: req.totalAmount, paid_amount: approvedPaidAmount, status: "approved", approved_by: "المدير", approved_date: _localISO(), note: req.note });
+    // ── نحفظ رقم حركة السحب الحقيقي على الطلب نفسه (drawer_tx_id)، لنستطيع
+    //    لاحقاً عند حذف الطلب أو تعديل مبلغه حذف/تصحيح هذه الحركة بالتحديد
+    //    بدل تركها معلّقة للأبد في سجل الصندوق ──
+    doWithdraw(req.dept, approvedPaidAmount, `مشتريات مُعتمدة — طلب #${id}`, "مشتريات تشغيلية").then(txId => {
+      if (!txId) return;
+      setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, drawerTxId: txId } : r));
+      api.finance.purchaseRequests.update(id, { drawer_tx_id: txId }).catch(() => { });
+    });
   };
   const onRejectPurchaseRequest = (id: number, reason: string) => {
     setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, status: "rejected", rejectionReason: reason } : r));
@@ -14948,8 +15520,78 @@ export default function App() {
     if (req) api.finance.purchaseRequests.update(id, { dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), total_amount: req.totalAmount, status: "rejected", rejection_reason: reason, note: req.note });
   };
   const onDeletePurchaseRequest = (id: number) => {
+    const req = purchaseRequests.find(r => r.id === id);
     setPurchaseRequests(p => p.filter(r => r.id !== id));
     api.finance.purchaseRequests.delete(id).catch(() => { });
+    // ── إذا كان الطلب مُعتمَداً وله حركة سحب مرتبطة فعلياً بالصندوق، نحذف تلك
+    //    الحركة بالتحديد (حذف حقيقي معكوس عبر الـ ledger) بدل تركها معلّقة
+    //    للأبد كـ"ملاحظة" في سجل المصروفات مع رصيد صندوق منقوص من غير رجعة ──
+    if (req?.drawerTxId) api.drawers.transactions.delete(req.drawerTxId).catch(() => { });
+  };
+  // ── تعديل كامل لطلب شراء (المدير فقط) — يشمل الأصناف؛ يُقارن مع النسخة
+  //    الأصلية لتحديد أي صنف يُحذف/يُحدَّث/يُضاف عبر الـ API بدل حذف وإعادة
+  //    إنشاء الطلب كله ──
+  const onEditPurchaseRequest = (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => {
+    const orig = purchaseRequests.find(r => r.id === id); if (!orig) return;
+    const totalAmount = updated.items.reduce((s, it) => s + (it.qty || 0) * (it.estimatedPrice || 0), 0);
+    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, dept: updated.dept, requestedBy: updated.requestedBy, date: updated.date, supplier: updated.supplier, note: updated.note, paidAmount: updated.paidAmount, totalAmount, items: updated.items } : r));
+    api.finance.purchaseRequests.update(id, { dept: updated.dept, requested_by: updated.requestedBy, date: _prDateISO(updated.date), total_amount: totalAmount, paid_amount: updated.paidAmount, note: updated.note, supplier: updated.supplier || null }).catch(() => { });
+    const origIds = new Set(orig.items.map(it => it.id));
+    const keptIds = new Set(updated.items.map(it => it.id));
+    orig.items.forEach(it => { if (!keptIds.has(it.id)) api.finance.purchaseRequests.items.delete(it.id).catch(() => { }); });
+    updated.items.forEach(it => {
+      if (origIds.has(it.id)) {
+        api.finance.purchaseRequests.items.update(it.id, { name: it.name, qty: it.qty, unit: it.unit, estimated_price: it.estimatedPrice, note: it.note }).catch(() => { });
+      } else {
+        api.finance.purchaseRequests.items.create(id, { name: it.name, qty: it.qty, unit: it.unit, estimated_price: it.estimatedPrice, note: it.note }).catch(() => { });
+      }
+    });
+    // ── إذا كان الطلب مُعتمَداً وتغيّر المبلغ المدفوع، نصحّح مبلغ حركة السحب
+    //    الحقيقية المرتبطة بالصندوق بدل تركها بمبلغ قديم غير مطابق ──
+    if (orig.status === "approved" && orig.drawerTxId && updated.paidAmount !== orig.paidAmount) {
+      api.drawers.transactions.update(orig.drawerTxId, { amount: updated.paidAmount }).catch(() => { });
+    }
+  };
+  // ── تعديل تفاصيل جلسة (canEditSession) — يشمل بيانات الجلسة الأساسية والتشخيص
+  //    والأدوية وإحالات المختبر/الأشعة. الأصناف الفرعية (تشخيص/أدوية/إحالات) لا
+  //    تحمل معرّفات على الواجهة، لذا نتبع أسلوب "جلب ثم استبدال الكل": نجلب
+  //    السجلات الحالية من قاعدة البيانات (ومعها معرّفاتها الحقيقية)، نحذفها كلها،
+  //    ثم نعيد إنشاء القائمة الجديدة كاملة. ملاحظة مهمة: لا نلمس قائمة الديون
+  //    المستقلة (debts) ولا حركات الدرج، لأن جدول الديون لا يحمل ربطاً مباشراً
+  //    (sessionId) بالجلسة التي أنشأته، فلا توجد طريقة موثوقة لتحديد أي دين
+  //    يقابل هذه الجلسة تحديداً — التعديل يقتصر على حقول الجلسة نفسها فقط ──
+  const onEditSession = (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => {
+    const debt = Math.max(0, updated.amount - updated.paid);
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, doctor: updated.doctor, date: updated.date, notes: updated.notes, amount: updated.amount, paid: updated.paid, debt, diagnoses: updated.diagnoses, medications: updated.medications, labRefs: updated.labRefs, radRefs: updated.radRefs } : s));
+    api.sessions.update(id, { doctor: updated.doctor, date: updated.date, notes: updated.notes, amount: updated.amount, paid: updated.paid, debt }).catch(() => { });
+    // ── تشخيصات: جلب ثم استبدال الكل ──
+    api.sessions.diagnoses.getAll(id).then((rows: any) => {
+      const list = Array.isArray(rows) ? rows : [];
+      Promise.all(list.map((r: any) => api.sessions.diagnoses.delete(id, r.id).catch(() => { }))).then(() => {
+        updated.diagnoses.forEach(name => { api.sessions.diagnoses.create(id, { name }).catch(() => { }); });
+      });
+    }).catch(() => { });
+    // ── أدوية: جلب ثم استبدال الكل ──
+    api.sessions.medications.getAll(id).then((rows: any) => {
+      const list = Array.isArray(rows) ? rows : [];
+      Promise.all(list.map((r: any) => api.sessions.medications.delete(id, r.id).catch(() => { }))).then(() => {
+        updated.medications.forEach(m => { api.sessions.medications.create(id, m).catch(() => { }); });
+      });
+    }).catch(() => { });
+    // ── إحالات مختبر: جلب ثم استبدال الكل ──
+    api.sessions.labRefs.getAll(id).then((rows: any) => {
+      const list = Array.isArray(rows) ? rows : [];
+      Promise.all(list.map((r: any) => api.sessions.labRefs.delete(id, r.id).catch(() => { }))).then(() => {
+        updated.labRefs.forEach(name => { api.sessions.labRefs.create(id, { test_name: name }).catch(() => { }); });
+      });
+    }).catch(() => { });
+    // ── إحالات أشعة: جلب ثم استبدال الكل ──
+    api.sessions.radRefs.getAll(id).then((rows: any) => {
+      const list = Array.isArray(rows) ? rows : [];
+      Promise.all(list.map((r: any) => api.sessions.radRefs.delete(id, r.id).catch(() => { }))).then(() => {
+        updated.radRefs.forEach(name => { api.sessions.radRefs.create(id, { image_name: name }).catch(() => { }); });
+      });
+    }).catch(() => { });
   };
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
   useEffect(() => {
@@ -14962,7 +15604,7 @@ export default function App() {
     if (route.screen === "fin-purchase-reqs" && loggedUser?.type === "admin") {
       api.finance.purchaseRequests.getAll().then(data => {
         if (data && Array.isArray(data)) {
-          setPurchaseRequests((data as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "" })));
+          setPurchaseRequests((data as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined })));
         }
       }).catch(() => { });
     }
@@ -15011,12 +15653,15 @@ export default function App() {
       setSessionFiles={setSessionFiles}
       diagnoses={diagnoses} setDiagnoses={setDiagnoses}
       setSessions={setSessions} setDebts={setDebts}
+      onEditSession={onEditSession}
       purchaseRequests={purchaseRequests}
       onSubmitPurchaseRequest={onSubmitPurchaseRequest}
       onApprovePurchaseRequest={onApprovePurchaseRequest}
       onRejectPurchaseRequest={onRejectPurchaseRequest}
       onDeletePurchaseRequest={onDeletePurchaseRequest}
       inventory={inventory}
+      setInventory={setInventory}
+      computeKitStatus={computeKitStatus}
       hideRevenue={sidebarSettings.hideRevenueFromStaff}
       employeeAdvances={employeeAdvances}
       attendance={attendance}
@@ -15067,28 +15712,28 @@ export default function App() {
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} />;
       case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
       case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} />;
-      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} />;
+      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
-      case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" />;
-      case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} />;
-      case "rad-session": return <RadSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} />;
+      case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" suppliers={suppliersRoot} />;
+      case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} />;
+      case "rad-session": return <RadSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} insurances={insurances} setInvoices={setInvoices} />;
       case "test-catalog": return <TestCatalogScreen toast={toast} labTests={labTests} setLabTests={setLabTests} inventory={inventory} />;
       case "lab-inventory": return <InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "lab-queue": return <LabQueueScreen toast={toast} />;
-      case "lab-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="lab" />;
-      case "rehab-new-plan": return <RehabNewPlanScreen patientId={route.patientId} dept={dept} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} onNavigate={setRoute} toast={toast} doDeposit={doDeposit} setDebts={setDebts} rehabServices={rehabServices} insurances={insurances} />;
+      case "lab-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="lab" suppliers={suppliersRoot} />;
+      case "rehab-new-plan": return <RehabNewPlanScreen patientId={route.patientId} dept={dept} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} onNavigate={setRoute} toast={toast} doDeposit={doDeposit} setDebts={setDebts} rehabServices={rehabServices} insurances={insurances} setInvoices={setInvoices} />;
       case "rehab-session": return <RehabSessionScreen toast={toast} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} />;
       case "rehab-catalog": return <RehabCatalogScreen toast={toast} rehabServices={rehabServices} setRehabServices={setRehabServices} />;
       case "rehab-queue": return <RehabQueueScreen />;
-      case "rehab-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="rehab" />;
+      case "rehab-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="rehab" suppliers={suppliersRoot} />;
       case "rad-results": return <RadResultsScreen toast={toast} />;
       case "rad-catalog": return <RadCatalogScreen toast={toast} radImages={radImages} setRadImages={setRadImages} />;
       case "rad-queue": return <RadQueueScreen />;
-      case "rad-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="radiology" />;
+      case "rad-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="radiology" suppliers={suppliersRoot} />;
       case "image-catalog": return <ImageCatalogScreen toast={toast} />;
       case "fin-profit": return <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts} />;
       case "fin-expenses": return <FinExpensesScreen drawers={drawers} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} />;
-      case "fin-purchase-reqs": return <FinAllPurchaseReqsScreen purchaseRequests={purchaseRequests} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} customDepts={customDepts} />;
+      case "fin-purchase-reqs": return <FinAllPurchaseReqsScreen purchaseRequests={purchaseRequests} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} onEditPurchaseRequest={onEditPurchaseRequest} toast={toast} customDepts={customDepts} suppliers={suppliersRoot} />;
       case "fin-charts": return <FinChartsScreen drawers={drawers} debts={debts} employees={employees} invoices={invoices} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} />;
       case "fin-summary": return <FinancialSummaryScreen drawers={drawers} loggedUser={loggedUser} employees={employees} insurances={insurances} customDepts={customDepts} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={sessions} purchaseRequests={purchaseRequests} allPaymentVouchers={paymentVouchersGlobal} allReceiptVouchers={receiptVouchersGlobal} employeeAdvances={employeeAdvances} />;
 
@@ -15099,11 +15744,11 @@ export default function App() {
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
       case "fin-revenue": return <FinRevenueScreen drawers={drawers} debts={debts} customDepts={customDepts} toast={toast} sessions={sessions} receiptVouchers={receiptVouchersGlobal} />;
-      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} />; }
+      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} setPaymentVouchers={setPaymentVouchersGlobal} />; }
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
       case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} />;
-      case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} />;
+      case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} />;
       case "attendance": return <AttendanceScreen key={dept || "surgery"} dept={dept || "lab"} attendance={attendance} setAttendance={setAttendance} loggedUser={loggedUser} staffList={staffList} toast={toast} customDepts={customDepts} />;
       case "backup": return <BackupScreen toast={toast} />;
       case "print-settings": return <PrintSettingsScreen toast={toast} />;
