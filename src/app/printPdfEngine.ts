@@ -137,21 +137,40 @@ function loadImageAsJpegDataUrl(url: string): Promise<string | null> {
   });
 }
 
-// ── توحيد عرض أعمدة الجداول بين الرأس والجسم قبل تصويرها ────────────────────
-// المشكلة: بعض متصفحات/محركات تحويل DOM→canvas (html2canvas) لا تُصيّر عرض
-// أعمدة جدول table-layout:auto بدقة موثوقة، فيظهر عمود الرأس مزاح عن عمود
-// الجسم تحته رغم أن الجدول HTML سليم 100% (نفس عدد الخلايا بكل صف). الحل
-// الموثوق: بعد إدراج الجدول بالـ DOM وقياس عرضه الطبيعي (auto) الصحيح فعلياً
-// من طرف المتصفح، نُثبِّت (colgroup + table-layout:fixed) نفس العرض المقاس
-// على كل الأعمدة — فيصير الرأس والجسم يشتركان بنفس قيم العرض الثابتة تماماً،
-// بدل ترك محرك التصوير يعيد حساب/تخمين العرض بنفسه. العرض يبقى متناسباً مع
-// محتوى كل عمود الفعلي (وليس متساوياً بالعافية) لأنه مبني على قياس حقيقي.
+// ── توحيد عرض أعمدة الجداول بين الرأس والجسم وصف الإجمالي قبل تصويرها ───────
+// المشكلة الجذرية (٣ أسباب مجتمعة، مؤكَّدة بمراجعة الكود سطراً سطراً):
+//
+// ١) بعض محركات تحويل DOM→canvas (html2canvas تحديداً) معروف عنها أنها لا
+//    تُصيّر عنصري <colgroup>/<col> بدقة موثوقة مع border-collapse:collapse
+//    وخلايا colspan معاً — فتُعيد حساب/تخمين عرض كل خلية بنفسها بدل احترام
+//    العرض الذي رسمه المتصفح الحقيقي فعلياً. وبما إنّ صف الإجمالي (tfoot) هو
+//    الصف الوحيد اللي فيه عادة خلية colspan (تجمع عدة أعمدة بخلية وحدة)،
+//    هو تحديداً الصف اللي كان ينزاح عن باقي الجدول — بالضبط المشكلة
+//    الموصوفة بالصور المرفقة.
+// ٢) كان في خطأ حسابي حقيقي بالنسب المئوية: `Math.max(p, minPct)` كانت
+//    ترفع أي عمود صغير لحد أدنى ٦٪ بدون ما تعيد توزيع الفرق على باقي
+//    الأعمدة — فمجموع نسب كل الأعمدة كان ممكن يتجاوز ١٠٠٪ (خصوصاً بجداول
+//    فيها عمود قصير مثل "الدين" جنب عمود طويل مثل "التشخيص"). تجاوز مجموع
+//    عرض الأعمدة لعرض الجدول الحاوي بيُنتج سلوك غير متّسق بين المتصفح الحقيقي
+//    ومحرك html2canvas، وهذا بالضبط نوع الانزياح التراكمي الظاهر بالصور.
+// ٣) عدّاد الأعمدة كان يعتمد على `row.cells.length` (عدد عناصر <td> الفعلي)
+//    بدل مجموع colSpan لكل صف — فلو صف ما (حتى بالجسم) استخدم colspan لأي
+//    سبب، كان ممكن يُحسَب عدد أعمدة أقل من الحقيقي فينكسر التوزيع كله.
+//
+// الحل الدائم: (أ) نحسب عدد الأعمدة من مجموع colSpan الحقيقي لكل صف،
+// (ب) بعد فرض الحد الأدنى للعرض نعيد توزيع النسب فتجمع بالضبط ١٠٠٪ دائماً،
+// (ج) الأهم: بدل الاكتفاء بـ colgroup (تحديد غير مباشر يعتمد على دعم
+// المتصفح/المحرك له)، نُحدِّد عرض كل خلية (th/td) بكل صف صراحة كقيمة بكسل
+// ثابتة — بما فيها خلايا colspan (كمجموع الأعمدة التي تغطيها بالضبط) — لأن
+// قراءة النمط المحسوب لعنصر بعينه أوثق بكثير من قراءة تأثير colgroup غير
+// المباشر عبر محركات تصوير DOM. بهيك يتطابق عرض كل خلية بكل الصفوف (رأس/جسم/
+// إجمالي) بايتياً بغض النظر عن دعم المحرك لـ colgroup من عدمه.
 function normalizeTableColumns(root: HTMLElement) {
   const tables = Array.from(root.querySelectorAll("table"));
   tables.forEach(table => {
     const rows = Array.from(table.rows);
     if (!rows.length) return;
-    const colCount = Math.max(...rows.map(r => r.cells.length));
+    const colCount = Math.max(...rows.map(r => Array.from(r.cells).reduce((s, c) => s + (c.colSpan || 1), 0)));
     if (colCount < 2) return;
     const widths = new Array(colCount).fill(0);
     rows.forEach(row => {
@@ -165,22 +184,50 @@ function normalizeTableColumns(root: HTMLElement) {
         colIdx += span;
       });
     });
+    // أي عمود ما انقاس أبداً (نادر جداً — يصير بس لو كل الصفوف بلا استثناء
+    // غطّته بـ colspan) بياخد نصيب متساوي احتياطياً بدل صفر، حتى ما ينهار
     const total = widths.reduce((a, b) => a + b, 0);
     if (total <= 0) return;
+    const fallbackW = total / colCount;
+    const safeWidths = widths.map(w => (w > 0 ? w : fallbackW));
+    const safeTotal = safeWidths.reduce((a, b) => a + b, 0);
     // حد أدنى معقول لكل عمود حتى لا يُضغَط عمود محتواه قصير (مثل "#") لدرجة
-    // غير مقروءة إذا كان عمود آخر طويلاً جداً بنفس الصف
+    // غير مقروءة إذا كان عمود آخر طويلاً جداً بنفس الصف، ثم إعادة توزيع النسب
+    // فوراً حتى يبقى مجموعها ١٠٠٪ بالضبط (وإلا ينزاح عرض الجدول عن حاويته)
     const minPct = 6;
-    const rawPct = widths.map(w => (w / total) * 100);
+    const rawPct = safeWidths.map(w => (w / safeTotal) * 100);
+    const flooredPct = rawPct.map(p => Math.max(p, minPct));
+    const flooredTotal = flooredPct.reduce((a, b) => a + b, 0);
+    const finalPct = flooredPct.map(p => (p / flooredTotal) * 100);
+
     let existing = table.querySelector("colgroup");
     if (existing) existing.remove();
     const colgroup = document.createElement("colgroup");
-    rawPct.forEach(p => {
+    finalPct.forEach(p => {
       const col = document.createElement("col");
-      col.style.width = `${Math.max(p, minPct)}%`;
+      col.style.width = `${p}%`;
       colgroup.appendChild(col);
     });
     table.insertBefore(colgroup, table.firstChild);
     (table as HTMLElement).style.tableLayout = "fixed";
+
+    // ── التثبيت الحاسم لمحاذاة صف الإجمالي: عرض بكسل صريح على كل خلية ──
+    const tableWidthPx = table.getBoundingClientRect().width || table.scrollWidth;
+    if (tableWidthPx > 0) {
+      const widthsPx = finalPct.map(p => (p / 100) * tableWidthPx);
+      rows.forEach(row => {
+        let colIdx = 0;
+        Array.from(row.cells).forEach(cell => {
+          const span = cell.colSpan || 1;
+          const wPx = widthsPx.slice(colIdx, colIdx + span).reduce((a, b) => a + b, 0);
+          if (wPx > 0) {
+            (cell as HTMLElement).style.width = `${wPx}px`;
+            (cell as HTMLElement).style.maxWidth = `${wPx}px`;
+          }
+          colIdx += span;
+        });
+      });
+    }
   });
 }
 
