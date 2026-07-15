@@ -79,9 +79,21 @@ h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:
       المحتوى الفعلي لكل عمود بالرأس والجسم معاً — بهيك يبقى الرأس مطابقاً
       تماماً لأعمدة الجسم دائماً، وبنفس الوقت الأعمدة تاخد عرضها الحقيقي حسب
       محتواها بدل التساوي القسري. ── */
-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;line-height:1.5}
+/* حجم خط الجداول كان ثابتاً على 11px بغض النظر عن إعداد "حجم الخط" —
+   فمهما غيّر المستخدم القيمة، بيانات الجداول ما كانت تتأثر إطلاقاً. صار
+   الآن نسبياً لنفس إعداد fontSize (بفارق 2px أصغر من النص العادي، وهو نفس
+   الفارق الافتراضي السابق 11px مقابل 13px) — فيتحرك مع الإعداد فعلياً. */
+table{width:100%;border-collapse:collapse;margin-top:6px;font-size:${Math.max(8, fontSize - 2)}px;line-height:1.5}
 th,td{border:1px solid #ddd;padding:8px 10px;vertical-align:middle;text-align:right;word-wrap:break-word;overflow-wrap:break-word;white-space:normal}
-th{background:#1B3A6B;color:white;font-weight:700}
+/* ── عناوين الأعمدة (th) ما لازم تنكسر إطلاقاً — لا بمنتصف الكلمة ولا حتى
+      بين كلمتين — بغض النظر عن عرض العمود، لأن انكسار كلمة عربية واحدة
+      بمنتصفها بصير شكله مقلوب/غير مفهوم بصفوف RTL (مثال: "الطبيب" تطلع
+      "لطبي" بسطر و"ب" لحاله بسطر تاني). الحل الدائم: نمنع الالتفاف كلياً على
+      عناوين الأعمدة عبر white-space:nowrap، ونضمن حصول كل عمود على عرض كافٍ
+      فعلياً لعنوانه عبر تصحيح دالة القياس بالأسفل (انظر normalizeTableColumns
+      وتعليق whiteSpace فيها). محتوى الجسم (td) يبقى قادراً على الالتفاف
+      كالمعتاد لأنه غالباً نص طويل (تشخيص، ملاحظات) وده مقبول بصرياً. ── */
+th{background:#1B3A6B;color:white;font-weight:700;white-space:nowrap}
 tr:nth-child(even)>td{background:#F9FAFB}
 tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
@@ -178,7 +190,20 @@ function normalizeTableColumns(root: HTMLElement) {
       Array.from(row.cells).forEach(cell => {
         const span = cell.colSpan || 1;
         if (span === 1 && colIdx < colCount) {
+          // ── قياس العرض الطبيعي الحقيقي (بسطر واحد) بدل العرض المُلتف حالياً:
+          //    scrollWidth بحالة white-space:normal (النمط الافتراضي بهذه
+          //    اللحظة) بيرجّع عرض الصندوق بعد ما التف النص فعلياً — يعني لو
+          //    عمود "الطبيب" ضاق شوي بسبب عمود تاني طويل جنبه، القياس
+          //    بيلتقط عرض أصغر من الحقيقي (بعد الالتفاف)، وهذا بالضبط اللي
+          //    كان يقفل عرض أضيق من اللازم للعمود بشكل دائم. نجبر
+          //    white-space:nowrap مؤقتاً وقت القياس بس (لكل الخلايا، رأس
+          //    وجسم)، فنحصل على العرض الطبيعي الكامل بسطر واحد، ثم نعيد
+          //    النمط لوضعه الأصلي فوراً — رأس الجدول أصلاً صار nowrap دائم
+          //    بالـ CSS (انظر أعلى)، وخلايا الجسم ترجع قابلة للالتفاف كالمعتاد. ──
+          const prevWs = cell.style.whiteSpace;
+          cell.style.whiteSpace = "nowrap";
           const w = cell.scrollWidth;
+          cell.style.whiteSpace = prevWs;
           if (w > widths[colIdx]) widths[colIdx] = w;
         }
         colIdx += span;

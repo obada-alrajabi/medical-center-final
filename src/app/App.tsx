@@ -975,9 +975,11 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
 .rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
 .rm-item strong{color:#1B3A6B}
 h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:11px;line-height:1.5}
+/* حجم خط الجداول كان ثابتاً على 11px بغض النظر عن إعداد "حجم الخط" — نفس تصحيح printPdfEngine.ts */
+table{width:100%;border-collapse:collapse;margin-top:6px;font-size:${Math.max(8, fontSize - 2)}px;line-height:1.5}
 th,td{border:1px solid #ddd;padding:8px 10px;vertical-align:middle;text-align:right;word-wrap:break-word;overflow-wrap:break-word;white-space:normal}
-th{background:#1B3A6B;color:white;font-weight:700}
+/* عناوين الأعمدة ما لازم تنكسر منتصف كلمة — نفس تصحيح printPdfEngine.ts */
+th{background:#1B3A6B;color:white;font-weight:700;white-space:nowrap}
 tr:nth-child(even)>td{background:#F9FAFB}
 tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
@@ -2779,7 +2781,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   //    track them here so we DON'T create a duplicate record on save ──
   const [prefillPatient, setPrefillPatient] = useState<PatientRecord | null>(null);
   const todayISO = _localISO();
-  const [form, setForm] = useState({ name: "", age: "", id: "", phone: "+970", email: "", address: "", gender: "ذكر", blood: "", allergy: false, allergyDetail: "", chronic: false, chronicDetail: "", insuranceCompany: "", notes: "", price: "", discount: "", discountType: "amount", paid: "", joinDate: todayISO });
+  const [form, setForm] = useState({ name: "", age: "", id: "", phone: "", email: "", address: "", gender: "ذكر", blood: "", allergy: false, allergyDetail: "", chronic: false, chronicDetail: "", insuranceCompany: "", notes: "", price: "", discount: "", discountType: "amount", paid: "", joinDate: todayISO });
   const set = (k: string, v: string | boolean) => { setForm(p => ({ ...p, [k]: v })); if (errors[k]) setErrors(p => ({ ...p, [k]: "" })) };
 
   // ── Radiology: images selection ──
@@ -2900,8 +2902,9 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = "الاسم إلزامي";
     if (!form.age || isNaN(Number(form.age)) || Number(form.age) <= 0) e.age = "العمر إلزامي";
-    if (!form.phone || form.phone === "+970") e.phone = "أدخل رقم صحيح";
-    if (!false && form.phone && form.phone !== "+970") { const dup = mockPatients.find(p => p.phone === form.phone); setDupWarning(dup || null); }
+    if (!form.phone.trim()) e.phone = "أدخل رقم صحيح";
+    else if (!/^[0-9]{10}$/.test(form.phone.trim())) e.phone = "رقم الجوال يجب أن يتكوّن من 10 أرقام";
+    if (!false && form.phone.trim()) { const dup = mockPatients.find(p => p.phone === form.phone); setDupWarning(dup || null); }
     setErrors(e); return Object.keys(e).length === 0;
   };
   const v2 = () => { const e: Record<string, string> = {}; if (!form.price || parseFloat(form.price) <= 0) e.price = "أدخل سعر الخدمة"; setErrors(e); return Object.keys(e).length === 0; };
@@ -3145,7 +3148,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
                     <p className="text-xs text-[#388E3C]">رقم الملف الأصلي: <strong className="font-mono">{prefillPatient.id}</strong> · {prefillPatient.phone}</p>
                     <p className="text-xs text-[#555] mt-0.5">ستُربط هذه الزيارة بالملف الأصلي — لا يتم إنشاء ملف مكرر.</p>
                   </div>
-                  <button type="button" onClick={() => { setPrefillPatient(null); setForm(prev => ({ ...prev, name: "", age: "", id: "", phone: "+970", blood: "", gender: "ذكر", address: "", allergy: false, allergyDetail: "", chronic: false, chronicDetail: "" })); }} className="text-xs text-[#999] hover:text-[#D32F2F] transition-colors px-2 py-1 rounded border border-[#DDD] hover:border-[#FFCDD2]" title="إلغاء الربط وفتح مريض جديد">✕ إلغاء</button>
+                  <button type="button" onClick={() => { setPrefillPatient(null); setForm(prev => ({ ...prev, name: "", age: "", id: "", phone: "", blood: "", gender: "ذكر", address: "", allergy: false, allergyDetail: "", chronic: false, chronicDetail: "" })); }} className="text-xs text-[#999] hover:text-[#D32F2F] transition-colors px-2 py-1 rounded border border-[#DDD] hover:border-[#FFCDD2]" title="إلغاء الربط وفتح مريض جديد">✕ إلغاء</button>
                 </div>
               ) : (
                 <>
@@ -3211,7 +3214,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
               <div><InputField label="الاسم الكامل" required placeholder="أدخل الاسم الرباعي" value={form.name} onChange={v => set("name", v)} />{errF("name")}</div>
               <div><InputField label="العمر بالسنوات" required type="number" placeholder="مثال: 35" value={form.age} onChange={v => set("age", v)} />{errF("age")}</div>
               <InputField label="رقم الهوية الوطنية" placeholder="اختياري" value={form.id} onChange={v => set("id", v)} />
-              <div><InputField label="رقم الجوال" required placeholder="+970..." value={form.phone} onChange={v => set("phone", v)} />{errF("phone")}</div>
+              <div><InputField label="رقم الجوال" required placeholder="0599123456" value={form.phone} onChange={v => set("phone", v)} />{errF("phone")}</div>
               <InputField label="البريد الإلكتروني" placeholder="اختياري" value={form.email} onChange={v => set("email", v)} />
               <InputField label="العنوان" placeholder="اختياري" value={form.address} onChange={v => set("address", v)} />
               <div className="flex flex-col gap-1.5">
