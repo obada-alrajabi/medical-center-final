@@ -3674,7 +3674,10 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
     } catch {/* silent */ } finally { setDeletingSessionId(null); }
   };
   const [p, setP] = useState<PatientRecord | undefined>(() => mockPatients.find(x => x.id === patientId) || mockPatients[0]);
-  const [tab, setTab] = useState<"clinic" | "lab" | "radiology" | "rehab" | "prescriptions" | "referrals" | "finance">("clinic");
+  // ── التاب الافتراضي عند فتح الملف يجب يطابق القسم اللي فُتح الملف منه، وإلا
+  //    يفتح المدير ملف مريض تأهيل مثلاً ويشوف تاب "العيادة" الفاضي افتراضياً
+  //    (لأن المدير يشوف كل التابات، فما كان في تبديل تلقائي له مثل الموظف). ──
+  const [tab, setTab] = useState<"clinic" | "lab" | "radiology" | "rehab" | "prescriptions" | "referrals" | "finance">(() => dept === "lab" ? "lab" : dept === "radiology" ? "radiology" : dept === "rehab" ? "rehab" : "clinic");
   const [labEntries, setLabEntries] = useState<{ id: number; patient: string; tests: string[]; time: string; status: "pending" | "done"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> }[]>([]);
   const [labLoading, setLabLoading] = useState(false);
   // ── عرض الملف الكامل: كل الجلسات تُعرض مفصَّلة بالكامل مباشرة بدون اختصار
@@ -4400,8 +4403,8 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                   <div className="flex items-center justify-between px-4 py-3" style={{ backgroundColor: entry.status === "done" ? "#F1F8E9" : "#FAFAFA", borderBottom: "1px solid #F0F0F0" }}>
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: "#EDE7F6" }}><Activity size={15} className="text-[#7B1FA2]" /></div>
-                      <div>
-                        <p className="text-sm font-semibold text-[#1A1A1A]">جلسة #{entry.sessionNumber} — {entry.diagnosis || plan?.diagnosis || "تأهيل"}</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#1A1A1A] break-words">جلسة #{entry.sessionNumber} — {entry.diagnosis || plan?.diagnosis || "تأهيل"}</p>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-xs text-[#999]">{entry.date}</span>
                           {entry.time && <span className="text-xs text-[#999]">· {entry.time}</span>}
@@ -4418,16 +4421,16 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
                       <div>
                         <p className="text-xs font-bold text-[#7B1FA2] mb-2">📊 تقييم الأداء الوظيفي</p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {entry.grossMotorSkills && <div className="p-2.5 rounded-lg bg-white" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">المهارات الحركية الكبيرة (Gross Motor)</p><p className="text-xs text-[#444] mt-1" style={{ lineHeight: 1.6 }}>{entry.grossMotorSkills}</p></div>}
-                          {entry.fineMotorSkills && <div className="p-2.5 rounded-lg bg-white" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">المهارات الحركية الدقيقة (Fine Motor)</p><p className="text-xs text-[#444] mt-1" style={{ lineHeight: 1.6 }}>{entry.fineMotorSkills}</p></div>}
-                          {entry.sensoryCondition && <div className="p-2.5 rounded-lg bg-white" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">الحالة الحسية (Sensory Condition)</p><p className="text-xs text-[#444] mt-1" style={{ lineHeight: 1.6 }}>{entry.sensoryCondition}</p></div>}
-                          {entry.adlActivities && <div className="p-2.5 rounded-lg bg-white" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">أنشطة الحياة اليومية (ADL's)</p><p className="text-xs text-[#444] mt-1" style={{ lineHeight: 1.6 }}>{entry.adlActivities}</p></div>}
+                          {entry.grossMotorSkills && <div className="p-2.5 rounded-lg bg-white min-w-0" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">المهارات الحركية الكبيرة (Gross Motor)</p><p className="text-xs text-[#444] mt-1 break-words" style={{ lineHeight: 1.6 }}>{entry.grossMotorSkills}</p></div>}
+                          {entry.fineMotorSkills && <div className="p-2.5 rounded-lg bg-white min-w-0" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">المهارات الحركية الدقيقة (Fine Motor)</p><p className="text-xs text-[#444] mt-1 break-words" style={{ lineHeight: 1.6 }}>{entry.fineMotorSkills}</p></div>}
+                          {entry.sensoryCondition && <div className="p-2.5 rounded-lg bg-white min-w-0" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">الحالة الحسية (Sensory Condition)</p><p className="text-xs text-[#444] mt-1 break-words" style={{ lineHeight: 1.6 }}>{entry.sensoryCondition}</p></div>}
+                          {entry.adlActivities && <div className="p-2.5 rounded-lg bg-white min-w-0" style={{ border: "1px solid #E1BEE7" }}><p className="text-xs font-semibold text-[#7B1FA2]">أنشطة الحياة اليومية (ADL's)</p><p className="text-xs text-[#444] mt-1 break-words" style={{ lineHeight: 1.6 }}>{entry.adlActivities}</p></div>}
                         </div>
                       </div>
                     )}
                     {/* نتيجة الجلسة وملاحظات المعالج */}
-                    {entry.sessionResult && <div><p className="text-xs font-bold text-[#555] mb-1">نتيجة الجلسة</p><p className="text-xs text-[#444] p-2.5 rounded-lg bg-white" style={{ border: "1px solid #E0E0E0", lineHeight: 1.6 }}>{entry.sessionResult}</p></div>}
-                    {entry.therapistNotes && <div><p className="text-xs font-bold text-[#555] mb-1">ملاحظات المعالج</p><p className="text-xs text-[#444] p-2.5 rounded-lg bg-white" style={{ border: "1px solid #E0E0E0", lineHeight: 1.6 }}>{entry.therapistNotes}</p></div>}
+                    {entry.sessionResult && <div className="min-w-0"><p className="text-xs font-bold text-[#555] mb-1">نتيجة الجلسة</p><p className="text-xs text-[#444] p-2.5 rounded-lg bg-white break-words" style={{ border: "1px solid #E0E0E0", lineHeight: 1.6 }}>{entry.sessionResult}</p></div>}
+                    {entry.therapistNotes && <div className="min-w-0"><p className="text-xs font-bold text-[#555] mb-1">ملاحظات المعالج</p><p className="text-xs text-[#444] p-2.5 rounded-lg bg-white break-words" style={{ border: "1px solid #E0E0E0", lineHeight: 1.6 }}>{entry.therapistNotes}</p></div>}
                     {/* بيانات الخطة العلاجية */}
                     {plan && <div className="flex items-center gap-3 text-xs text-[#777] pt-1 border-t border-[#F5F5F5]"><span>الخطة: <strong className="text-[#555]">{plan.totalSessions} جلسة</strong></span><span>·</span><span>المكتمل: <strong className="text-[#388E3C]">{plan.completedSessions}</strong></span><span>·</span><span>السعر/جلسة: <strong className="text-[#1B3A6B]">{fmt(plan.pricePerSession)}</strong></span></div>}
                     {/* إذا لم يكن هناك أي بيانات */}
@@ -5923,7 +5926,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">الطبيب المُشخِّص</label><input value={r.doctor} onChange={e => setR({ doctor: e.target.value })} className="h-9 px-3 rounded-lg text-sm outline-none" placeholder="د. محمد أحمد" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
-                      <div className="flex items-center gap-2 flex-wrap pt-5"><label className="text-xs font-semibold text-[#555]">النتيجة:</label>{["طبيعي", "شاذ — يحتاج متابعة", "طارئ"].map(opt => <button key={opt} type="button" onClick={() => setR({ verdict: opt })} className={`px-3 py-1 rounded-lg text-xs border transition-colors ${r.verdict === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "border-[#E0E0E0] text-[#555] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`}>{opt}</button>)}</div>
+                      <div className="flex items-center gap-2 flex-wrap pt-5"><label className="text-xs font-semibold text-[#555]">النتيجة:</label>{["طبيعي", "شاذ — يحتاج متابعة", "طارئ"].map(opt => <button key={opt} type="button" onClick={() => setR({ verdict: opt })} className={`px-3 py-1 rounded-lg text-xs border transition-colors ${r.verdict === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white text-[#555] border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`}>{opt}</button>)}</div>
                     </div>
                   </div>
                 </div>
@@ -6406,8 +6409,8 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
                 <div key={s.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid #CE93D8" }}>
                   <div className="px-3 py-2 flex items-center justify-between" style={{ backgroundColor: "#7B1FA2" }}><span className="text-white text-xs font-bold">الجلسة {s.sessionNumber}</span><span className="text-white text-xs opacity-80">{s.specialist}</span></div>
                   <div className="p-3 space-y-2" style={{ backgroundColor: "#F3E5F5" }}>
-                    <div className="flex items-center gap-2"><FileText size={14} className="text-[#7B1FA2]" /><p className="text-sm font-bold">{s.patientName}</p></div>
-                    <p className="text-xs text-[#555]">{s.diagnosis}</p>
+                    <div className="flex items-center gap-2 min-w-0"><FileText size={14} className="text-[#7B1FA2] flex-shrink-0" /><p className="text-sm font-bold break-words min-w-0">{s.patientName}</p></div>
+                    <p className="text-xs text-[#555] break-words">{s.diagnosis}</p>
                     {plan && <div className="flex items-center gap-1.5"><div className="flex-1 bg-[#E0E0E0] rounded-full h-1.5 overflow-hidden"><div className="h-1.5 rounded-full" style={{ width: `${Math.min(100, Math.round((plan.completedSessions / plan.totalSessions) * 100))}%`, backgroundColor: "#7B1FA2" }} /></div><span className="text-xs text-[#7B1FA2] font-medium whitespace-nowrap">{plan.completedSessions}/{plan.totalSessions}</span></div>}
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-[#999] flex items-center gap-1"><Clock size={11} />{s.time}</span>
@@ -6425,7 +6428,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
             <div className="space-y-2">{done.map(s => (
               <div key={s.id} className="p-3 rounded-xl" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0"><p className="text-sm font-semibold">{s.patientName}</p><p className="text-xs text-[#555]">{s.diagnosis} · {s.specialist}</p><p className="text-xs text-[#777] mt-0.5">الجلسة {s.sessionNumber} · {s.time}</p>{s.therapistNotes && <p className="text-xs text-[#555] mt-1 italic">"{s.therapistNotes}"</p>}</div>
+                  <div className="flex-1 min-w-0"><p className="text-sm font-semibold break-words">{s.patientName}</p><p className="text-xs text-[#555] break-words">{s.diagnosis} · {s.specialist}</p><p className="text-xs text-[#777] mt-0.5">الجلسة {s.sessionNumber} · {s.time}</p>{s.therapistNotes && <p className="text-xs text-[#555] mt-1 italic break-words">"{s.therapistNotes}"</p>}</div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <Badge color="success"><CheckCircle size={11} />مكتمل</Badge>
                     {s.sessionResult && <Badge color="info">{s.sessionResult}</Badge>}
@@ -6485,7 +6488,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
             <div className="flex flex-col gap-2">
               <label className="text-xs font-semibold text-[#555]">نتيجة الجلسة:</label>
               <div className="flex gap-2 flex-wrap">{["تحسن ممتاز", "تحسن جيد", "تحسن بطيء", "لا تحسن", "تدهور"].map(opt => (
-                <button key={opt} onClick={() => setModalResult(opt)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${modalResult === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "border-[#E0E0E0] text-[#555] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`}>{opt}</button>
+                <button key={opt} onClick={() => setModalResult(opt)} className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${modalResult === opt ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "bg-white text-[#555] border-[#E0E0E0] hover:bg-[#1B3A6B] hover:text-white hover:border-[#1B3A6B]"}`}>{opt}</button>
               ))}</div>
             </div>
             <div className="p-3 rounded-xl flex items-start gap-2.5" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
