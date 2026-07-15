@@ -107,6 +107,18 @@ try {
 // ── DB migrations (idempotent — run on every startup) ───────────────────────
 pool
   .query(
+    `CREATE TABLE IF NOT EXISTS public.admin_sessions (
+       token VARCHAR(255) PRIMARY KEY,
+       username VARCHAR(100) NOT NULL,
+       role VARCHAR(50) NOT NULL,
+       expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+     )`
+  )
+  .then(() => console.log("[migration] admin_sessions table verified"))
+  .catch((e) => console.error("[migration] admin_sessions table:", e.message));
+
+pool
+  .query(
     `ALTER TABLE staff_members ADD COLUMN IF NOT EXISTS can_attendance BOOLEAN DEFAULT false`,
   )
   .catch(() => {});

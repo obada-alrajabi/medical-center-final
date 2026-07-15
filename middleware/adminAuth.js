@@ -3,12 +3,13 @@ import pool from '../db.js';
 const TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
 
 export async function createSession(token, username, role = 'admin') {
+  const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
   await pool.query(
     `INSERT INTO admin_sessions (token, username, role, expires_at)
-     VALUES ($1, $2, $3, NOW() + INTERVAL '8 hours')
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (token)
-     DO UPDATE SET expires_at = NOW() + INTERVAL '8 hours'`,
-    [token, username, role]
+     DO UPDATE SET expires_at = $4`,
+    [token, username, role, expiresAt]
   );
 }
 
@@ -24,8 +25,8 @@ export async function requireAdmin(req, res, next) {
     const { rows } = await pool.query(
       `SELECT * FROM admin_sessions 
        WHERE token = $1 
-       AND expires_at > NOW()`,
-      [token]
+       AND expires_at > $2`,
+      [token, new Date()]
     );
 
     if (!rows.length) {
@@ -47,10 +48,11 @@ export async function requireFinancialAuth(req, res, next) {
 }
 
 export async function createStaffSession(token, username, staffId) {
+  const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
   await pool.query(
     `INSERT INTO admin_sessions (token, username, role, expires_at)
-     VALUES ($1, $2, $3, NOW() + INTERVAL '8 hours')
-     ON CONFLICT (token) DO UPDATE SET expires_at = NOW() + INTERVAL '8 hours'`,
-    [token, username, `staff:${staffId}`]
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (token) DO UPDATE SET expires_at = $4`,
+    [token, username, `staff:${staffId}`, expiresAt]
   );
 }
