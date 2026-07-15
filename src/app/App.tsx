@@ -7356,8 +7356,10 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
                     <button onClick={() => removeConsumableRow(i)} className="p-2 rounded hover:bg-[#FFEBEE] text-[#D32F2F] transition-colors flex-shrink-0"><Trash2 size={13} /></button>
                   </div>
                   {linked && (
-                    <p className="text-xs text-[#0D7377]">✓ سيُخصم <strong>{parseFloat(row.qty) || 1} {linked.unit || "وحدة"}</strong> من "{linked.name}" عند كل تسجيل لهذا الفحص — الكمية الحالية: <strong>{linked.qty} {linked.unit || "وحدة"}</strong>{linked.qty <= linked.threshold ? " (منخفضة)" : ""}.</p>
-                    {(parseFloat(row.qty) || 0) > linked.qty && <p className="text-xs text-[#D32F2F]">⚠️ الكمية المحددة ({parseFloat(row.qty) || 0}) أكبر من المتوفر حالياً بالمخزون ({linked.qty}) — أول تسجيل لهذا الفحص سيُفرغ الصنف ولن يُخصم الكامل.</p>}
+                    <>
+                      <p className="text-xs text-[#0D7377]">✓ سيُخصم <strong>{parseFloat(row.qty) || 1} {linked.unit || "وحدة"}</strong> من "{linked.name}" عند كل تسجيل لهذا الفحص — الكمية الحالية: <strong>{linked.qty} {linked.unit || "وحدة"}</strong>{linked.qty <= linked.threshold ? " (منخفضة)" : ""}.</p>
+                      {(parseFloat(row.qty) || 0) > linked.qty && <p className="text-xs text-[#D32F2F]">⚠️ الكمية المحددة ({parseFloat(row.qty) || 0}) أكبر من المتوفر حالياً بالمخزون ({linked.qty}) — أول تسجيل لهذا الفحص سيُفرغ الصنف ولن يُخصم الكامل.</p>}
+                    </>
                   )}
                 </div>
               );
