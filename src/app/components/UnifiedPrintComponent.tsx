@@ -37,7 +37,6 @@ const DEFAULT_SETTINGS: UnifiedPrintSettings = {
   showSignature: true,
 };
 
-const PRINT_FONT_FAMILIES = [{ id: "Tajawal", label: "تجوّل (افتراضي)" }, { id: "Cairo", label: "القاهرة" }, { id: "Amiri", label: "أميري (كلاسيكي)" }, { id: "Arial", label: "أريال" }];
 const PRINT_FONT_SIZES = [{ v: 11, l: "صغير — 11px" }, { v: 13, l: "عادي — 13px" }, { v: 15, l: "كبير — 15px" }, { v: 17, l: "كبير جداً — 17px" }];
 
 const rowToSettings = (r: PrintSettingsRow | null | undefined): UnifiedPrintSettings => ({
@@ -154,7 +153,7 @@ export default function UnifiedPrintComponent({ departmentId, departmentName, on
 
   const removeImage = () => update({ headerImageBase64: "" });
 
-  const { headerEnabled, headerImageBase64, marginTop, marginBottom, marginRight, marginLeft, fontFamily, fontSize, showSignature } = settings;
+  const { headerEnabled, headerImageBase64, marginTop, marginBottom, marginRight, marginLeft, fontSize, showSignature } = settings;
 
   return (
     <div className={compact ? "space-y-3" : "p-6 bg-white rounded-xl shadow-lg space-y-5"} style={compact ? {} : { border: "1px solid #BBDEFB" }}>
@@ -246,20 +245,8 @@ export default function UnifiedPrintComponent({ departmentId, departmentName, on
         </div>
       </div>
 
-      {/* Font family + size */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <p className="text-xs font-semibold text-[#555] mb-2">نمط الخط (Font Family)</p>
-          <div className="grid grid-cols-2 gap-2">
-            {PRINT_FONT_FAMILIES.map(f => (
-              <button key={f.id} onClick={() => update({ fontFamily: f.id })}
-                className={`py-2 px-3 rounded-xl text-xs font-medium transition-colors ${fontFamily === f.id ? "bg-[#1B3A6B] text-white" : "bg-[#F5F5F5] text-[#555] hover:bg-[#E0E0E0]"}`}
-                style={{ border: `1.5px solid ${fontFamily === f.id ? "#1B3A6B" : "#E0E0E0"}`, fontFamily: f.id + ",Arial" }}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* Font size */}
+      <div className="grid grid-cols-1 gap-4">
         <div>
           <p className="text-xs font-semibold text-[#555] mb-2">حجم الخط (Font Size)</p>
           {/* ── تحديد حر بالبكسل بدل ٤ خيارات ثابتة بس — سلايدر + حقل رقمي

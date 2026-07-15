@@ -159,33 +159,83 @@ function loadImageAsJpegDataUrl(url: string): Promise<string | null> {
 }
 
 // ── توحيد عرض أعمدة الجداول بين الرأس والجسم وصف الإجمالي قبل تصويرها ───────
-// المشكلة الجذرية (٣ أسباب مجتمعة، مؤكَّدة بمراجعة الكود سطراً سطراً):
+// المشكلة الجذرية الأصلية (٣ أسباب مجتمعة): (١) html2canvas لا يُصيّر
+// colgroup/col بدقة موثوقة مع border-collapse+colspan، (٢) خطأ حسابي بالنسب
+// المئوية كان يرفع الأعمدة الضيقة لحد أدنى ٦٪ بدون توزيع الفرق فيتجاوز
+// المجموع ١٠٠٪، (٣) عدّاد الأعمدة كان يعتمد على عدد الخلايا الفعلي بدل مجموع
+// colSpan. الحل: نحسب عدد الأعمدة من مجموع colSpan، ونُحدِّد عرض كل خلية
+// صراحة كبكسل ثابت (بما فيها خلايا colspan) بدل الاعتماد غير المباشر على
+// colgroup — هذا الجزء ما زال كما هو ولم يتغيّر.
 //
-// ١) بعض محركات تحويل DOM→canvas (html2canvas تحديداً) معروف عنها أنها لا
-//    تُصيّر عنصري <colgroup>/<col> بدقة موثوقة مع border-collapse:collapse
-//    وخلايا colspan معاً — فتُعيد حساب/تخمين عرض كل خلية بنفسها بدل احترام
-//    العرض الذي رسمه المتصفح الحقيقي فعلياً. وبما إنّ صف الإجمالي (tfoot) هو
-//    الصف الوحيد اللي فيه عادة خلية colspan (تجمع عدة أعمدة بخلية وحدة)،
-//    هو تحديداً الصف اللي كان ينزاح عن باقي الجدول — بالضبط المشكلة
-//    الموصوفة بالصور المرفقة.
-// ٢) كان في خطأ حسابي حقيقي بالنسب المئوية: `Math.max(p, minPct)` كانت
-//    ترفع أي عمود صغير لحد أدنى ٦٪ بدون ما تعيد توزيع الفرق على باقي
-//    الأعمدة — فمجموع نسب كل الأعمدة كان ممكن يتجاوز ١٠٠٪ (خصوصاً بجداول
-//    فيها عمود قصير مثل "الدين" جنب عمود طويل مثل "التشخيص"). تجاوز مجموع
-//    عرض الأعمدة لعرض الجدول الحاوي بيُنتج سلوك غير متّسق بين المتصفح الحقيقي
-//    ومحرك html2canvas، وهذا بالضبط نوع الانزياح التراكمي الظاهر بالصور.
-// ٣) عدّاد الأعمدة كان يعتمد على `row.cells.length` (عدد عناصر <td> الفعلي)
-//    بدل مجموع colSpan لكل صف — فلو صف ما (حتى بالجسم) استخدم colspan لأي
-//    سبب، كان ممكن يُحسَب عدد أعمدة أقل من الحقيقي فينكسر التوزيع كله.
-//
-// الحل الدائم: (أ) نحسب عدد الأعمدة من مجموع colSpan الحقيقي لكل صف،
-// (ب) بعد فرض الحد الأدنى للعرض نعيد توزيع النسب فتجمع بالضبط ١٠٠٪ دائماً،
-// (ج) الأهم: بدل الاكتفاء بـ colgroup (تحديد غير مباشر يعتمد على دعم
-// المتصفح/المحرك له)، نُحدِّد عرض كل خلية (th/td) بكل صف صراحة كقيمة بكسل
-// ثابتة — بما فيها خلايا colspan (كمجموع الأعمدة التي تغطيها بالضبط) — لأن
-// قراءة النمط المحسوب لعنصر بعينه أوثق بكثير من قراءة تأثير colgroup غير
-// المباشر عبر محركات تصوير DOM. بهيك يتطابق عرض كل خلية بكل الصفوف (رأس/جسم/
-// إجمالي) بايتياً بغض النظر عن دعم المحرك لـ colgroup من عدمه.
+// المشكلة الجديدة (ظهرت بعد ربط حجم خط الجدول بإعداد "حجم الخط"): الخوارزمية
+// القديمة كانت تحسب "الحد الأدنى" لكل عمود كنسبة مئوية ثابتة (٦٪) بمعزل عن
+// حجم الخط الفعلي، ثم كانت تُعيد توزيع أي عمود يتجاوز نصيبه (مثل عمود
+// "التشخيص" الطويل) بـ"سحب" مساحة من كل الأعمدة الأخرى بالتساوي تقريباً —
+// بما فيها أعمدة قصيرة المحتوى (مثل اسم الطبيب/القسم) التي ممنوع نصّها من
+// الالتفاف (white-space:nowrap على th) أو حتى الالتفاف منتصف كلمة واحدة
+// بالجسم. فبحجم خط كبير، عرض هذه الأعمدة المفروض (بعد السحب) يصير أضيق من
+// أقصر كلمة فيها فعلياً، فينكسر النص منتصف الكلمة أو يُرسَم فوقه خط العمود
+// التالي (يظهر وكأنه "مقصوص"). الحل الدائم: بدل نسبة مئوية ثابتة، نحسب لكل
+// عمود قيمتين حقيقيتين بالبكسل عبر canvas 2D measureText (سريع، بلا reflow):
+//   • "الحد الأدنى" (min) = عرض أطول *كلمة واحدة* غير قابلة للتقسيم في العمود
+//     (رأساً وجسماً) — هذا فعلياً أصغر عرض ممكن للعمود بدون كسر كلمة منتصفها.
+//   • "العرض المفضّل" (preferred) = نفس القياس القديم (عرض السطر الكامل بلا التفاف).
+// ثم نوزّع عرض الجدول المتاح بحيث لا يقل عمود أبداً عن حده الأدنى: لو
+// المساحة المتاحة تكفي كل الأعمدة بعرضها المفضّل، توزَّع الزيادة تناسبياً؛
+// ولو تكفي الحد الأدنى فقط، تُعطى كل الأعمدة حدّها الأدنى أولاً ثم يُوزَّع
+// الفائض على الأعمدة الأكثر احتياجاً. وفي الحالة النادرة التي حتى مجموع
+// الحدود الدنيا (كلمات مفردة) يتجاوز عرض الجدول المتاح (خط كبير جداً + ورق
+// ضيق)، نُصغِّر خط هذا الجدول تحديداً (وليس كل التقرير) بأقل نسبة ممكنة حتى
+// يتسع، مع حد أدنى معقول (٧px) — تصغير تلقائي وقت الطباعة فقط، وليس رقماً
+// ثابتاً مكتوباً باليد؛ يستجيب ديناميكياً لأي حجم خط يختاره المستخدم ولأي
+// محتوى.
+const _measureCanvas = document.createElement("canvas");
+const _measureCtx = _measureCanvas.getContext("2d");
+function _cellFont(cell: HTMLElement): string {
+  const cs = window.getComputedStyle(cell);
+  return `${cs.fontWeight || "400"} ${cs.fontSize} ${cs.fontFamily}`;
+}
+// أطول "كلمة" غير قابلة للتقسيم داخل الخلية (نقسّم على المسافات وعلى بعض
+// علامات الترقيم الشائعة التي يجوز كسر السطر عندها: – · / , مثل "التاريخ –
+// النوع" أو "Amoxicillin/Clavulanate")
+function _longestTokenWidth(ctx: CanvasRenderingContext2D, text: string): number {
+  const tokens = text.trim().split(/[\s/·,]+/).filter(Boolean);
+  let max = 0;
+  for (const t of tokens) {
+    const w = ctx.measureText(t).width;
+    if (w > max) max = w;
+  }
+  return max;
+}
+function _measureColumnWidths(rows: HTMLTableRowElement[], colCount: number) {
+  const minW = new Array(colCount).fill(0);
+  const prefW = new Array(colCount).fill(0);
+  rows.forEach(row => {
+    let colIdx = 0;
+    Array.from(row.cells).forEach(cell => {
+      const span = cell.colSpan || 1;
+      if (span === 1 && colIdx < colCount && _measureCtx) {
+        _measureCtx.font = _cellFont(cell as HTMLElement);
+        const cs = window.getComputedStyle(cell as HTMLElement);
+        const hPad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+          + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0) + 2;
+        const text = (cell.textContent || "").trim();
+        const tokenW = _longestTokenWidth(_measureCtx, text) + hPad;
+        // العرض المفضّل: نفس القياس السابق (السطر الكامل بلا التفاف) عبر
+        // scrollWidth بعد إجبار nowrap مؤقتاً — أدق من measureText لأنه يشمل
+        // فعلياً أي عناصر HTML متداخلة (مثل <b>) داخل الخلية
+        const prevWs = (cell as HTMLElement).style.whiteSpace;
+        (cell as HTMLElement).style.whiteSpace = "nowrap";
+        const fullW = (cell as HTMLElement).scrollWidth;
+        (cell as HTMLElement).style.whiteSpace = prevWs;
+        if (tokenW > minW[colIdx]) minW[colIdx] = tokenW;
+        if (fullW > prefW[colIdx]) prefW[colIdx] = fullW;
+      }
+      colIdx += span;
+    });
+  });
+  return { minW, prefW };
+}
 function normalizeTableColumns(root: HTMLElement) {
   const tables = Array.from(root.querySelectorAll("table"));
   tables.forEach(table => {
@@ -193,46 +243,60 @@ function normalizeTableColumns(root: HTMLElement) {
     if (!rows.length) return;
     const colCount = Math.max(...rows.map(r => Array.from(r.cells).reduce((s, c) => s + (c.colSpan || 1), 0)));
     if (colCount < 2) return;
-    const widths = new Array(colCount).fill(0);
-    rows.forEach(row => {
-      let colIdx = 0;
-      Array.from(row.cells).forEach(cell => {
-        const span = cell.colSpan || 1;
-        if (span === 1 && colIdx < colCount) {
-          // ── قياس العرض الطبيعي الحقيقي (بسطر واحد) بدل العرض المُلتف حالياً:
-          //    scrollWidth بحالة white-space:normal (النمط الافتراضي بهذه
-          //    اللحظة) بيرجّع عرض الصندوق بعد ما التف النص فعلياً — يعني لو
-          //    عمود "الطبيب" ضاق شوي بسبب عمود تاني طويل جنبه، القياس
-          //    بيلتقط عرض أصغر من الحقيقي (بعد الالتفاف)، وهذا بالضبط اللي
-          //    كان يقفل عرض أضيق من اللازم للعمود بشكل دائم. نجبر
-          //    white-space:nowrap مؤقتاً وقت القياس بس (لكل الخلايا، رأس
-          //    وجسم)، فنحصل على العرض الطبيعي الكامل بسطر واحد، ثم نعيد
-          //    النمط لوضعه الأصلي فوراً — رأس الجدول أصلاً صار nowrap دائم
-          //    بالـ CSS (انظر أعلى)، وخلايا الجسم ترجع قابلة للالتفاف كالمعتاد. ──
-          const prevWs = cell.style.whiteSpace;
-          cell.style.whiteSpace = "nowrap";
-          const w = cell.scrollWidth;
-          cell.style.whiteSpace = prevWs;
-          if (w > widths[colIdx]) widths[colIdx] = w;
-        }
-        colIdx += span;
-      });
-    });
-    // أي عمود ما انقاس أبداً (نادر جداً — يصير بس لو كل الصفوف بلا استثناء
-    // غطّته بـ colspan) بياخد نصيب متساوي احتياطياً بدل صفر، حتى ما ينهار
-    const total = widths.reduce((a, b) => a + b, 0);
-    if (total <= 0) return;
-    const fallbackW = total / colCount;
-    const safeWidths = widths.map(w => (w > 0 ? w : fallbackW));
-    const safeTotal = safeWidths.reduce((a, b) => a + b, 0);
-    // حد أدنى معقول لكل عمود حتى لا يُضغَط عمود محتواه قصير (مثل "#") لدرجة
-    // غير مقروءة إذا كان عمود آخر طويلاً جداً بنفس الصف، ثم إعادة توزيع النسب
-    // فوراً حتى يبقى مجموعها ١٠٠٪ بالضبط (وإلا ينزاح عرض الجدول عن حاويته)
-    const minPct = 6;
-    const rawPct = safeWidths.map(w => (w / safeTotal) * 100);
-    const flooredPct = rawPct.map(p => Math.max(p, minPct));
-    const flooredTotal = flooredPct.reduce((a, b) => a + b, 0);
-    const finalPct = flooredPct.map(p => (p / flooredTotal) * 100);
+
+    let { minW, prefW } = _measureColumnWidths(rows, colCount);
+    // أعمدة ما انقاست أبداً (نادر — كل الصفوف غطّتها بـ colspan) تاخد نصيباً
+    // احتياطياً بدل صفر
+    const prefTotal0 = prefW.reduce((a, b) => a + b, 0);
+    const fallback = prefTotal0 > 0 ? prefTotal0 / colCount : 20;
+    minW = minW.map(w => (w > 0 ? w : fallback * 0.5));
+    prefW = prefW.map((w, i) => (w > 0 ? w : Math.max(fallback, minW[i])));
+
+    let tableWidthPx = table.getBoundingClientRect().width || table.scrollWidth;
+    if (tableWidthPx <= 0) return;
+    let totalMin = minW.reduce((a, b) => a + b, 0);
+
+    // ── حالة نادرة: حتى الحدود الدنيا (أطول كلمة بكل عمود) تتجاوز عرض
+    //    الجدول المتاح — نُصغِّر خط *هذا الجدول تحديداً* بأقل نسبة كافية،
+    //    ثم نعيد القياس مرة واحدة على الحجم الجديد (كافٍ عملياً؛ التصغير
+    //    يقلّل كل الأعراض تناسبياً تقريباً) ──
+    if (totalMin > tableWidthPx) {
+      const curFontPx = parseFloat(window.getComputedStyle(table).fontSize) || 13;
+      // ── لا حد أدنى تعسفي على نسبة التصغير (كان ٥٥٪ سابقاً) — لأنه لو
+      //    المحتوى يحتاج تصغيراً أكبر من ٤٥٪ ليتسع (خط كبير جداً + عمود بكلمة
+      //    طويلة)، وقف التصغير عند ٥٥٪ كان يترك تجاوزاً أفقياً متبقياً رغم
+      //    "تفعيل" التصغير — بالضبط ما يمنعه المستخدم صراحة. نسمح للنسبة
+      //    بالنزول لأي درجة مطلوبة، والحد الوحيد هو حد قراءة مطلق (٧px) —
+      //    لو حتى هذا غير كافٍ (حالة فيزيائية نادرة جداً: عمود بمحتوى أطول من
+      //    عرض الورقة نفسها) فهي مشكلة محتوى/حجم ورق لا يحلّها أي تصغير خط. ──
+      const requiredScale = tableWidthPx / totalMin;
+      const newFontPx = Math.max(7, curFontPx * requiredScale);
+      const actualScale = newFontPx / curFontPx;
+      (table as HTMLElement).style.fontSize = `${newFontPx}px`;
+      ({ minW, prefW } = _measureColumnWidths(rows, colCount));
+      minW = minW.map(w => (w > 0 ? w : fallback * 0.5 * actualScale));
+      prefW = prefW.map((w, i) => (w > 0 ? w : Math.max(minW[i], fallback * actualScale)));
+      tableWidthPx = table.getBoundingClientRect().width || table.scrollWidth;
+      totalMin = minW.reduce((a, b) => a + b, 0);
+    }
+
+    const prefTotal = prefW.reduce((a, b) => a + b, 0);
+    let finalWidths: number[];
+    if (prefTotal <= tableWidthPx) {
+      // مساحة كافية لعرض كل الأعمدة بعرضها المفضّل — أي فائض يُوزَّع تناسبياً
+      const extra = tableWidthPx - prefTotal;
+      finalWidths = prefW.map(w => w + (prefTotal > 0 ? extra * (w / prefTotal) : extra / colCount));
+    } else {
+      // لا تكفي المساحة لعرض الجميع بشكل مفضّل — نضمن الحد الأدنى لكل عمود
+      // أولاً (مضمون الآن لأن totalMin <= tableWidthPx)، ثم نوزّع الباقي حسب
+      // "رغبة" كل عمود (الفرق بين المفضّل والحد الأدنى)
+      const remaining = Math.max(0, tableWidthPx - totalMin);
+      const desire = prefW.map((p, i) => Math.max(0, p - minW[i]));
+      const totalDesire = desire.reduce((a, b) => a + b, 0);
+      finalWidths = minW.map((m, i) => m + (totalDesire > 0 ? remaining * (desire[i] / totalDesire) : remaining / colCount));
+    }
+
+    const finalPct = finalWidths.map(w => (w / tableWidthPx) * 100);
 
     let existing = table.querySelector("colgroup");
     if (existing) existing.remove();
@@ -246,22 +310,18 @@ function normalizeTableColumns(root: HTMLElement) {
     (table as HTMLElement).style.tableLayout = "fixed";
 
     // ── التثبيت الحاسم لمحاذاة صف الإجمالي: عرض بكسل صريح على كل خلية ──
-    const tableWidthPx = table.getBoundingClientRect().width || table.scrollWidth;
-    if (tableWidthPx > 0) {
-      const widthsPx = finalPct.map(p => (p / 100) * tableWidthPx);
-      rows.forEach(row => {
-        let colIdx = 0;
-        Array.from(row.cells).forEach(cell => {
-          const span = cell.colSpan || 1;
-          const wPx = widthsPx.slice(colIdx, colIdx + span).reduce((a, b) => a + b, 0);
-          if (wPx > 0) {
-            (cell as HTMLElement).style.width = `${wPx}px`;
-            (cell as HTMLElement).style.maxWidth = `${wPx}px`;
-          }
-          colIdx += span;
-        });
+    rows.forEach(row => {
+      let colIdx = 0;
+      Array.from(row.cells).forEach(cell => {
+        const span = cell.colSpan || 1;
+        const wPx = finalWidths.slice(colIdx, colIdx + span).reduce((a, b) => a + b, 0);
+        if (wPx > 0) {
+          (cell as HTMLElement).style.width = `${wPx}px`;
+          (cell as HTMLElement).style.maxWidth = `${wPx}px`;
+        }
+        colIdx += span;
       });
-    }
+    });
   });
 }
 
