@@ -970,13 +970,15 @@ const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: st
 .pdf-btn{background:#0D7377;color:white;border:none;border-radius:6px;padding:7px 16px;font-size:13px;font-family:Tajawal,sans-serif;cursor:pointer;font-weight:700}
 .content{position:relative;z-index:1;}
 .ch{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;margin-bottom:0;border-bottom:2px solid #1B3A6B}
-.ct{font-size:17px;color:#1B3A6B;display:block;font-weight:700;margin-bottom:3px}.cs{font-size:11px;color:#555}.cm{font-size:10px;color:#888;text-align:left;white-space:nowrap;line-height:1.6}
+.ct{font-size:1.3em;color:#1B3A6B;display:block;font-weight:700;margin-bottom:3px}.cs{font-size:0.85em;color:#555}.cm{font-size:0.77em;color:#888;text-align:left;white-space:nowrap;line-height:1.6}
 .rm{display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:14px;border-bottom:1px solid #E8EDF5;background:#F5F8FF;padding:6px 10px;border-radius:0 0 6px 6px}
-.rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
+.rm-item{font-size:0.85em;color:#444;display:inline-flex;align-items:center;gap:4px}
 .rm-item strong{color:#1B3A6B}
-h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
-/* حجم خط الجداول كان ثابتاً على 11px بغض النظر عن إعداد "حجم الخط" — نفس تصحيح printPdfEngine.ts */
-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:${Math.max(8, fontSize - 2)}px;line-height:1.5}
+h2{font-size:1em;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
+/* كل أحجام الخط بالتقرير (بما فيها الجدول) صارت نسبية (em) لإعداد "حجم
+   الخط" بدل أرقام ثابتة بالبكسل — نص الجدول تحديداً 1em بالضبط أي مطابق
+   لحجم النص العادي خارج الجدول — نفس تصحيح printPdfEngine.ts */
+table{width:100%;border-collapse:collapse;margin-top:6px;font-size:1em;line-height:1.5}
 th,td{border:1px solid #ddd;padding:8px 10px;vertical-align:middle;text-align:right;word-wrap:break-word;overflow-wrap:break-word;white-space:normal}
 /* عناوين الأعمدة ما لازم تنكسر منتصف كلمة — نفس تصحيح printPdfEngine.ts */
 th{background:#1B3A6B;color:white;font-weight:700;white-space:nowrap}
@@ -985,16 +987,16 @@ tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
 .kpi{display:flex;gap:22px;margin-bottom:16px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid #E0E0E0}
 .kpi-box{text-align:right;padding:0}
-.kpi-l{font-size:10px;color:#777;margin-bottom:2px}.kpi-v{font-size:13px;font-weight:700;color:#1B3A6B}
+.kpi-l{font-size:0.77em;color:#777;margin-bottom:2px}.kpi-v{font-size:1em;font-weight:700;color:#1B3A6B}
 .pt-card{border:1px solid #D0D9E8;border-radius:10px;padding:16px;margin-bottom:18px;background:#fff}
-.pt-name{font-size:16px;font-weight:700;color:#1B3A6B;margin-bottom:6px}
+.pt-name{font-size:1.23em;font-weight:700;color:#1B3A6B;margin-bottom:6px}
 .pt-info{display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:10px}
-.pt-field{font-size:11px;color:#555}.pt-field b{color:#1A1A1A}
-.tests-title{font-size:12px;font-weight:700;color:#1B3A6B;margin:10px 0 4px;padding-bottom:3px;border-bottom:1px solid #E0E0E0}
-.tests-list{margin:0;padding:0 18px;font-size:12px;line-height:1.9}
+.pt-field{font-size:0.85em;color:#555}.pt-field b{color:#1A1A1A}
+.tests-title{font-size:0.92em;font-weight:700;color:#1B3A6B;margin:10px 0 4px;padding-bottom:3px;border-bottom:1px solid #E0E0E0}
+.tests-list{margin:0;padding:0 18px;font-size:0.92em;line-height:1.9}
 .sig-area{display:flex;justify-content:space-between;margin-top:22px;padding-top:10px;border-top:1px dashed #CCC}
-.sig-box{text-align:center;font-size:10px;color:#888}.sig-line{border-top:1px solid #888;width:120px;margin:28px auto 4px}
-.footer{margin-top:20px;font-size:9px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}
+.sig-box{text-align:center;font-size:0.77em;color:#888}.sig-line{border-top:1px solid #888;width:120px;margin:28px auto 4px}
+.footer{margin-top:20px;font-size:0.69em;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}
 @media print{.pdf-bar{display:none!important}.pt-card{page-break-inside:avoid} ${marginCss}}</style></head><body>
 ${lhHtml}${pdfBar}<div class="content">${head}${html}
 ${footerHtml}</div>

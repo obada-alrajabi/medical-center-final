@@ -64,26 +64,35 @@ function resolvePageSizeMm(paperSize: string, orientation: string): [number, num
 // نفس أصناف الـ CSS المستخدمة بمحرك الطباعة القديم (`_buildPrintDoc` داخل
 // App.tsx) — أُبقيت مطابقة عمداً حتى تظهر كل شاشات النظام بنفس الشكل تماماً
 // سواء طُبعت عبر هذا المحرك أو عبر المسار الاحتياطي القديم.
+// ── توحيد كل أحجام الخط بالتقرير على إعداد fontSize واحد ────────────────────
+// المشكلة: كل صنف (class) هون كان له حجم خط ثابت بالبكسل (17px، 11px، 10px،
+// 9px...) مكتوب يدوياً بمعزل تام عن إعداد "حجم الخط" — فمهما غيّر المستخدم
+// القيمة، ولا حتى بعد تصحيح الجدول سابقاً لياخد ${"fontSize-2"} بدل رقم ثابت،
+// كان الفارق نفسه (٢px) يبقى ثابتاً بمعزل عن الإعداد الفعلي، فبحجم خط صغير
+// جداً (مثلاً 8px) يصير الفارق نسبة كبيرة من الحجم الكلي فيظهر الجدول أكبر
+// ملحوظ من النص المحيط. الحل الدائم: كل الأحجام الآن نسبية (em) لعنصر
+// .ppdf-root الحامل لإعداد fontSize مباشرة، فتتحرك كل نصوص التقرير معاً
+// بنفس النسبة أياً كانت قيمة الإعداد — ونص الجدول تحديداً صار 1em بالضبط
+// (يعني مطابق لحجم النص العادي خارج الجدول) بدل أي فارق ثابت.
+const REM = (ratio: number) => `${ratio}em`;
 export const PRINT_CONTENT_CSS = (fontFamily: string, fontSize: number) => `
 *{box-sizing:border-box}
 .ppdf-root{font-family:${fontFamily},Arial,sans-serif;direction:rtl;color:#1A1A1A;font-size:${fontSize}px;margin:0;padding:0;background:#fff}
 .ch{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;margin-bottom:0;border-bottom:2px solid #1B3A6B}
-.ct{font-size:17px;color:#1B3A6B;display:block;font-weight:700;margin-bottom:3px}.cs{font-size:11px;color:#555}.cm{font-size:10px;color:#888;text-align:left;white-space:nowrap;line-height:1.6}
+.ct{font-size:${REM(1.3)};color:#1B3A6B;display:block;font-weight:700;margin-bottom:3px}.cs{font-size:${REM(0.85)};color:#555}.cm{font-size:${REM(0.77)};color:#888;text-align:left;white-space:nowrap;line-height:1.6}
 .rm{display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-bottom:14px;border-bottom:1px solid #E8EDF5;background:#F5F8FF;padding:6px 10px;border-radius:0 0 6px 6px}
-.rm-item{font-size:11px;color:#444;display:inline-flex;align-items:center;gap:4px}
+.rm-item{font-size:${REM(0.85)};color:#444;display:inline-flex;align-items:center;gap:4px}
 .rm-item strong{color:#1B3A6B}
-h2{font-size:13px;color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
+h2{font-size:${REM(1)};color:#1B3A6B;margin:14px 0 6px;font-weight:700;border-bottom:1px solid #E0E0E0;padding-bottom:4px}
 /* ── جدول موحّد لكل شاشات الطباعة — لا يوجد نمط منفصل لأي تقرير على حدة.
       عرض الأعمدة النهائي (table-layout:fixed + colgroup) يُحسَب ديناميكياً
       بدالة normalizeTableColumns() قبل التصوير مباشرة (انظر أسفل)، بناءً على
       المحتوى الفعلي لكل عمود بالرأس والجسم معاً — بهيك يبقى الرأس مطابقاً
       تماماً لأعمدة الجسم دائماً، وبنفس الوقت الأعمدة تاخد عرضها الحقيقي حسب
       محتواها بدل التساوي القسري. ── */
-/* حجم خط الجداول كان ثابتاً على 11px بغض النظر عن إعداد "حجم الخط" —
-   فمهما غيّر المستخدم القيمة، بيانات الجداول ما كانت تتأثر إطلاقاً. صار
-   الآن نسبياً لنفس إعداد fontSize (بفارق 2px أصغر من النص العادي، وهو نفس
-   الفارق الافتراضي السابق 11px مقابل 13px) — فيتحرك مع الإعداد فعلياً. */
-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:${Math.max(8, fontSize - 2)}px;line-height:1.5}
+/* نص الجدول الآن 1em بالضبط — أي مطابق تماماً لحجم النص العادي خارج الجدول،
+   ويتحرك مع إعداد fontSize بنفس النسبة (انظر تعليق REM أعلاه). */
+table{width:100%;border-collapse:collapse;margin-top:6px;font-size:${REM(1)};line-height:1.5}
 th,td{border:1px solid #ddd;padding:8px 10px;vertical-align:middle;text-align:right;word-wrap:break-word;overflow-wrap:break-word;white-space:normal}
 /* ── عناوين الأعمدة (th) ما لازم تنكسر إطلاقاً — لا بمنتصف الكلمة ولا حتى
       بين كلمتين — بغض النظر عن عرض العمود، لأن انكسار كلمة عربية واحدة
@@ -99,16 +108,16 @@ tfoot td{background:#EBF3FB;font-weight:700;border-top:2px solid #1B3A6B}
 .in{color:#388E3C;font-weight:700}.out{color:#D32F2F;font-weight:700}
 .kpi{display:flex;gap:22px;margin-bottom:16px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid #E0E0E0}
 .kpi-box{text-align:right;padding:0}
-.kpi-l{font-size:10px;color:#777;margin-bottom:2px}.kpi-v{font-size:13px;font-weight:700;color:#1B3A6B}
+.kpi-l{font-size:${REM(0.77)};color:#777;margin-bottom:2px}.kpi-v{font-size:${REM(1)};font-weight:700;color:#1B3A6B}
 .pt-card{border:1px solid #D0D9E8;border-radius:10px;padding:16px;margin-bottom:18px;background:#fff}
-.pt-name{font-size:16px;font-weight:700;color:#1B3A6B;margin-bottom:6px}
+.pt-name{font-size:${REM(1.23)};font-weight:700;color:#1B3A6B;margin-bottom:6px}
 .pt-info{display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:10px}
-.pt-field{font-size:11px;color:#555}.pt-field b{color:#1A1A1A}
-.tests-title{font-size:12px;font-weight:700;color:#1B3A6B;margin:10px 0 4px;padding-bottom:3px;border-bottom:1px solid #E0E0E0}
-.tests-list{margin:0;padding:0 18px;font-size:12px;line-height:1.9}
+.pt-field{font-size:${REM(0.85)};color:#555}.pt-field b{color:#1A1A1A}
+.tests-title{font-size:${REM(0.92)};font-weight:700;color:#1B3A6B;margin:10px 0 4px;padding-bottom:3px;border-bottom:1px solid #E0E0E0}
+.tests-list{margin:0;padding:0 18px;font-size:${REM(0.92)};line-height:1.9}
 .sig-area{display:flex;justify-content:space-between;margin-top:22px;padding-top:10px;border-top:1px dashed #CCC}
-.sig-box{text-align:center;font-size:10px;color:#888}.sig-line{border-top:1px solid #888;width:120px;margin:28px auto 4px}
-.footer{margin-top:20px;font-size:9px;color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}
+.sig-box{text-align:center;font-size:${REM(0.77)};color:#888}.sig-line{border-top:1px solid #888;width:120px;margin:28px auto 4px}
+.footer{margin-top:20px;font-size:${REM(0.69)};color:#aaa;text-align:center;padding-top:8px;border-top:1px solid #eee}
 `;
 
 // ── تحويل صورة الترويسة (أياً كانت صيغتها الأصلية: PNG/JPEG/WEBP، وسواء
