@@ -3267,11 +3267,16 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
               ))}
               <div className="col-span-2 flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-[#555]">التأمين الصحي <span className="text-[#888] font-normal">(اختياري)</span></label>
+                {/* ── لما ينتخب المستخدم شركة التأمين، ما لازم نلمس حقل "الخصم" (خصم
+                    الطبيب اليدوي) إطلاقاً — كان الكود قديماً يعبّي هالحقل تلقائياً
+                    بنسبة خصم التأمين نفسها (مثلاً 20%)، فيصير خصم التأمين مطروح
+                    مرتين: مرة عبر هالحقل (كـ discAmt) ومرة تانية عبر الحساب
+                    التلقائي المنفصل (insDiscAmt) اللي أصلاً بيطبَّق فوق نفس
+                    الأساس. خصم التأمين دايماً تلقائي بالكامل — حقل "الخصم" هون
+                    مخصص فقط لخصم إضافي يقرره الطبيب، منفصل تماماً عن التأمين. ──}
                 <select value={form.insuranceCompany} onChange={e => {
                   const coName = e.target.value;
-                  const co = insurances.find(c => c.name === coName);
-                  const pct = co ? (isLab ? co.discountLab : isRad ? co.discountRad : co.discountClinic) : 0;
-                  setForm(p => ({ ...p, insuranceCompany: coName, discount: pct > 0 ? String(pct) : "", discountType: pct > 0 ? "percent" : "amount" }));
+                  setForm(p => ({ ...p, insuranceCompany: coName }));
                   if (errors.insuranceCompany) setErrors(p => ({ ...p, insuranceCompany: "" }));
                 }} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}>
                   <option value="">— بدون تأمين —</option>
@@ -3595,8 +3600,9 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           <div className="grid grid-cols-2 gap-4">
             <div><InputField label="المبلغ الإجمالي الكشفية (₪)" required type="number" placeholder="0" value={form.price} onChange={v => set("price", v)} />{errF("price")}</div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-[#555]">الخصم {insComp && insDiscPct > 0 && <span className="text-[#0D7377] font-normal">(محدَّد من شركة التأمين)</span>}</label>
-              <div className="flex gap-2"><input type="number" placeholder="0" value={form.discount} onChange={e => set("discount", e.target.value)} className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: `1px solid ${insComp && insDiscPct > 0 ? "#0D7377" : "#CCCCCC"}`, backgroundColor: "#FAFAFA" }} /><select value={form.discountType} onChange={e => set("discountType", e.target.value)} className="h-10 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}><option value="amount">₪</option><option value="percent">%</option></select></div>
+              <label className="text-xs font-semibold text-[#555]">خصم إضافي (يدوي — يقرره الطبيب، لا علاقة له بالتأمين)</label>
+              <div className="flex gap-2"><input type="number" placeholder="0" value={form.discount} onChange={e => set("discount", e.target.value)} className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} /><select value={form.discountType} onChange={e => set("discountType", e.target.value)} className="h-10 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}><option value="amount">₪</option><option value="percent">%</option></select></div>
+              {insComp && insDiscPct > 0 && <p className="text-[10px] text-[#999] mt-0.5">خصم التأمين ({insDiscPct}%) يُطبَّق تلقائياً بشكل منفصل — لا تدخله هنا</p>}
             </div>
             <InputField label="المبلغ المدفوع (₪)" required type="number" placeholder="0" value={form.paid} onChange={v => set("paid", v)} />
             <div className="flex flex-col gap-1.5">
@@ -11976,15 +11982,22 @@ function StaffManagementScreen({
   };
   const saveStaff = () => {
     if (!form.name.trim() || !form.nationalId.trim()) { toast("يجب إدخال الاسم ورقم الهوية", "error"); return; }
+    // ── "صندوق الخصم" (الأقسام يلي بينخصم منها الراتب فعلياً) صار يتبع تلقائياً
+    //    نفس الأقسام يلي بتُحتسب منها نسبة الإيرادات (percentageDepts) — بدل ما
+    //    يكون اختيار يدوي منفصل بيلخبط (كان ممكن يختلف عن أقسام احتساب النسبة
+    //    بدون أي داعي منطقي). لو الموظف راتبه ثابت بالكامل (fixed/shift) بدون
+    //    نسبة، منسيب الصندوق فاضي ليرجع لقسمه الأساسي تلقائياً وقت الصرف. ──
+    const payFromDeptsComputed = (form.salaryType === "fixed" || form.salaryType === "shift") ? [] : effectivePercentageDepts(form as any);
+    const form2 = { ...form, payFromDepts: payFromDeptsComputed };
     if (form.nationalId.length < 5) { toast("رقم الهوية يجب أن يكون 5 أرقام على الأقل", "error"); return; }
     if (tab === "add") {
       const exists = staffList.find(s => s.nationalId === form.nationalId.trim());
       if (exists) { toast("يوجد موظف بنفس رقم الهوية بالفعل", "error"); return; }
       const tempId = Date.now();
-      setStaffList(p => [...p, { ...form, id: tempId }]);
+      setStaffList(p => [...p, { ...form2, id: tempId }]);
       // After DB insert returns the real auto-increment ID, replace tempId in-memory
       // so that subsequent permission saves use the correct staff_id.
-      (api.staff.create({ name: form.name, national_id: form.nationalId, dob: form.dob ? api.parseDateISO(form.dob) : null, username: form.username, password_hash: form.password, job_title: form.jobTitle, primary_dept: form.primaryDept, assigned_depts: JSON.stringify(form.assignedDepts || []), phone: form.phone, role: form.role, salary_type: form.salaryType, fixed_salary: form.fixedSalary, percentage_dept: form.percentageDept, percentage_depts: JSON.stringify(form.percentageDepts || []), pay_from_depts: JSON.stringify(form.payFromDepts || []), percentage_value: form.percentageValue, shift_start: form.shiftStart, shift_end: form.shiftEnd, shift_amount: form.shiftAmount, status: form.status, join_date: form.joinDate ? api.parseDateISO(form.joinDate) : null, notes: form.notes, can_access_financial: form.canAccessFinancial, can_access_settings: form.canAccessSettings, can_access_reports: form.canAccessReports, can_manage_staff: form.canManageStaff, is_admin_role: form.isAdminRole, can_attendance: form.canAttendance }) as Promise<any>)
+      (api.staff.create({ name: form2.name, national_id: form2.nationalId, dob: form2.dob ? api.parseDateISO(form2.dob) : null, username: form2.username, password_hash: form2.password, job_title: form2.jobTitle, primary_dept: form2.primaryDept, assigned_depts: JSON.stringify(form2.assignedDepts || []), phone: form2.phone, role: form2.role, salary_type: form2.salaryType, fixed_salary: form2.fixedSalary, percentage_dept: form2.percentageDept, percentage_depts: JSON.stringify(form2.percentageDepts || []), pay_from_depts: JSON.stringify(form2.payFromDepts || []), percentage_value: form2.percentageValue, shift_start: form2.shiftStart, shift_end: form2.shiftEnd, shift_amount: form2.shiftAmount, status: form2.status, join_date: form2.joinDate ? api.parseDateISO(form2.joinDate) : null, notes: form2.notes, can_access_financial: form2.canAccessFinancial, can_access_settings: form2.canAccessSettings, can_access_reports: form2.canAccessReports, can_manage_staff: form2.canManageStaff, is_admin_role: form2.isAdminRole, can_attendance: form2.canAttendance }) as Promise<any>)
         .then((created: any) => {
           if (created?.id && created.id !== tempId) setStaffList(p => p.map(s => s.id === tempId ? { ...s, id: created.id } : s));
           refreshEmployees();
@@ -11992,8 +12005,8 @@ function StaffManagementScreen({
         .catch(() => { });
       toast("تم إضافة الموظف بنجاح", "success");
     } else {
-      setStaffList(p => p.map(s => s.id === form.id ? { ...form } : s));
-      api.staff.update(form.id, { name: form.name, national_id: form.nationalId, dob: form.dob ? api.parseDateISO(form.dob) : null, username: form.username, password_hash: form.password, job_title: form.jobTitle, primary_dept: form.primaryDept, assigned_depts: JSON.stringify(form.assignedDepts || []), phone: form.phone, role: form.role, salary_type: form.salaryType, fixed_salary: form.fixedSalary, percentage_dept: form.percentageDept, percentage_depts: JSON.stringify(form.percentageDepts || []), pay_from_depts: JSON.stringify(form.payFromDepts || []), percentage_value: form.percentageValue, shift_start: form.shiftStart, shift_end: form.shiftEnd, shift_amount: form.shiftAmount, status: form.status, join_date: form.joinDate ? api.parseDateISO(form.joinDate) : null, notes: form.notes, can_access_financial: form.canAccessFinancial, can_access_settings: form.canAccessSettings, can_access_reports: form.canAccessReports, can_manage_staff: form.canManageStaff, is_admin_role: form.isAdminRole, can_attendance: form.canAttendance })
+      setStaffList(p => p.map(s => s.id === form2.id ? { ...form2 } : s));
+      api.staff.update(form2.id, { name: form2.name, national_id: form2.nationalId, dob: form2.dob ? api.parseDateISO(form2.dob) : null, username: form2.username, password_hash: form2.password, job_title: form2.jobTitle, primary_dept: form2.primaryDept, assigned_depts: JSON.stringify(form2.assignedDepts || []), phone: form2.phone, role: form2.role, salary_type: form2.salaryType, fixed_salary: form2.fixedSalary, percentage_dept: form2.percentageDept, percentage_depts: JSON.stringify(form2.percentageDepts || []), pay_from_depts: JSON.stringify(form2.payFromDepts || []), percentage_value: form2.percentageValue, shift_start: form2.shiftStart, shift_end: form2.shiftEnd, shift_amount: form2.shiftAmount, status: form2.status, join_date: form2.joinDate ? api.parseDateISO(form2.joinDate) : null, notes: form2.notes, can_access_financial: form2.canAccessFinancial, can_access_settings: form2.canAccessSettings, can_access_reports: form2.canAccessReports, can_manage_staff: form2.canManageStaff, is_admin_role: form2.isAdminRole, can_attendance: form2.canAttendance })
         .then(() => refreshEmployees())
         .catch(() => { });
       toast("تم حفظ التعديلات بنجاح", "success");
@@ -12313,25 +12326,6 @@ function StaffManagementScreen({
             <InputField label="الراتب الثابت الشهري (₪)" type="number" value={String(form.fixedSalary)} onChange={v => setF("fixedSalary", Number(v))} />
           )}
           {(form.salaryType === "percentage" || form.salaryType === "both" || form.salaryType === "daily") && (<>
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-semibold text-[#555]">القسم الذي يُصرف منه الراتب (صندوق الخصم) <span className="text-[#999] font-normal">(اختر أكتر من قسم إذا كان الموظف يشتغل بأكتر من قسم)</span></label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {[...DEPARTMENTS, ...customDepts].map(d => {
-                  const checked = (form.payFromDepts || []).includes(d.id);
-                  return (
-                    <label key={d.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs select-none transition-colors ${checked ? "border-[#1B3A6B] bg-[#EBF3FB] text-[#1B3A6B] font-medium" : "border-[#E0E0E0] text-[#555] hover:bg-[#F5F5F5]"}`}>
-                      <input type="checkbox" checked={checked} onChange={e => { const cur = form.payFromDepts || []; setF("payFromDepts", e.target.checked ? [...cur, d.id] : cur.filter((x: string) => x !== d.id)); }} className="w-3.5 h-3.5 flex-shrink-0" />
-                      <span className="truncate">{d.name}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              {(form.payFromDepts || []).length > 1 && (
-                <p className="text-xs text-[#1B3A6B] p-2 rounded-lg" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
-                  📌 عند صرف الراتب سيُقسَّم المبلغ على الصناديق المختارة حسب نسبة إيرادات الموظف الفعلية بكل قسم.
-                </p>
-              )}
-            </div>
             <InputField label="نسبة من الإيرادات (%)" type="number" value={String(form.percentageValue)} onChange={v => setF("percentageValue", Number(v))} placeholder="مثال: 5" />
             {form.salaryType !== "daily" && (
               <div className="flex flex-col gap-2">
@@ -12362,6 +12356,13 @@ function StaffManagementScreen({
                     ? <>يُحتسب من جلساته في: <strong>{(form.percentageDepts || []).map((id: string) => [...DEPARTMENTS, ...customDepts].find(d => d.id === id)?.name || id).join("، ")}</strong></>
                     : <>يُحتسب تلقائياً من أقسامه المرتبطة فقط: <strong>{effectivePercentageDepts(form as any).map((id: string) => [...DEPARTMENTS, ...customDepts].find(d => d.id === id)?.name || id).join("، ") || "لم يُحدَّد قسم بعد"}</strong></>}
                 </p>
+                {/* ── صندوق الخصم صار تلقائي: نفس الأقسام أعلاه يلي منها تُحتسب
+                    النسبة هي نفسها يلي بينخصم منها الراتب وقت الصرف، كل قسم
+                    حسب نصيبه الفعلي من إيرادات الموظف — بدون اختيار يدوي منفصل
+                    ممكن يختلف عن أقسام الاحتساب بدون داعي. ──*/}
+                {effectivePercentageDepts(form as any).length > 1 && (
+                  <p className="text-[#555] mt-1.5 pt-1.5" style={{ borderTop: "1px solid #BBDEFB" }}>💰 عند صرف الراتب، سيُقسَّم المبلغ تلقائياً على صناديق نفس هذه الأقسام حسب نصيب كل قسم من إيرادات الموظف الفعلية.</p>
+                )}
                 {form.name && (() => {
                   const pDepts = effectivePercentageDepts(form as any);
                   const empSess = sessions.filter(sess => sess.doctor === form.name && pDepts.includes(sess.dept));
