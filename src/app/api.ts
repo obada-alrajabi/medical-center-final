@@ -22,6 +22,32 @@ let _adminToken: string | null = null;
 export function setAdminToken(token: string | null) { _adminToken = token; }
 export function getAdminToken() { return _adminToken; }
 
+// ── معالج انتهاء الجلسة (auth expiry) ───────────────────────────────────────
+// المشكلة التي كانت موجودة: كل طلبات الـ API تمر عبر `request()` بالأسفل، وعند
+// فشل الطلب بـ 401/403 (جلسة منتهية أو غير صالحة) كانت الدالة تُرجع نص رسالة
+// الخطأ من الخادم وكأنه بيانات ناجحة (تحوّل جسم أي استجابة لـ JSON بغض النظر
+// عن حالة النجاح)، بينما كل مكان بالتطبيق تقريباً يستدعيها بنمط "أطلق ولا
+// تنتظر" (fire-and-forget، عادة `.catch(() => {})`) بدون فحص النتيجة فعلياً.
+// النتيجة: أي إضافة/تعديل بعد انتهاء الجلسة كان يظهر وكأنه نجح محلياً (تحديث
+// متفائل بالواجهة) لكنه لا يصل فعلياً لقاعدة البيانات أبداً — فيختفي فور
+// تحديث الصفحة، بدون أي رسالة خطأ تنبّه المستخدم أصلاً بأن جلسته انتهت.
+// الحل: نكتشف 401/403 مركزياً بمكان واحد فقط (هنا، فبيغطي كل نداءات الـ API
+// بالنظام دفعة واحدة)، ونطلق معالجاً يسجّله App.tsx مرة واحدة عند الإقلاع
+// يسجّل خروج المستخدم تلقائياً ويعيده لشاشة الدخول برسالة واضحة، بدل ما يبقى
+// "شغّال" ظاهرياً بينما كل حفظ يفشل بصمت بالخلفية.
+let _onAuthExpired: (() => void) | null = null;
+let _authExpiredFiredAt = 0;
+export function setAuthExpiredHandler(fn: (() => void) | null) { _onAuthExpired = fn; }
+function _notifyAuthExpired() {
+  // حماية من إطلاق المعالج عشرات المرات دفعة واحدة: عند انتهاء الجلسة كل
+  // طلبات التحميل الأولي (Promise.all لعشرات الـ endpoints) بتفشل بنفس اللحظة
+  // تقريباً — نكتفي بإطلاقه مرة واحدة كل 5 ثوانٍ على الأكثر
+  const now = Date.now();
+  if (now - _authExpiredFiredAt < 5000) return;
+  _authExpiredFiredAt = now;
+  _onAuthExpired?.();
+}
+
 function buildHeaders(extra?: HeadersInit): HeadersInit {
   const h: Record<string, string> = {
     "Content-Type": "application/json",
@@ -39,6 +65,15 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T | null> {
       headers: buildHeaders(),
       ...opts,
     });
+    if (res.status === 401 || res.status === 403) {
+      // جلسة منتهية/غير صالحة: لا نُرجع جسم رسالة الخطأ كأنه بيانات صحيحة —
+      // نمسح التوكن المحلي ونُطلق معالج انتهاء الجلسة، ونعيد null (نفس القيمة
+      // التي كانت تُرجع أصلاً عند فشل الشبكة، فكل الاستدعاءات الحالية متوافقة
+      // معها دون أي تعديل إضافي بمواقع الاستدعاء)
+      _adminToken = null;
+      _notifyAuthExpired();
+      return null;
+    }
     if (!res.ok) {
       try { return (await res.json()) as T; } catch { return null; }
     }
@@ -148,6 +183,7 @@ export const api = {
         const headers: Record<string, string> = {};
         if (_tok) headers["Authorization"] = `Bearer ${_tok}`;
         const res = await fetch(`${BASE}/sessions/${sessionId}/files`, { method: "POST", headers, body: fd });
+        if (res.status === 401 || res.status === 403) { _adminToken = null; _notifyAuthExpired(); throw new Error("Session expired"); }
         if (!res.ok) throw new Error("Upload failed");
         return res.json();
       },

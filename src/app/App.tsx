@@ -4,7 +4,7 @@ import { calculateFinancials } from "./financialEngine";
 import { calcNetProfit } from "../utils/finance";
 import UnifiedPrintComponent from "./components/UnifiedPrintComponent";
 import { createPortal } from "react-dom";
-import { api, setAdminToken, getAdminToken, type PatientReminderRow, type PrintSettingsRow } from "./api";
+import { api, setAdminToken, getAdminToken, setAuthExpiredHandler, type PatientReminderRow, type PrintSettingsRow } from "./api";
 import { ScreenErrorBoundary } from "./ErrorBoundary";
 import * as XLSX from "xlsx";
 import {
@@ -15654,6 +15654,17 @@ export default function App() {
     } catch (_) { }
   }, [loggedUser]);
   const handleLogout = () => { try { sessionStorage.removeItem('mjcc_session'); } catch (_) { } setAdminToken(null); setLoggedUser(null); setRoute({ screen: "dashboard" }); setAlertVisible(true); };
+
+  // ── تسجيل معالج انتهاء الجلسة مرة واحدة عند الإقلاع: أي 401/403 من أي طلب
+  //    API بأي مكان بالنظام (عبر api.ts) بيسجّل خروج المستخدم تلقائياً ويعيده
+  //    لشاشة الدخول برسالة واضحة، بدل ما تفشل عمليات الحفظ بصمت للأبد ──
+  useEffect(() => {
+    setAuthExpiredHandler(() => {
+      handleLogout();
+      fireToast("⚠️ انتهت جلسة الدخول — الرجاء تسجيل الدخول مجدداً", "warning");
+    });
+    return () => setAuthExpiredHandler(null);
+  }, []);
 
   if (!dbLoaded) return (
     <div className="min-h-screen flex items-center justify-center bg-[#F0F4FA]" dir="rtl" style={{ fontFamily: "'Tajawal',sans-serif" }}>
