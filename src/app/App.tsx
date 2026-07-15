@@ -7184,11 +7184,12 @@ function TestCatalogScreen({ toast, labTests: labTestsProp = [], setLabTests, pe
           <div className="border-t border-[#E0E0E0] pt-4">
             <div className="flex items-center justify-between mb-3"><p className="text-sm font-bold text-[#1B3A6B]">قيم المرجع / المعدلات الطبيعية</p><Btn small variant="outline" onClick={addRange}><Plus size={12} />إضافة معامل</Btn></div>
             {normalRanges.map((r, i) => (
-              <div key={i} className="grid grid-cols-6 gap-2 mb-2 items-center">
+              <div key={i} className="grid grid-cols-8 gap-2 mb-2 items-center">
                 <input placeholder="اسم المعامل" value={r.param} onChange={e => setRange(i, "param", e.target.value)} className="col-span-2 h-9 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
                 <input placeholder="الوحدة" value={r.unit} onChange={e => setRange(i, "unit", e.target.value)} className="h-9 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
                 <input placeholder="الأدنى" value={r.min} onChange={e => setRange(i, "min", e.target.value)} className="h-9 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
                 <input placeholder="الأعلى" value={r.max} onChange={e => setRange(i, "max", e.target.value)} className="h-9 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
+                <input placeholder="ملاحظة" value={r.note || ""} maxLength={150} onChange={e => setRange(i, "note", e.target.value)} className="col-span-2 h-9 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
                 <button onClick={() => delRange(i)} className="p-2 rounded hover:bg-[#FFEBEE] text-[#D32F2F] transition-colors"><Trash2 size={13} /></button>
               </div>
             ))}
@@ -8398,19 +8399,17 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
               </div>
               <div><label className="block text-xs font-semibold text-[#555] mb-1">المقبوض منه *</label>
                 <div className="flex gap-2 mb-2">
-                  {(["patient", "insurance", "other"] as const).map(t => <button key={t} onClick={() => setRvModal(m => ({ ...m, f: { ...m.f, received_from_type: t, received_from_id: "", received_from_name: "" } }))} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rvModal.f.received_from_type === t ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "text-[#555] hover:border-[#1B3A6B]"}`} style={{ border: "1px solid #E0E0E0" }}>{t === "patient" ? "مريض" : t === "insurance" ? "شركة تأمين" : "أخرى"}</button>)}
+                  {/* ── شركة تأمين شُطبت عمداً من هون: دفعات شركات التأمين صارت تُسجَّل
+                        حصراً عبر زر "سداد" بتقرير "كشوفات شركات التأمين" (خاص بالمدير)،
+                        وهو نفسه بينشئ سند القبض تلقائياً — تفادياً لازدواج تسجيل نفس
+                        الدفعة يدوياً من هنا كمان. ── */}
+                  {(["patient", "other"] as const).map(t => <button key={t} onClick={() => setRvModal(m => ({ ...m, f: { ...m.f, received_from_type: t, received_from_id: "", received_from_name: "" } }))} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rvModal.f.received_from_type === t ? "bg-[#1B3A6B] text-white border-[#1B3A6B]" : "text-[#555] hover:border-[#1B3A6B]"}`} style={{ border: "1px solid #E0E0E0" }}>{t === "patient" ? "مريض" : "أخرى"}</button>)}
                 </div>
                 {rvModal.f.received_from_type === "patient" && (<div>
                   <input autoComplete="off" value={rvPatSearch} onChange={e => { setRvPatSearch(e.target.value); setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); }} placeholder="ابحث باسم المريض أو رقم الملف..." className="w-full px-3 h-9 rounded-lg text-sm outline-none mb-1" style={{ border: "1px solid #E0E0E0" }} />
                   {!rvModal.f.received_from_id && filtPats.length > 0 && <div className="rounded-lg overflow-hidden max-h-48 overflow-y-auto" style={{ border: "1px solid #E0E0E0" }}>{filtPats.map(p => <button key={p.id} onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: p.name, received_from_id: p.id } })); setRvPatSearch(p.name); }} className="w-full text-right px-3 py-2 text-sm hover:bg-[#EBF3FB] border-b last:border-b-0" style={{ borderColor: "#F0F0F0" }}><span className="font-medium">{p.name}</span><span className="text-[#999] text-xs mr-2">{p.id}</span></button>)}</div>}
                   {!rvModal.f.received_from_id && rvPatSearch.trim() && filtPats.length === 0 && <p className="text-xs text-[#D32F2F] mt-1">لا يوجد مريض مطابق — تأكد من الاسم أو اختر "أخرى"</p>}
                   {rvModal.f.received_from_id && <p className="text-xs text-[#388E3C] flex items-center gap-1 mt-1"><Check size={11} />تم الاختيار: {rvModal.f.received_from_name} — <button className="underline text-[#D32F2F]" onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); setRvPatSearch(""); }}>تغيير</button></p>}
-                </div>)}
-                {rvModal.f.received_from_type === "insurance" && (<div>
-                  <input autoComplete="off" value={rvInsSearch} onChange={e => { setRvInsSearch(e.target.value); setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); }} placeholder="ابحث في شركات التأمين..." className="w-full px-3 h-9 rounded-lg text-sm outline-none mb-1" style={{ border: "1px solid #E0E0E0" }} />
-                  {!rvModal.f.received_from_id && filtIns.length > 0 && <div className="rounded-lg overflow-hidden max-h-48 overflow-y-auto" style={{ border: "1px solid #E0E0E0" }}>{filtIns.map(ins => <button key={ins.id} onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: ins.name, received_from_id: String(ins.id) } })); setRvInsSearch(ins.name); }} className="w-full text-right px-3 py-2 text-sm hover:bg-[#EBF3FB] border-b last:border-b-0" style={{ borderColor: "#F0F0F0" }}>{ins.name}</button>)}</div>}
-                  {!rvModal.f.received_from_id && rvInsSearch.trim() && filtIns.length === 0 && <p className="text-xs text-[#D32F2F] mt-1">لا توجد شركة مطابقة — تأكد من الاسم أو اختر "أخرى"</p>}
-                  {rvModal.f.received_from_id && <p className="text-xs text-[#388E3C] flex items-center gap-1 mt-1"><Check size={11} />تم الاختيار: {rvModal.f.received_from_name} — <button className="underline text-[#D32F2F]" onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); setRvInsSearch(""); }}>تغيير</button></p>}
                 </div>)}
                 {rvModal.f.received_from_type === "other" && <input autoComplete="off" value={rvModal.f.received_from_name} onChange={e => setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: e.target.value } }))} placeholder="اسم الجهة / الشخص..." className="w-full px-3 h-9 rounded-lg text-sm outline-none" style={{ border: "1px solid #E0E0E0" }} />}
               </div>
@@ -10214,10 +10213,57 @@ function PrintSettingsScreen({ toast }: { toast: (m: string, t?: any) => void })
 
 // ─── REPORTS ───────────────────────────────────────────────────────────────────
 
-function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [], insurances = [], purchaseRequests = [], suppliers = [] }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; insurances?: InsuranceCo[]; purchaseRequests?: PurchaseRequest[]; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
+function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [], insurances = [], purchaseRequests = [], suppliers = [], setInvoices, doDeposit, isAdmin = false }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; insurances?: InsuranceCo[]; purchaseRequests?: PurchaseRequest[]; suppliers?: { id: number; name: string; type: string; phone: string }[];
+  // ── زر "سداد" جنب كل فاتورة تأمين — حصراً لحساب المدير (بطلب صريح)، لتسجيل
+  //    دفعة (كاملة أو جزئية) تستلمها العيادة فعلياً من شركة التأمين. ──
+  setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
+  doDeposit?: (dept: string, amount: number, title: string, type: string) => void;
+  isAdmin?: boolean;
+  setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
+}) {
   const allDepts = [...DEPARTMENTS, ...customDepts.map(d => ({ id: d.id, name: d.name, short: d.short }))];
   const deptShortById = (id: string) => allDepts.find(d => d.id === id)?.short || id;
   const [tab, setTab] = useState("patients");
+  // ── تسوية فاتورة تأمين (سداد كامل أو جزئي) — للمدير فقط ──
+  const [settleInvModal, setSettleInvModal] = useState<Invoice | null>(null);
+  const [settleInvAmt, setSettleInvAmt] = useState(""); const [settlingInv, setSettlingInv] = useState(false);
+  const openSettleInvoice = (inv: Invoice) => { setSettleInvModal(inv); setSettleInvAmt(String(inv.remaining)); };
+  const confirmSettleInvoice = async () => {
+    if (!settleInvModal) return;
+    const amt = parseFloat(settleInvAmt) || 0;
+    if (amt <= 0) { toast("أدخل مبلغ الدفعة", "error"); return; }
+    if (amt > settleInvModal.remaining) { toast("المبلغ أكبر من المتبقي على الفاتورة", "error"); return; }
+    setSettlingInv(true);
+    try {
+      const newPaid = settleInvModal.paid + amt;
+      const newRemaining = settleInvModal.total - newPaid;
+      const newStatus: Invoice["status"] = newRemaining <= 0 ? "paid" : "partial";
+      await api.finance.invoices.update(settleInvModal.id, { paid: newPaid, status: newStatus });
+      if (setInvoices) setInvoices(p => p.map(x => x.id === settleInvModal.id ? { ...x, paid: newPaid, remaining: Math.max(0, newRemaining), status: newStatus } : x));
+      // ── هذه هي الطريقة الوحيدة الآن لتسجيل دفعات شركات التأمين (بعد حذف
+      //    خيار "شركة تأمين" من نموذج سند القبض اليدوي)، فلازم تُسجَّل كسند
+      //    قبض حقيقي بجدول السندات — وليس فقط إيداعاً خاماً بالصندوق — حتى
+      //    تظهر بكل حسابات النظام الموحّدة (لوحة التحكم، السندات وحساباتها،
+      //    التقارير المالية) تماماً متل أي سند قبض آخر ينشئه المدير يدوياً. ──
+      try {
+        const rv = await api.finance.receiptVouchers.create({
+          date: _localISO(), amount: amt,
+          received_from_type: "insurance",
+          received_from_id: String(insurances.find(c => c.name === settleInvModal.company)?.id || ""),
+          received_from_name: settleInvModal.company,
+          reason: `تحصيل فاتورة تأمين ${settleInvModal.id}${settleInvModal.patientName ? " — " + settleInvModal.patientName : ""}`,
+          dept: settleInvModal.dept, notes: `تسوية من تقرير كشوفات شركات التأمين — فاتورة #${settleInvModal.id}`, approved_by: "",
+        });
+        if (rv && setReceiptVouchers) setReceiptVouchers(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]);
+      } catch { /* نكمل تحصيل الفاتورة والإيداع حتى لو فشل إنشاء سند القبض */ }
+      // ── فواتير التأمين ديون مستحقة للعيادة — تسويتها معناها استلام فلوس
+      //    فعلياً، فتُضاف لصندوق القسم صاحب الفاتورة (doDeposit) ──
+      if (doDeposit) doDeposit(settleInvModal.dept, amt, `تحصيل من شركة تأمين — ${settleInvModal.company}`, "تحصيل تأمين");
+      toast(newStatus === "paid" ? "تم تحصيل كامل مبلغ الفاتورة من شركة التأمين وتسجيله كسند قبض ✓" : `تم تسجيل دفعة جزئية ${fmt(amt)} كسند قبض — المتبقي ${fmt(Math.max(0, newRemaining))} ✓`, "success");
+      setSettleInvModal(null); setSettleInvAmt("");
+    } catch { toast("خطأ في تسوية الفاتورة", "error"); }
+    finally { setSettlingInv(false); }
+  };
   const [fromDate, setFromDate] = useState(() => _localISO()); const [toDate, setToDate] = useState(() => _localISO());
   const TABS = [{ k: "patients", l: "كشوفات المرضى" }, { k: "companies", l: "كشوفات شركات التأمين" }, { k: "suppliers", l: "كشوفات شركات الموردين" }, { k: "depts", l: "كشوفات الأقسام" }, { k: "custom", l: "التقارير المخصصة" }];
   const parseStrDate = (s: string) => { if (!s) return null; const clean = s.trim(); if (clean.includes("/")) { const p = clean.split("/"); if (p.length === 3) { const d = parseInt(p[0]), m = parseInt(p[1]), y = parseInt(p[2]); if (!isNaN(y) && y > 2000) return new Date(y, m - 1, d, 12, 0, 0); } } const parts = clean.split("-"); if (parts.length === 3 && parts[0].length === 4) { const y = parseInt(parts[0]), m = parseInt(parts[1]), d = parseInt(parts[2]); if (!isNaN(y)) return new Date(y, m - 1, d, 12, 0, 0); } const iso = Date.parse(clean); if (!isNaN(iso)) { const dt = new Date(iso); dt.setHours(12, 0, 0, 0); return dt; } return null; };
@@ -10386,12 +10432,39 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
                     <TD className="text-[#388E3C] font-medium">{fmt(inv.paid)}</TD>
                     <TD>{inv.remaining > 0 ? <span className="text-[#D32F2F] font-bold">{fmt(inv.remaining)}</span> : <span className="text-[#388E3C]">—</span>}</TD>
                     <TD>{inv.status === "paid" ? <Badge color="success">محصَّل</Badge> : inv.status === "partial" ? <Badge color="warning">جزئي</Badge> : <Badge color="danger">غير محصَّل</Badge>}</TD>
-                    <TD><Btn small variant="ghost" onClick={() => { const html = `<h2>مطالبة تأمين فردية</h2><table><tbody><tr><td>رقم الفاتورة</td><td>${inv.id}</td></tr><tr><td>شركة التأمين</td><td>${inv.company}</td></tr><tr><td>اسم المريض</td><td>${inv.patientName || "—"}</td></tr><tr><td>رقم الكشفية</td><td>${inv.claimNo || "—"}</td></tr><tr><td>القسم</td><td>${deptShortById(inv.dept)}</td></tr><tr><td>التاريخ</td><td>${inv.date}</td></tr><tr><td>المبلغ</td><td>${fmt(inv.total)}</td></tr><tr><td>المدفوع</td><td>${fmt(inv.paid)}</td></tr><tr><td>المتبقي</td><td>${fmt(inv.remaining)}</td></tr><tr><td>الحالة</td><td>${inv.status === "paid" ? "محصَّل ✓" : "غير محصَّل"}</td></tr></tbody></table>`; printHtml(html, `مطالبة تأمين — ${inv.company} — ${inv.id}`); }}><Printer size={13} /></Btn></TD>
+                    <TD><div className="flex gap-1">
+                      <Btn small variant="ghost" onClick={() => { const html = `<h2>مطالبة تأمين فردية</h2><table><tbody><tr><td>رقم الفاتورة</td><td>${inv.id}</td></tr><tr><td>شركة التأمين</td><td>${inv.company}</td></tr><tr><td>اسم المريض</td><td>${inv.patientName || "—"}</td></tr><tr><td>رقم الكشفية</td><td>${inv.claimNo || "—"}</td></tr><tr><td>القسم</td><td>${deptShortById(inv.dept)}</td></tr><tr><td>التاريخ</td><td>${inv.date}</td></tr><tr><td>المبلغ</td><td>${fmt(inv.total)}</td></tr><tr><td>المدفوع</td><td>${fmt(inv.paid)}</td></tr><tr><td>المتبقي</td><td>${fmt(inv.remaining)}</td></tr><tr><td>الحالة</td><td>${inv.status === "paid" ? "محصَّل ✓" : "غير محصَّل"}</td></tr></tbody></table>`; printHtml(html, `مطالبة تأمين — ${inv.company} — ${inv.id}`); }}><Printer size={13} /></Btn>
+                      {isAdmin && inv.status !== "paid" && <Btn small variant="secondary" onClick={() => openSettleInvoice(inv)}>سداد</Btn>}
+                    </div></TD>
                   </TRow>
                 ))}</tbody>
               </table>
             )}
           </Card>
+
+          <Modal open={!!settleInvModal} onClose={() => { setSettleInvModal(null); setSettleInvAmt(""); }} title={`تحصيل من شركة تأمين — ${settleInvModal?.company || ""}`}>
+            {settleInvModal && (
+              <div className="space-y-3">
+                <div className="p-3 rounded-xl text-xs" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+                  <p>رقم الفاتورة: <strong>{settleInvModal.id}</strong> — القسم: <strong>{deptShortById(settleInvModal.dept)}</strong></p>
+                  <p>إجمالي الفاتورة: <strong>{fmt(settleInvModal.total)}</strong></p>
+                  <p>المحصَّل سابقاً: <strong className="text-[#388E3C]">{fmt(settleInvModal.paid)}</strong></p>
+                  <p>المتبقي: <strong className="text-[#D32F2F]">{fmt(settleInvModal.remaining)}</strong></p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#555]">مبلغ الدفعة المستلَمة الآن (₪)</label>
+                  <input type="number" value={settleInvAmt} onChange={e => setSettleInvAmt(e.target.value)} placeholder={`الحد الأقصى ${fmt(settleInvModal.remaining)}`} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }} />
+                  {settleInvAmt && parseFloat(settleInvAmt) > settleInvModal.remaining && <p className="text-xs text-[#D32F2F]">المبلغ أكبر من المتبقي على الفاتورة</p>}
+                  {settleInvAmt && parseFloat(settleInvAmt) > 0 && parseFloat(settleInvAmt) < settleInvModal.remaining && <p className="text-xs text-[#FF8F00]">دفعة جزئية — سيبقى المتبقي {fmt(settleInvModal.remaining - parseFloat(settleInvAmt))} بحالة "جزئي"</p>}
+                  {settleInvAmt && parseFloat(settleInvAmt) === settleInvModal.remaining && <p className="text-xs text-[#388E3C]">تسوية كاملة — ستتحول الفاتورة لحالة "مدفوعة"</p>}
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Btn variant="outline" onClick={() => { setSettleInvModal(null); setSettleInvAmt(""); }}>إلغاء</Btn>
+                  <Btn variant="primary" loading={settlingInv} disabled={!settleInvAmt || parseFloat(settleInvAmt) <= 0 || parseFloat(settleInvAmt) > settleInvModal.remaining} onClick={confirmSettleInvoice}>💰 تسجيل الدفعة</Btn>
+                </div>
+              </div>
+            )}
+          </Modal>
           <Card title="ملخص المؤمَّنين" action={<Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">المرضى المؤمَّنون</div><div class="kpi-v">${p3PatientRows.length}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي المطالبات</div><div class="kpi-v">${fmt(p3PatientRows.reduce((s, r) => s + r.total, 0))}</div></div><div class="kpi-box"><div class="kpi-l">المحصَّل</div><div class="kpi-v in">${fmt(p3PatientRows.reduce((s, r) => s + r.collected, 0))}</div></div></div><h2>ملخص المؤمَّنين${p2Company ? " — " + p2Company : ""}</h2><table><thead><tr><th>اسم المريض</th><th>رقم الملف</th><th>عدد المطالبات</th><th>إجمالي المطالبات</th><th>المحصَّل</th><th>نسبة التحصيل</th></tr></thead><tbody>${p3PatientRows.map(r => `<tr><td>${r.name}</td><td>${r.pid}</td><td>${r.claims}</td><td>${fmt(r.total)}</td><td class="in">${fmt(r.collected)}</td><td>${r.rate}%</td></tr>`).join("")}</tbody></table>`; printHtml(html, `ملخص المؤمَّنين${p2Company ? " — " + p2Company : ""}`, fromDate, toDate); }}><Printer size={14} />تقرير PDF</Btn>}>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
               <KPICard title="المرضى المؤمَّنون" value={String(p3PatientRows.length)} Icon={Users} color="secondary" />
@@ -13699,19 +13772,16 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
             <div><label className="block text-xs font-semibold text-[#555] mb-1">التاريخ *</label><input type="date" value={rvModal.f.date} onChange={e => setRvModal(m => ({ ...m, f: { ...m.f, date: e.target.value } }))} className="w-full h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }} /></div>
             <div><label className="block text-xs font-semibold text-[#555] mb-1">المبلغ (₪) *</label><input type="number" value={rvModal.f.amount} onChange={e => setRvModal(m => ({ ...m, f: { ...m.f, amount: e.target.value } }))} placeholder="0.00" className="w-full h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }} /></div>
           </div>
-          <div><label className="block text-xs font-semibold text-[#555] mb-1">نوع المقبوض من</label><select value={rvModal.f.received_from_type} onChange={e => { const t = e.target.value as any; setRvPatSearch(""); setRvInsSearch(""); setRvModal(m => ({ ...m, f: { ...m.f, received_from_type: t, received_from_id: "", received_from_name: "" } })); }} className="w-full h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }}><option value="patient">مريض</option><option value="insurance">شركة تأمين</option><option value="other">أخرى</option></select></div>
+          {/* ── شركة تأمين شُطبت عمداً من هون: دفعات شركات التأمين صارت تُسجَّل حصراً
+                عبر زر "سداد" بتقرير "كشوفات شركات التأمين" (خاص بالمدير)، وهو نفسه
+                بينشئ سند القبض تلقائياً — تفادياً لازدواج تسجيل نفس الدفعة يدوياً. ── */}
+          <div><label className="block text-xs font-semibold text-[#555] mb-1">نوع المقبوض من</label><select value={rvModal.f.received_from_type} onChange={e => { const t = e.target.value as any; setRvPatSearch(""); setRvModal(m => ({ ...m, f: { ...m.f, received_from_type: t, received_from_id: "", received_from_name: "" } })); }} className="w-full h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }}><option value="patient">مريض</option><option value="other">أخرى</option></select></div>
           <div><label className="block text-xs font-semibold text-[#555] mb-1">اسم المقبوض من *</label>
             {rvModal.f.received_from_type === "patient" && (<div>
               <input autoComplete="off" value={rvPatSearch} onChange={e => { setRvPatSearch(e.target.value); setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); }} placeholder="ابحث باسم المريض أو رقم الملف..." className="w-full h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }} />
               {!rvModal.f.received_from_id && filtPats.length > 0 && <div className="rounded-lg overflow-hidden max-h-40 overflow-y-auto mt-1" style={{ border: "1px solid #DDD" }}>{filtPats.map(p => <button key={p.id} onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: p.name, received_from_id: p.id } })); setRvPatSearch(p.name); }} className="w-full text-right px-3 py-2 text-sm hover:bg-[#EBF3FB] border-b last:border-b-0" style={{ borderColor: "#F0F0F0" }}><span className="font-medium">{p.name}</span><span className="text-[#999] text-xs mr-2">{p.id}</span></button>)}</div>}
               {!rvModal.f.received_from_id && rvPatSearch.trim() && filtPats.length === 0 && <p className="text-xs text-[#D32F2F] mt-1">لا يوجد مريض مطابق — تأكد من الاسم أو اختر "أخرى"</p>}
               {rvModal.f.received_from_id && <p className="text-xs text-[#388E3C] flex items-center gap-1 mt-1"><Check size={11} />تم الاختيار: {rvModal.f.received_from_name} — <button className="underline text-[#D32F2F]" onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); setRvPatSearch(""); }}>تغيير</button></p>}
-            </div>)}
-            {rvModal.f.received_from_type === "insurance" && (<div>
-              <input autoComplete="off" value={rvInsSearch} onChange={e => { setRvInsSearch(e.target.value); setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); }} placeholder="ابحث في شركات التأمين..." className="w-full h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }} />
-              {!rvModal.f.received_from_id && filtIns.length > 0 && <div className="rounded-lg overflow-hidden max-h-40 overflow-y-auto mt-1" style={{ border: "1px solid #DDD" }}>{filtIns.map(ins => <button key={ins.id} onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: ins.name, received_from_id: String(ins.id) } })); setRvInsSearch(ins.name); }} className="w-full text-right px-3 py-2 text-sm hover:bg-[#EBF3FB] border-b last:border-b-0" style={{ borderColor: "#F0F0F0" }}>{ins.name}</button>)}</div>}
-              {!rvModal.f.received_from_id && rvInsSearch.trim() && filtIns.length === 0 && <p className="text-xs text-[#D32F2F] mt-1">لا توجد شركة مطابقة — تأكد من الاسم أو اختر "أخرى"</p>}
-              {rvModal.f.received_from_id && <p className="text-xs text-[#388E3C] flex items-center gap-1 mt-1"><Check size={11} />تم الاختيار: {rvModal.f.received_from_name} — <button className="underline text-[#D32F2F]" onClick={() => { setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: "", received_from_id: "" } })); setRvInsSearch(""); }}>تغيير</button></p>}
             </div>)}
             {rvModal.f.received_from_type === "other" && <input type="text" autoComplete="off" value={rvModal.f.received_from_name} onChange={e => setRvModal(m => ({ ...m, f: { ...m.f, received_from_name: e.target.value } }))} placeholder="اسم الجهة / الشخص..." className="w-full h-9 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }} />}
           </div>
@@ -13759,6 +13829,7 @@ function DeptDrawerScreen({ dept, deptName, drawers, doDeposit, doWithdraw, empl
   const [depositAmt, setDepositAmt] = useState(""); const [depositTitle, setDepositTitle] = useState("");
   const [withdrawAmt, setWithdrawAmt] = useState(""); const [withdrawTitle, setWithdrawTitle] = useState(""); const [withdrawBen, setWithdrawBen] = useState("");
   const [openingModal, setOpeningModal] = useState(false); const [openingAmt, setOpeningAmt] = useState(String(drawer.openingBalance ?? 0));
+  const [settleModal, setSettleModal] = useState<Invoice | null>(null); const [settleAmt, setSettleAmt] = useState(""); const [settling, setSettling] = useState(false);
   const deptEmployees = employees.filter(e => e.dept === dept);
   const deptInvoices = invoices.filter(i => i.dept === dept);
   const totalIn = (drawer.txs || []).filter(t => t.type === "in").reduce((s, t) => s + t.amount, 0);
@@ -13789,18 +13860,30 @@ function DeptDrawerScreen({ dept, deptName, drawers, doDeposit, doWithdraw, empl
     setOpeningModal(false);
     toast("تم تعديل الرصيد الافتتاحي ✓", "success");
   };
-  const settleInvoice = async (inv: Invoice) => {
-    if (!window.confirm(`تسوية فاتورة ${inv.company} بمبلغ ${fmt(inv.remaining)}؟`)) return;
+  // ── فتح تسوية الفاتورة: مبلغ الدفعة يُدخل يدوياً بدل تسويتها بالكامل مرة
+  //    واحدة إجبارياً — شركة التأمين ممكن تدفع جزء من الفاتورة، والباقي يضل
+  //    "متبقي" بحالة "جزئي" لحين تحصيله لاحقاً بدفعة/دفعات إضافية. ──
+  const openSettleInvoice = (inv: Invoice) => { setSettleModal(inv); setSettleAmt(String(inv.remaining)); };
+  const confirmSettleInvoice = async () => {
+    if (!settleModal) return;
+    const amt = parseFloat(settleAmt) || 0;
+    if (amt <= 0) { toast("أدخل مبلغ الدفعة", "error"); return; }
+    if (amt > settleModal.remaining) { toast("المبلغ أكبر من المتبقي على الفاتورة", "error"); return; }
+    setSettling(true);
     try {
-      const newPaid = inv.total;
-      await api.finance.invoices.update(inv.id, { paid: newPaid, status: "paid" });
-      setInvoices?.(p => p.map(x => x.id === inv.id ? { ...x, paid: newPaid, remaining: 0, status: "paid" as const } : x));
+      const newPaid = settleModal.paid + amt;
+      const newRemaining = settleModal.total - newPaid;
+      const newStatus: Invoice["status"] = newRemaining <= 0 ? "paid" : "partial";
+      await api.finance.invoices.update(settleModal.id, { paid: newPaid, status: newStatus });
+      setInvoices?.(p => p.map(x => x.id === settleModal.id ? { ...x, paid: newPaid, remaining: Math.max(0, newRemaining), status: newStatus } : x));
       // ── فواتير هذا النظام كلها ديون مستحقة للعيادة على شركات التأمين (مش
       //    فواتير موردين نحن ندفعها) — تسويتها معناها استلام فلوس فعلياً، فلازم
       //    تُضاف للصندوق (doDeposit) وليس تُخصم منه (doWithdraw كان معكوس). ──
-      doDeposit(dept, inv.remaining, `تحصيل من شركة تأمين — ${inv.company}`, "تحصيل تأمين");
-      toast("تم تحصيل مبلغ الفاتورة من شركة التأمين ✓", "success");
+      doDeposit(dept, amt, `تحصيل من شركة تأمين — ${settleModal.company}`, "تحصيل تأمين");
+      toast(newStatus === "paid" ? "تم تحصيل كامل مبلغ الفاتورة من شركة التأمين ✓" : `تم تسجيل دفعة جزئية ${fmt(amt)} — المتبقي ${fmt(Math.max(0, newRemaining))} ✓`, "success");
+      setSettleModal(null); setSettleAmt("");
     } catch { toast("خطأ في تسوية الفاتورة", "error"); }
+    finally { setSettling(false); }
   };
   return (
     <div className="space-y-5">
@@ -13900,7 +13983,7 @@ function DeptDrawerScreen({ dept, deptName, drawers, doDeposit, doWithdraw, empl
                   <div className="flex items-center gap-2">
                     <span className="text-xs px-2 py-1 rounded-full" style={{ background: inv.status === "paid" ? "#E8F5E9" : inv.status === "partial" ? "#FFF8E1" : "#FFEBEE", color: inv.status === "paid" ? "#388E3C" : inv.status === "partial" ? "#FF8F00" : "#D32F2F" }}>{inv.status === "paid" ? "مدفوعة" : inv.status === "partial" ? "جزئي" : "غير مدفوعة"}</span>
                     {perms.canDrawerSettleInvoices && inv.status !== "paid" && (
-                      <Btn variant="outline" onClick={() => settleInvoice(inv)}>تسوية</Btn>
+                      <Btn variant="outline" onClick={() => openSettleInvoice(inv)}>تسوية</Btn>
                     )}
                   </div>
                 </div>
@@ -13937,6 +14020,29 @@ function DeptDrawerScreen({ dept, deptName, drawers, doDeposit, doWithdraw, empl
             <Btn variant="primary" onClick={saveOpening}>💾 حفظ</Btn>
           </div>
         </div>
+      </Modal>
+
+      <Modal open={!!settleModal} onClose={() => { setSettleModal(null); setSettleAmt(""); }} title={`تحصيل من شركة تأمين — ${settleModal?.company || ""}`}>
+        {settleModal && (
+          <div className="space-y-3">
+            <div className="p-3 rounded-xl text-xs" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}>
+              <p>إجمالي الفاتورة: <strong>{fmt(settleModal.total)}</strong></p>
+              <p>المحصَّل سابقاً: <strong className="text-[#388E3C]">{fmt(settleModal.paid)}</strong></p>
+              <p>المتبقي: <strong className="text-[#D32F2F]">{fmt(settleModal.remaining)}</strong></p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">مبلغ الدفعة المستلَمة الآن (₪)</label>
+              <input type="number" value={settleAmt} onChange={e => setSettleAmt(e.target.value)} placeholder={`الحد الأقصى ${fmt(settleModal.remaining)}`} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #DDD" }} />
+              {settleAmt && parseFloat(settleAmt) > settleModal.remaining && <p className="text-xs text-[#D32F2F]">المبلغ أكبر من المتبقي على الفاتورة</p>}
+              {settleAmt && parseFloat(settleAmt) > 0 && parseFloat(settleAmt) < settleModal.remaining && <p className="text-xs text-[#FF8F00]">دفعة جزئية — سيبقى المتبقي {fmt(settleModal.remaining - parseFloat(settleAmt))} بحالة "جزئي"</p>}
+              {settleAmt && parseFloat(settleAmt) === settleModal.remaining && <p className="text-xs text-[#388E3C]">تسوية كاملة — ستتحول الفاتورة لحالة "مدفوعة"</p>}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Btn variant="outline" onClick={() => { setSettleModal(null); setSettleAmt(""); }}>إلغاء</Btn>
+              <Btn variant="primary" loading={settling} disabled={!settleAmt || parseFloat(settleAmt) <= 0 || parseFloat(settleAmt) > settleModal.remaining} onClick={confirmSettleInvoice}>💰 تسجيل الدفعة</Btn>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
@@ -15954,7 +16060,7 @@ export default function App() {
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
       case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />;
-      case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} />;
+      case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} setInvoices={setInvoices} doDeposit={doDeposit} setReceiptVouchers={setReceiptVouchersGlobal} isAdmin />;
       case "attendance": return <AttendanceScreen key={dept || "surgery"} dept={dept || "lab"} attendance={attendance} setAttendance={setAttendance} loggedUser={loggedUser} staffList={staffList} toast={toast} customDepts={customDepts} />;
       case "backup": return <BackupScreen toast={toast} />;
       case "print-settings": return <PrintSettingsScreen toast={toast} />;
