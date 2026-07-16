@@ -59,6 +59,12 @@ function buildHeaders(extra?: HeadersInit): HeadersInit {
   return { ...h, ...(extra as Record<string, string> ?? {}) };
 }
 
+// شكل رسالة الخطأ الذي يُرجعه middleware/adminAuth.js حصراً عند جلسة غير
+// صالحة/منتهية فعلياً — نستخدمه للتمييز بين 401/403 "حقيقي" صادر عن نظامنا
+// وبين 401/403 صادر عن طبقة أخرى (مثل حماية الاستضافة المشتركة/WAF ضد كثرة
+// الطلبات) لا علاقة له بصلاحية الجلسة إطلاقاً.
+const _AUTH_ERROR_MARKERS = ["جلسة منتهية أو غير صالحة", "مطلوب تسجيل الدخول كمدير"];
+
 async function request<T>(path: string, opts?: RequestInit): Promise<T | null> {
   try {
     const res = await fetch(`${BASE}${path}`, {
@@ -66,12 +72,21 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T | null> {
       ...opts,
     });
     if (res.status === 401 || res.status === 403) {
-      // جلسة منتهية/غير صالحة: لا نُرجع جسم رسالة الخطأ كأنه بيانات صحيحة —
-      // نمسح التوكن المحلي ونُطلق معالج انتهاء الجلسة، ونعيد null (نفس القيمة
-      // التي كانت تُرجع أصلاً عند فشل الشبكة، فكل الاستدعاءات الحالية متوافقة
-      // معها دون أي تعديل إضافي بمواقع الاستدعاء)
-      _adminToken = null;
-      _notifyAuthExpired();
+      // ── نتحقق أولاً إن الرد فعلاً جاي من middleware المصادقة عندنا (JSON
+      //    بنفس رسائل الخطأ المعروفة) قبل ما نعتبرها "جلسة منتهية" ونسجّل
+      //    خروج المستخدم تلقائياً. كانت الشيفرة القديمة تصدّق أي 401/403 —
+      //    وبما إن النظام يستطلع عشرات نقاط الـ API دورياً، أي حظر مؤقت من
+      //    الاستضافة (rate limiting) لضغط الطلبات كان يُفسَّر خطأً على إنه
+      //    انتهاء جلسة حقيقي ويطلع المستخدم من حسابه رغم إن جلسته سليمة تماماً ──
+      let isRealAuthError = false;
+      try {
+        const body = await res.clone().json();
+        isRealAuthError = typeof body?.error === "string" && _AUTH_ERROR_MARKERS.some(m => body.error.includes(m));
+      } catch { /* رد غير JSON — مش من نظامنا، إذاً مش انتهاء جلسة حقيقي */ }
+      if (isRealAuthError) {
+        _adminToken = null;
+        _notifyAuthExpired();
+      }
       return null;
     }
     if (!res.ok) {
@@ -183,7 +198,12 @@ export const api = {
         const headers: Record<string, string> = {};
         if (_tok) headers["Authorization"] = `Bearer ${_tok}`;
         const res = await fetch(`${BASE}/sessions/${sessionId}/files`, { method: "POST", headers, body: fd });
-        if (res.status === 401 || res.status === 403) { _adminToken = null; _notifyAuthExpired(); throw new Error("Session expired"); }
+        if (res.status === 401 || res.status === 403) {
+          let isRealAuthError = false;
+          try { const body = await res.clone().json(); isRealAuthError = typeof body?.error === "string" && _AUTH_ERROR_MARKERS.some(m => body.error.includes(m)); } catch { }
+          if (isRealAuthError) { _adminToken = null; _notifyAuthExpired(); throw new Error("Session expired"); }
+          throw new Error("Upload failed");
+        }
         if (!res.ok) throw new Error("Upload failed");
         return res.json();
       },

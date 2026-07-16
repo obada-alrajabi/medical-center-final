@@ -47,7 +47,7 @@ import {
 } from "./constants";
 import {
   fmt, _JLM_OFFSET, _jlmNow, _nowDT, _today, _isoDate, _localISO, _nowHHMM,
-  makeDefaultDeptPerms, inRangeDDMMYYYY,
+  makeDefaultDeptPerms, inRangeDDMMYYYY, hoursBetweenTimes, staffHourlyRate,
 } from "./utils";
 import { fireToast } from "./toastStore";
 import { openPrintPdf } from "./printPdfEngine";
@@ -9263,7 +9263,7 @@ function ExternalDebtsScreen({ externalDebts, setExternalDebts, drawers, doWithd
 
 // ─── PAYROLL ───────────────────────────────────────────────────────────────────
 
-function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], staffList = [], sessions = [], paymentVouchers = [], setPaymentVouchers }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[]; setPaymentVouchers?: React.Dispatch<React.SetStateAction<any[]>> }) {
+function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], staffList = [], sessions = [], paymentVouchers = [], setPaymentVouchers, attendance = [] }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[]; setPaymentVouchers?: React.Dispatch<React.SetStateAction<any[]>>; attendance?: AttendanceRecord[] }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [confirmModal, setConfirmModal] = useState<Employee | null>(null); const [paying, setPaying] = useState(false);
   const [payFrom, setPayFrom] = useState(""); const [payTo, setPayTo] = useState("");
@@ -9282,15 +9282,23 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const rangeExpVouchers = paymentVouchers
       .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name && inRangeDDMMYYYY(v.date, from, to));
     const rangeExpenses = rangeExpVouchers.reduce((s, v: any) => s + (Number(v.amount) || 0), 0);
-    const net = Math.max(0, e.salary + commission - rangeExpenses - totalAdvances);
-    return { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, totalAdvances, rangeExpenses, net };
+    // ── أجر الوردية للفترة المحدَّدة تحديداً (وليس كل الأرشيف) — نفس منطق
+    //    getShiftPay لكن محسوباً هون مباشرة عشان نقدر نمرر from/to الفترة ──
+    const isShift = sm?.salaryType === "shift";
+    const shiftRate = isShift ? staffHourlyRate(sm) : 0;
+    const shiftEmpId = sm?.nationalId || (sm ? String(sm.id) : "");
+    const shiftRecs = isShift ? attendance.filter(r => r.empId === shiftEmpId && inRangeDDMMYYYY(r.date, from, to)) : [];
+    const shiftHours = shiftRecs.reduce((s, r) => s + (r.totalHours ?? hoursBetweenTimes(r.checkIn, r.checkOut) ?? 0), 0);
+    const shiftPay = Math.round(shiftHours * shiftRate * 100) / 100;
+    const net = Math.max(0, e.salary + commission + shiftPay - rangeExpenses - totalAdvances);
+    return { sm, isFix, isShift, commission, rangeSessions, rangeRevenue, pendingAdvances, totalAdvances, rangeExpenses, shiftHours, shiftRate, shiftPay, net };
   };
   const printPayslip = (e: Employee, from: string, to: string) => {
-    const { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, rangeExpenses, net } = getPayslipData(e, from, to);
+    const { sm, isFix, isShift, commission, rangeSessions, rangeRevenue, pendingAdvances, rangeExpenses, shiftHours, shiftRate, shiftPay, net } = getPayslipData(e, from, to);
     const periodLabel = from || to ? `${from ? from.split("-").reverse().join("/") : "..."} → ${to ? to.split("-").reverse().join("/") : "..."}` : new Date().toLocaleDateString("ar-EG", { month: "long", year: "numeric" });
     const deptLabel = allDepts.find(d => d.id === e.dept)?.short || e.dept;
-    const salaryTypeLabel = isFix ? "راتب ثابت شهري" : sm?.salaryType === "percentage" ? `نسبة ${sm!.percentageValue}% من الإيرادات` : "راتب مختلط";
-    const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${e.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${sm?.jobTitle || e.role || "—"}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptLabel}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody><tr><td>الراتب الأساسي</td><td>${salaryTypeLabel}</td><td class="in">${fmt(e.salary)}</td></tr>${commission > 0 ? `<tr><td>نسبة الإيرادات الفردية</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${sm?.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${rangeExpenses > 0 ? `<tr><td>خصومات</td><td>مصروفات شخصية مسجَّلة بالفترة</td><td class="out">−${fmt(rangeExpenses)}</td></tr>` : ""}${pendingAdvances.map(a => `<tr><td>سلفة (${a.date})</td><td>${a.note || "سلفة موظف"}</td><td class="out">−${fmt(a.amount)}</td></tr>`).join("")}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(net)}</td></tr></tbody></table>${rangeSessions.length > 0 ? `<h2>سجل الجلسات — ${rangeSessions.length} جلسة (إجمالي الإيرادات: ${fmt(rangeRevenue)})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>المبلغ الكلي</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${rangeSessions.slice(0, 30).map(s => `<tr><td>${s.date}</td><td>${s.dept}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : ""}">${s.debt > 0 ? "−" + fmt(s.debt) : "—"}</td></tr>`).join("")}${rangeSessions.length > 30 ? `<tr><td colspan="5" style="text-align:center;color:#666;font-style:italic">... و${rangeSessions.length - 30} جلسة أخرى</td></tr>` : ""}</tbody></table>` : ""}<div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">مسؤول الرواتب</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
+    const salaryTypeLabel = isShift ? "أجر بالوردية (بالساعة)" : isFix ? "راتب ثابت شهري" : sm?.salaryType === "percentage" ? `نسبة ${sm!.percentageValue}% من الإيرادات` : "راتب مختلط";
+    const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${e.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${sm?.jobTitle || e.role || "—"}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptLabel}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody>${isShift ? `<tr><td>أجر الوردية</td><td>${fmt(shiftRate)}/ساعة × ${shiftHours} ساعة عمل فعلية</td><td class="in">${fmt(shiftPay)}</td></tr>` : `<tr><td>الراتب الأساسي</td><td>${salaryTypeLabel}</td><td class="in">${fmt(e.salary)}</td></tr>`}${commission > 0 ? `<tr><td>نسبة الإيرادات الفردية</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${sm?.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${rangeExpenses > 0 ? `<tr><td>خصومات</td><td>مصروفات شخصية مسجَّلة بالفترة</td><td class="out">−${fmt(rangeExpenses)}</td></tr>` : ""}${pendingAdvances.map(a => `<tr><td>سلفة (${a.date})</td><td>${a.note || "سلفة موظف"}</td><td class="out">−${fmt(a.amount)}</td></tr>`).join("")}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(net)}</td></tr></tbody></table>${rangeSessions.length > 0 ? `<h2>سجل الجلسات — ${rangeSessions.length} جلسة (إجمالي الإيرادات: ${fmt(rangeRevenue)})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>المبلغ الكلي</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${rangeSessions.slice(0, 30).map(s => `<tr><td>${s.date}</td><td>${s.dept}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : ""}">${s.debt > 0 ? "−" + fmt(s.debt) : "—"}</td></tr>`).join("")}${rangeSessions.length > 30 ? `<tr><td colspan="5" style="text-align:center;color:#666;font-style:italic">... و${rangeSessions.length - 30} جلسة أخرى</td></tr>` : ""}</tbody></table>` : ""}<div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">مسؤول الرواتب</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
     printHtml(html, `قسيمة راتب — ${e.name} — ${periodLabel}`, from, to);
   };
   // ── مطابقة موظف الرواتب بحساب الموظف: نفضّل الربط الحقيقي عبر staffId
@@ -9308,6 +9316,24 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name && !v.applied_to_payroll);
   const getExpenses = (e: Employee) => getUnappliedVouchers(e)
     .reduce((s, v: any) => s + (Number(v.amount) || 0), 0);
+  // ── أجر موظفي "الوردية" (salaryType === "shift"): كانت قيمة الوردية
+  //    (shift_amount) لا تصل لحساب الراتب إطلاقاً بأي مكان — الموظف كان
+  //    يُدفَع له employees.salary فقط (عادة صفر/فارغ لهذا النوع). الحل: نحسب
+  //    أجر الساعة (قيمة الوردية ÷ مدة الوردية بالساعات، staffHourlyRate)، ثم
+  //    نضربه بمجموع الساعات الفعلية المسجَّلة بسجلات الدوام خلال الفترة —
+  //    فسواء داوم الموظف أكثر أو أقل من وردية الاسمية بأي يوم، الحساب يبقى
+  //    دقيقاً تناسبياً (10 ساعات وردية بقيمة 100₪ = 10₪/ساعة، يتضاعف أو يقل
+  //    حسب الساعات الفعلية بلا أي قيد أو تصحيح تعسفي) ──
+  const getShiftPay = (e: Employee, from?: string, to?: string) => {
+    const sm = getStaffMember(e);
+    if (!sm || sm.salaryType !== "shift") return 0;
+    const rate = staffHourlyRate(sm);
+    if (rate <= 0) return 0;
+    const empId = sm.nationalId || String(sm.id);
+    const recs = attendance.filter(r => r.empId === empId && inRangeDDMMYYYY(r.date, from || "", to || ""));
+    const totalHrs = recs.reduce((s, r) => s + (r.totalHours ?? hoursBetweenTimes(r.checkIn, r.checkOut) ?? 0), 0);
+    return Math.round(totalHrs * rate * 100) / 100;
+  };
   const getCommission = (e: Employee) => {
     const sm = getStaffMember(e);
     if (!sm || sm.salaryType === "fixed") return 0;
@@ -9316,7 +9342,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
   const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).reduce((s, a) => s + a.amount, 0);
-  const calcNet = (e: Employee) => Math.max(0, e.salary + getCommission(e) - getExpenses(e) - getTotalAdvances(e));
+  const calcNet = (e: Employee) => Math.max(0, e.salary + getCommission(e) + getShiftPay(e) - getExpenses(e) - getTotalAdvances(e));
   // If the employee's payroll config lists more than one drawer to deduct from, split the net
   // salary proportionally to how much revenue he actually generated in each of those departments.
   // Falls back to a single-department withdrawal (unchanged legacy behavior) otherwise.
@@ -9442,7 +9468,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
       <Modal open={!!payslipModal} onClose={() => setPayslipModal(null)} title={`قسيمة راتب — ${payslipModal?.emp.name || ""}`}
         footer={<><Btn variant="primary" onClick={() => payslipModal && printPayslip(payslipModal.emp, payslipModal.from, payslipModal.to)}><Printer size={16} />طباعة القسيمة</Btn><Btn variant="outline" onClick={() => setPayslipModal(null)}>إغلاق</Btn></>}>
         {payslipModal && (() => {
-          const { sm, isFix, commission, rangeSessions, rangeRevenue, pendingAdvances, net } = getPayslipData(payslipModal.emp, payslipModal.from, payslipModal.to);
+          const { sm, isFix, isShift, commission, rangeSessions, rangeRevenue, pendingAdvances, shiftHours, shiftRate, shiftPay, net } = getPayslipData(payslipModal.emp, payslipModal.from, payslipModal.to);
           const e = payslipModal.emp;
           const now2 = new Date();
           const prevStart = _isoDate(new Date(now2.getFullYear(), now2.getMonth() - 1, 1));
@@ -9471,7 +9497,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
             <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #E0E0E0" }}>
               <div className="p-3 font-semibold text-sm" style={{ backgroundColor: "#F5F5F5", borderBottom: "1px solid #E0E0E0" }}>تفاصيل الاحتساب</div>
               <div className="divide-y text-sm">
-                <div className="flex justify-between items-center p-3"><span className="text-[#555]">الراتب الأساسي</span><strong>{fmt(e.salary)}</strong></div>
+                {isShift ? <div className="flex justify-between items-center p-3"><span className="text-[#555]">أجر الوردية ({fmt(shiftRate)}/ساعة × {shiftHours} ساعة)</span><strong>{fmt(shiftPay)}</strong></div> : <div className="flex justify-between items-center p-3"><span className="text-[#555]">الراتب الأساسي</span><strong>{fmt(e.salary)}</strong></div>}
                 {commission > 0 && <div className="flex justify-between items-center p-3 text-[#388E3C]"><span>+ نسبة الإيرادات ({sm?.percentageValue}% × {fmt(rangeRevenue)} من {rangeSessions.length} جلسة)</span><strong>+{fmt(commission)}</strong></div>}
                 {!commission && !isFix && <div className="flex justify-between items-center p-3 text-[#999]"><span>+ نسبة الإيرادات ({sm?.percentageValue}% — لا جلسات في الفترة)</span><strong>—</strong></div>}
                 {getExpenses(e) > 0 && <div className="flex justify-between items-center p-3 text-[#FF8F00]"><span>− الخصومات</span><strong>−{fmt(getExpenses(e))}</strong></div>}
@@ -10719,7 +10745,14 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   const supplierTotal = supplierReqs.reduce((s, r) => s + r.totalAmount, 0); const supplierPaid = supplierReqs.reduce((s, r) => s + (r.paidAmount || 0), 0);
   // ── Tab 4
   const [p4Dept, setP4Dept] = useState("all");
-  const deptRevs = allDepts.map(d => { const rev = sessions.filter(s => s.dept === d.id && inRange(s.date)).reduce((s, x) => s + x.amount, 0); const wd = (drawers[d.id]?.txs || []).filter(t => t.type === "out" && inRange(t.date)).reduce((s, t) => s + t.amount, 0) || 0; return { name: d.short, id: d.id, rev, wd, net: rev - wd }; });
+  // ── تصحيح: كان "rev" هون يُحسب من x.amount (قيمة الفاتورة الكاملة المفروضة
+  //    على المريض، تشمل الدين غير المُحصَّل) بدل x.paid (المبلغ المقبوض فعلياً
+  //    بالكاش) — فقسم عليه ديون كثيرة وسندات قبض صفر كان يظهر "بإيرادات" كبيرة
+  //    رغم إنه ولا قرش دخل فعلياً لصندوقه، بتناقض تام مع شاشة "السندات
+  //    وحساباتها" وصندوق القسم الحقيقي لنفس القسم. باقي شاشات النظام كلها
+  //    (الملخص المالي، الربح، إلخ) تستخدم paid أصلاً — هذا التقرير وحده كان
+  //    الاستثناء الشاذ. ──
+  const deptRevs = allDepts.map(d => { const rev = sessions.filter(s => s.dept === d.id && inRange(s.date)).reduce((s, x) => s + x.paid, 0); const wd = (drawers[d.id]?.txs || []).filter(t => t.type === "out" && inRange(t.date)).reduce((s, t) => s + t.amount, 0) || 0; return { name: d.short, id: d.id, rev, wd, net: rev - wd }; });
   const p4Data = p4Dept === "all" ? deptRevs : deptRevs.filter(d => d.id === p4Dept);
   // ── Tab 5
   const [p5Fields, setP5Fields] = useState(["الاسم", "القسم", "الدين"]);
@@ -12969,17 +13002,24 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   const [payTo, setPayTo] = useState(_localISO());
   const isFixSalary = staff.salaryType === "fixed" || staff.salaryType === "both";
   const isPctSalary = staff.salaryType === "percentage" || staff.salaryType === "both";
+  const isShiftSalary = staff.salaryType === "shift";
   const pDepts = effectivePercentageDepts(staff as any);
   const rangeSessions = sessions.filter(s => s.doctor === staff.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, payFrom, payTo));
   const rangeRevenue = rangeSessions.reduce((sum, s) => sum + s.paid, 0);
   const commission = isPctSalary ? Math.round(rangeRevenue * ((staff.percentageValue || 0) / 100)) : 0;
   const rangeExpenseVouchers = myExpenseVouchers.filter(t => inRangeDDMMYYYY(t.date, payFrom, payTo));
   const rangePersonalExp = rangeExpenseVouchers.reduce((s, t) => s + t.amount, 0);
-  const netPayslip = Math.max(0, (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission - rangePersonalExp - totalPending);
+  // ── نفس منطق getShiftPay بشاشة الرواتب: أجر الساعة (قيمة الوردية ÷ مدتها)
+  //    × مجموع الساعات الفعلية المسجَّلة بسجلات الدوام خلال الفترة المحدَّدة ──
+  const shiftRate = isShiftSalary ? staffHourlyRate(staff) : 0;
+  const rangeShiftAttendance = isShiftSalary ? myAttendance.filter(a => inRangeDDMMYYYY(a.date, payFrom, payTo)) : [];
+  const shiftHours = rangeShiftAttendance.reduce((s, a) => s + (a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0), 0);
+  const shiftPay = Math.round(shiftHours * shiftRate * 100) / 100;
+  const netPayslip = Math.max(0, (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay - rangePersonalExp - totalPending);
   const printMyPayslip = () => {
     const periodLabel = `${payFrom.split("-").reverse().join("/")} → ${payTo.split("-").reverse().join("/")}`;
-    const salaryTypeLabel = isFixSalary && isPctSalary ? "راتب ثابت + نسبة" : isFixSalary ? "راتب ثابت شهري" : isPctSalary ? `نسبة ${staff.percentageValue}% من الإيرادات` : "—";
-    const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${staff.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${staff.jobTitle || "—"}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody>${isFixSalary ? `<tr><td>الراتب الأساسي</td><td>راتب ثابت</td><td class="in">${fmt(staff.fixedSalary || 0)}</td></tr>` : ""}${commission > 0 ? `<tr><td>نسبة الإيرادات</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${staff.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${rangeExpenseVouchers.map(t => `<tr><td>مصروف شخصي (${t.date})</td><td>${t.title || "—"}</td><td class="out">−${fmt(t.amount)}</td></tr>`).join("")}${totalPending > 0 ? `<tr><td>سلف معلقة</td><td>${pendingAdv.length} سلفة</td><td class="out">−${fmt(totalPending)}</td></tr>` : ""}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(netPayslip)}</td></tr></tbody></table><div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
+    const salaryTypeLabel = isShiftSalary ? "أجر بالوردية (بالساعة)" : isFixSalary && isPctSalary ? "راتب ثابت + نسبة" : isFixSalary ? "راتب ثابت شهري" : isPctSalary ? `نسبة ${staff.percentageValue}% من الإيرادات` : "—";
+    const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">اسم الموظف</div><div class="kpi-v">${staff.name}</div></div><div class="kpi-box"><div class="kpi-l">المسمى الوظيفي</div><div class="kpi-v">${staff.jobTitle || "—"}</div></div><div class="kpi-box"><div class="kpi-l">نوع الراتب</div><div class="kpi-v">${salaryTypeLabel}</div></div><div class="kpi-box" style="flex:2"><div class="kpi-l">فترة الاحتساب</div><div class="kpi-v">${periodLabel}</div></div></div><h2>تفاصيل الراتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ (₪)</th></tr></thead><tbody>${isFixSalary ? `<tr><td>الراتب الأساسي</td><td>راتب ثابت</td><td class="in">${fmt(staff.fixedSalary || 0)}</td></tr>` : ""}${isShiftSalary ? `<tr><td>أجر الوردية</td><td>${fmt(shiftRate)}/ساعة × ${shiftHours} ساعة عمل فعلية</td><td class="in">${fmt(shiftPay)}</td></tr>` : ""}${commission > 0 ? `<tr><td>نسبة الإيرادات</td><td>${rangeSessions.length} جلسة — إجمالي إيرادات: ${fmt(rangeRevenue)} × ${staff.percentageValue}%</td><td class="in">+${fmt(commission)}</td></tr>` : ""}${rangeExpenseVouchers.map(t => `<tr><td>مصروف شخصي (${t.date})</td><td>${t.title || "—"}</td><td class="out">−${fmt(t.amount)}</td></tr>`).join("")}${totalPending > 0 ? `<tr><td>سلف معلقة</td><td>${pendingAdv.length} سلفة</td><td class="out">−${fmt(totalPending)}</td></tr>` : ""}<tr style="background:#E8F5E9;font-weight:bold;font-size:1.05em"><td colspan="2">الصافي المستحق</td><td class="in">${fmt(netPayslip)}</td></tr></tbody></table><div style="margin-top:60px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">توقيع الموظف</div></div><div style="text-align:center"><div style="border-top:1px solid #333;width:180px;padding-top:8px">المدير / مدير المركز</div></div></div>`;
     printHtml(html, `قسيمة راتب — ${staff.name} — ${periodLabel}`, payFrom, payTo);
   };
   const submitAdvanceReq = () => {
@@ -13040,6 +13080,7 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
         </div>
         <div className="space-y-2">
           {isFixSalary && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">الراتب الأساسي</span><span className="text-sm font-bold text-[#388E3C]">{fmt(staff.fixedSalary || 0)}</span></div>}
+          {isShiftSalary && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">أجر الوردية ({fmt(shiftRate)}/ساعة × {shiftHours} ساعة)</span><span className="text-sm font-bold text-[#388E3C]">{fmt(shiftPay)}</span></div>}
           {commission > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">نسبة الإيرادات ({rangeSessions.length} جلسة × {staff.percentageValue}%)</span><span className="text-sm font-bold text-[#388E3C]">+{fmt(commission)}</span></div>}
           {rangePersonalExp > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">مصروفات شخصية بالفترة ({rangeExpenseVouchers.length})</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(rangePersonalExp)}</span></div>}
           {totalPending > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">سلف معلقة</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(totalPending)}</span></div>}
@@ -14613,23 +14654,18 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
     return true;
   }).sort((a, b) => b.id - a.id);
 
+  // ── حساب الساعات بين وقتين (بما فيها الورديات الليلية العابرة لمنتصف الليل)
+  //    صار مصدره الدالة المشتركة hoursBetweenTimes بملف utils.ts بدل نسخة
+  //    محلية مكررة — نفس الدالة المستخدمة الآن بحساب الرواتب أيضاً، فلا يوجد
+  //    مجال لتباين النتيجة بين شاشة الدوام وشاشة الرواتب بعد اليوم ──
   const calcDuration = (ci: string, co: string) => {
-    if (!ci || !co) return "—";
-    const [h1, m1] = ci.split(":").map(Number);
-    const [h2, m2] = co.split(":").map(Number);
-    const mins = (h2 * 60 + m2) - (h1 * 60 + m1);
-    if (mins <= 0) return "—";
-    const h = Math.floor(mins / 60), m = mins % 60;
-    return `${h}س${m > 0 ? " " + m + "د" : ""}`;
+    const h = hoursBetweenTimes(ci, co);
+    if (h == null) return "—";
+    const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+    return `${hh}س${mm > 0 ? " " + mm + "د" : ""}`;
   };
 
-  const calcHoursNum = (ci: string, co: string) => {
-    if (!ci || !co) return undefined;
-    const [h1, m1] = ci.split(":").map(Number);
-    const [h2, m2] = co.split(":").map(Number);
-    const mins = (h2 * 60 + m2) - (h1 * 60 + m1);
-    return mins > 0 ? Math.round((mins / 60) * 100) / 100 : undefined;
-  };
+  const calcHoursNum = (ci: string, co: string) => hoursBetweenTimes(ci, co) ?? undefined;
 
   const formDuration = calcDuration(form.checkIn, form.checkOut);
   const formHours = calcHoursNum(form.checkIn, form.checkOut);
@@ -14638,7 +14674,8 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
 
   const handleAdd = () => {
     if (!form.date || !form.checkIn || !form.checkOut) { toast("يرجى تحديد التاريخ وساعة البدء والانتهاء", "error"); return; }
-    if (formDuration === "—") { toast("ساعة الانتهاء يجب أن تكون بعد ساعة البدء", "error"); return; }
+    // ملاحظة: الورديات الليلية (خروج بالصباح بعد دخول بالليل) مدعومة ومحسوبة صح تلقائياً — هذا الخطأ يظهر فقط لو الوقتين متطابقين تماماً
+    if (formDuration === "—") { toast("وقت الدخول والخروج غير صالحين (تأكد أنهما ليسا نفس الوقت تماماً)", "error"); return; }
     const rec: AttendanceRecord = { id: Date.now(), empId: currentEmpId, empName: currentEmpName, dept, date: form.date, dayName: form.dayName, checkIn: form.checkIn, checkOut: form.checkOut, totalHours: formHours };
     setAttendance(p => [rec, ...p]);
     api.staff.attendance.create({ emp_id: rec.empId, emp_name: rec.empName, dept: rec.dept, date: rec.date, day_name: rec.dayName, check_in: rec.checkIn, check_out: rec.checkOut });
@@ -14672,12 +14709,25 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
     toast("تم حذف السجل", "warning");
   };
 
-  const statusBadge = (ci: string, co: string) => {
-    const h = calcHoursNum(ci, co) ?? 0;
-    if (h === 0) return <span className="px-2 py-0.5 rounded-full text-xs bg-[#FFEBEE] text-[#D32F2F] font-semibold">خطأ</span>;
-    if (h >= 8) return <span className="px-2 py-0.5 rounded-full text-xs bg-[#E8F5E9] text-[#388E3C] font-semibold">✅ كامل</span>;
-    if (h >= 4) return <span className="px-2 py-0.5 rounded-full text-xs bg-[#FFF8E1] text-[#FF8F00] font-semibold">⚡ جزئي</span>;
-    return <span className="px-2 py-0.5 rounded-full text-xs bg-[#FFEBEE] text-[#D32F2F] font-semibold">⏱ قصير</span>;
+  // ── إيجاد بيانات وردية الموظف نفسه (وليس عتبة ثابتة ٨ ساعات للجميع) ──
+  const findStaffShift = (empId: string) => staffList.find(s => s.nationalId === empId || String(s.id) === empId);
+  // ── الشارة الآن معلوماتية بحتة، مش تحقق حاجز: طبيعي جداً إن الموظف يداوم
+  //    أكتر أو أقل من ورديته المحددة (دوام إضافي، خروج مبكر بعذر، إلخ) — مافي
+  //    داعي نمنع أو "نخطّئ" هيك سجلات. الشارة القديمة كانت تستخدم عتبة ثابتة
+  //    (٨ ساعات = "كامل") بغض النظر عن وردية الموظف الفعلية، فموظف ورديته ٤
+  //    ساعات كان يظهر دايماً "جزئي"، وموظف ورديته ١٠ ساعات كان يظهر "كامل"
+  //    بعد ٨ بس. الآن نقارن الساعات الفعلية بمدة *وردية هذا الموظف تحديداً*،
+  //    ونعرض الفرق كمعلومة فقط (مطابق / أكثر / أقل) — كل الحالات مقبولة. ──
+  const statusBadge = (ci: string, co: string, empId?: string) => {
+    const h = calcHoursNum(ci, co);
+    if (h == null || h <= 0) return <span className="px-2 py-0.5 rounded-full text-xs bg-[#FFEBEE] text-[#D32F2F] font-semibold">⚠ سجل غير صالح</span>;
+    const emp = empId ? findStaffShift(empId) : undefined;
+    const shiftHours = emp?.shiftStart && emp?.shiftEnd ? calcHoursNum(emp.shiftStart, emp.shiftEnd) : undefined;
+    if (shiftHours == null) return <span className="px-2 py-0.5 rounded-full text-xs bg-[#E8F5E9] text-[#388E3C] font-semibold">✅ {h}س</span>;
+    const diff = Math.round((h - shiftHours) * 100) / 100;
+    if (Math.abs(diff) < 0.05) return <span className="px-2 py-0.5 rounded-full text-xs bg-[#E8F5E9] text-[#388E3C] font-semibold">✅ مطابق للوردية ({h}س)</span>;
+    if (diff > 0) return <span className="px-2 py-0.5 rounded-full text-xs bg-[#E3F2FD] text-[#1565C0] font-semibold">🔼 أكثر من الوردية بـ{diff}س ({h}س)</span>;
+    return <span className="px-2 py-0.5 rounded-full text-xs bg-[#FFF8E1] text-[#FF8F00] font-semibold">🔽 أقل من الوردية بـ{Math.abs(diff)}س ({h}س)</span>;
   };
 
   const TH = ({ children }: { children: React.ReactNode }) => (
@@ -14698,7 +14748,22 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
         </div>
         <div className="flex gap-2">
           {isAdmin && <Badge color="info">{baseRecords.length} سجل إجمالي</Badge>}
-          <Btn variant="outline" small onClick={() => { const html = `<h2>سجل الدوام${isAdmin ? "" : " — " + deptLabel}</h2><table><thead><tr><th>#</th>${isAdmin ? "<th>الموظف</th><th>القسم</th>" : ""}<th>التاريخ</th><th>اليوم</th><th>بدء الدوام</th><th>انتهاء الدوام</th><th>إجمالي الساعات</th><th>الحالة</th></tr></thead><tbody>${records.map((r, i) => { const dur = calcDuration(r.checkIn, r.checkOut); const hrs = r.totalHours != null ? r.totalHours + "س" : dur; const h = r.totalHours ?? 0; return `<tr><td>${i + 1}</td>${isAdmin ? `<td>${r.empName}</td><td>${allDepts.find(d => d.id === r.dept)?.name || r.dept || "—"}</td>` : ""}<td>${r.date}</td><td>${r.dayName}</td><td>${r.checkIn || "—"}</td><td>${r.checkOut || "—"}</td><td>${hrs}</td><td>${h >= 8 ? "كامل" : h >= 4 ? "جزئي" : h > 0 ? "قصير" : "خطأ"}</td></tr>`; }).join("")}</tbody></table>`; printHtml(html, `دوام الموظفين${isAdmin ? "" : " — " + deptLabel}`, filterFrom, filterTo, true, isAdmin ? undefined : dept) }}><Printer size={14} />طباعة</Btn>
+          <Btn variant="outline" small onClick={() => {
+            // تصحيح: نفس منطق statusBadge (شارة معلوماتية مقارنة بوردية كل موظف
+            // تحديداً)، بدل عتبة ثابتة ٨ ساعات كانت تصنّف خطأً كل موظف وردية
+            // تفصيلية مختلفة (٤، ٦، ١٠ ساعات...)
+            const rowStatus = (r: AttendanceRecord) => {
+              const h = r.totalHours ?? calcHoursNum(r.checkIn, r.checkOut);
+              if (h == null || h <= 0) return "سجل غير صالح";
+              const emp = findStaffShift(r.empId);
+              const shiftHours = emp?.shiftStart && emp?.shiftEnd ? calcHoursNum(emp.shiftStart, emp.shiftEnd) : undefined;
+              if (shiftHours == null) return `${h}س`;
+              const diff = Math.round((h - shiftHours) * 100) / 100;
+              if (Math.abs(diff) < 0.05) return `مطابق للوردية (${h}س)`;
+              return diff > 0 ? `أكثر من الوردية بـ${diff}س (${h}س)` : `أقل من الوردية بـ${Math.abs(diff)}س (${h}س)`;
+            };
+            const html = `<h2>سجل الدوام${isAdmin ? "" : " — " + deptLabel}</h2><table><thead><tr><th>#</th>${isAdmin ? "<th>الموظف</th><th>القسم</th>" : ""}<th>التاريخ</th><th>اليوم</th><th>بدء الدوام</th><th>انتهاء الدوام</th><th>إجمالي الساعات</th><th>الحالة</th></tr></thead><tbody>${records.map((r, i) => { const dur = calcDuration(r.checkIn, r.checkOut); const hrs = r.totalHours != null ? r.totalHours + "س" : dur; return `<tr><td>${i + 1}</td>${isAdmin ? `<td>${r.empName}</td><td>${allDepts.find(d => d.id === r.dept)?.name || r.dept || "—"}</td>` : ""}<td>${r.date}</td><td>${r.dayName}</td><td>${r.checkIn || "—"}</td><td>${r.checkOut || "—"}</td><td>${hrs}</td><td>${rowStatus(r)}</td></tr>`; }).join("")}</tbody></table>`; printHtml(html, `دوام الموظفين${isAdmin ? "" : " — " + deptLabel}`, filterFrom, filterTo, true, isAdmin ? undefined : dept);
+          }}><Printer size={14} />طباعة</Btn>
         </div>
       </div>
 
@@ -14707,12 +14772,13 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
         const empSet = new Set(baseRecords.map(r => r.empId));
         const todayStr = todayDate;
         const todayRecs = baseRecords.filter(r => r.date === todayStr || r.date === todayStr.split("/").reverse().join("-"));
+        // تصحيح: كانت هاي إعادة حساب مستقلة عن calcHoursNum فيها نفس علة
+        // الورديات الليلية (بدون إضافة 24 ساعة لو الخروج أبكر من الدخول)،
+        // فبتختلف عن العدد المعروض بجدول السجلات. صارت تستخدم calcHoursNum
+        // نفسها (المُصحَّحة أعلاه) لتفادي أي تكرار/تباين مستقبلاً ──
         const totalHoursSum = baseRecords.reduce((s, r) => {
           if (r.totalHours != null) return s + r.totalHours;
-          const [h1, m1] = (r.checkIn || "0:0").split(":").map(Number);
-          const [h2, m2] = (r.checkOut || "0:0").split(":").map(Number);
-          const m = (h2 * 60 + m2) - (h1 * 60 + m1);
-          return s + (m > 0 ? m / 60 : 0);
+          return s + (calcHoursNum(r.checkIn, r.checkOut) ?? 0);
         }, 0);
         return (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -14916,6 +14982,7 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
                   <TH>بدء الدوام</TH>
                   <TH>انتهاء الدوام</TH>
                   <TH>⏱ إجمالي الساعات</TH>
+                  {isAdmin && <TH>💰 المستحق</TH>}
                   <TH>الحالة</TH>
                   <TH>إجراء</TH>
                 </tr>
@@ -14923,7 +14990,15 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
               <tbody>
                 {records.map((rec, i) => {
                   const dur = calcDuration(rec.checkIn, rec.checkOut);
-                  const hoursDisplay = rec.totalHours != null ? `${rec.totalHours}س` : dur;
+                  const hoursNum = rec.totalHours ?? calcHoursNum(rec.checkIn, rec.checkOut);
+                  const hoursDisplay = hoursNum != null ? `${hoursNum}س` : dur;
+                  // ── أجر هذا اليوم = الساعات الفعلية المسجَّلة × أجر الساعة
+                  //    (قيمة الوردية ÷ مدة الوردية بالساعات) — يُحسب بنفس النسبة
+                  //    سواء داوم الموظف أكثر أو أقل من وردية الاسمية، بلا أي
+                  //    تصحيح/تحديد تعسفي (انظر staffHourlyRate بملف utils.ts) ──
+                  const rowEmp = findStaffShift(rec.empId);
+                  const rowRate = rowEmp?.salaryType === "shift" ? staffHourlyRate(rowEmp) : 0;
+                  const rowPay = rowRate > 0 && hoursNum != null ? Math.round(hoursNum * rowRate * 100) / 100 : null;
                   return (
                     <tr key={rec.id} style={{ borderBottom: "1px solid #F0F0F0", backgroundColor: i % 2 === 0 ? "#fff" : "#FAFAFA" }}>
                       <td className="px-3 py-2.5 text-xs text-[#999]">{i + 1}</td>
@@ -14936,7 +15011,8 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
                       <td className="px-3 py-2.5">
                         <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ backgroundColor: "#EBF8F8", color: "#0D7377" }}>{hoursDisplay}</span>
                       </td>
-                      <td className="px-3 py-2.5">{statusBadge(rec.checkIn, rec.checkOut)}</td>
+                      {isAdmin && <td className="px-3 py-2.5 text-xs font-bold text-[#388E3C]">{rowPay != null ? fmt(rowPay) : "—"}</td>}
+                      <td className="px-3 py-2.5">{statusBadge(rec.checkIn, rec.checkOut, rec.empId)}</td>
                       <td className="px-3 py-2.5">
                         <div className="flex gap-1">
                           {isAdmin && <Btn small variant="ghost" onClick={() => handleEdit(rec.id)}><Pencil size={11} />تعديل</Btn>}
@@ -16119,10 +16195,17 @@ export default function App() {
       setDbLoaded(true);
     };
     _doLoad().catch((err: any) => { console.error('[DB LOAD] Fatal error in useEffect:', err); setDbLoaded(true); });
+    // ── كان هذا الاستطلاع يعيد تحميل 29 نقطة API دفعة واحدة *كل ثانية*، طول
+    //    مدة فتح النظام (حتى قبل تسجيل الدخول) — حِمل ضخم وغير ضروري على
+    //    استضافة مشتركة، وهو السبب الفعلي وراء تسجيل الخروج التلقائي العشوائي:
+    //    كثافة الطلبات كانت أحياناً تصطدم بحماية الاستضافة (rate limiting)
+    //    فيرجع رد 403 لا علاقة له بجلسة الدخول، وكان يُفسَّر خطأً كانتهاء
+    //    جلسة حقيقي. رفعنا الفاصل الزمني لـ15 ثانية — يكفي تماماً لمزامنة حية
+    //    بين عدة مستخدمين بدون إغراق السيرفر بمعدل 29 طلب/ثانية ──
     const _pollIv = setInterval(() => {
       const _t = (document.activeElement?.tagName || "").toLowerCase();
       if (_t !== "input" && _t !== "textarea" && _t !== "select") _doLoad().catch(() => { });
-    }, 1000);
+    }, 15000);
     return () => clearInterval(_pollIv);
   }, []);
   const approveDeleteRequest = (id: number) => {
@@ -16155,25 +16238,57 @@ export default function App() {
   //    السجل — حذف أو تصحيح حركة الصندوق الأصلية مباشرة بدل ترك أثر دائم أو
   //    إنشاء حركة معاكسة جديدة (المشكلة القديمة). الاستدعاءات الحالية التي لا
   //    تستخدم القيمة المُرجعة (fire-and-forget) تستمر بالعمل بلا أي تغيير ──
+  // ── إصلاح جوهري: كانت هاتان الدالتان تحدّثان الرصيد محلياً بالواجهة فوراً
+  //    (تفاؤلي)، ثم لو فشل حفظ الحركة فعلياً بالخادم (جلسة منتهية/خطأ شبكة/حظر
+  //    مؤقت) كانتا "تبتلعان" الفشل بصمت تام (catch يرجع null بدون أي تنبيه) —
+  //    فالموظف يشوف الرصيد يتحدّث أمامه ويظن إن الحركة نجحت، بينما هي أصلاً
+  //    ما وصلت لقاعدة البيانات إطلاقاً. الرصيد المزيّف يبقى ظاهراً محلياً لحد ما
+  //    يجي أول تحديث بيانات من الخادم (كل 15 ثانية أو عند إعادة فتح الصفحة)
+  //    فيرجع الرصيد الحقيقي (الأقل) بصمت، بدون ما حد ينتبه إطلاقاً لماذا. هاي
+  //    بالضبط اللي بيفسّر رصيد صندوق قسم كامل يظهر 0 رغم حركات حقيقية حصلت
+  //    فيه: كل حركة فشل حفظها (خصوصاً بفترة علة تسجيل الخروج التلقائي اللي
+  //    صلّحناها) اختفت للأبد بصمت. الحل: لو فشلت الحركة فعلياً بالخادم، نتراجع
+  //    فوراً عن التحديث المحلي المتفائل، ونعرض تنبيهاً واضحاً للمستخدم إن
+  //    الحركة لم تُحفَظ ولازم يعيد المحاولة — بدل رصيد "شبح" يختفي بصمت لاحقاً ──
   const doWithdraw = async (dept: string, amount: number, title: string, cat?: string, ben?: string): Promise<number | null> => {
     const currentBal = drawersRef.current[dept]?.balance ?? 0;
     if (!drawersRef.current[dept] || currentBal < amount) return null;
     const _dt = _nowDT();
-    setDrawers(d => { if (!d[dept] || d[dept].balance < amount) return d; const bal = d[dept].balance - amount; const tx: DrawerTx = { id: Date.now(), type: "out", title, category: cat || "", beneficiary: ben, amount, balance: bal, time: _dt.time, date: _dt.date }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
+    const txId = Date.now();
+    setDrawers(d => { if (!d[dept] || d[dept].balance < amount) return d; const bal = d[dept].balance - amount; const tx: DrawerTx = { id: txId, type: "out", title, category: cat || "", beneficiary: ben, amount, balance: bal, time: _dt.time, date: _dt.date }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
     // Server ledger computes the authoritative balance; no client balance sent.
     try {
       const r: any = await api.drawers.transactions.create({ dept, type: "out", title, category: cat || "", beneficiary: ben, amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time });
-      return r?.id ?? null;
-    } catch { return null; }
+      if (!r || r.id == null) {
+        setDrawers(d => { if (!d[dept]) return d; const bal = d[dept].balance + amount; return { ...d, [dept]: { balance: bal, txs: (d[dept].txs || []).filter(t => t.id !== txId) } }; });
+        toast(`⚠️ فشل حفظ حركة السحب "${title}" بالخادم — الرصيد لم يتغيّر فعلياً، تحقق من الاتصال أو الجلسة وحاول مجدداً`, "error");
+        return null;
+      }
+      return r.id;
+    } catch {
+      setDrawers(d => { if (!d[dept]) return d; const bal = d[dept].balance + amount; return { ...d, [dept]: { balance: bal, txs: (d[dept].txs || []).filter(t => t.id !== txId) } }; });
+      toast(`⚠️ فشل حفظ حركة السحب "${title}" بالخادم — الرصيد لم يتغيّر فعلياً، تحقق من الاتصال أو الجلسة وحاول مجدداً`, "error");
+      return null;
+    }
   };
   const doDeposit = async (dept: string, amount: number, title: string, cat?: string): Promise<number | null> => {
     const _dt = _nowDT();
-    setDrawers(d => { const cur = d[dept]?.balance ?? 0; const bal = cur + amount; const tx: DrawerTx = { id: Date.now(), type: "in", title, category: cat || "", amount, balance: bal, time: _dt.time, date: _dt.date, auto: false }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
+    const txId = Date.now();
+    setDrawers(d => { const cur = d[dept]?.balance ?? 0; const bal = cur + amount; const tx: DrawerTx = { id: txId, type: "in", title, category: cat || "", amount, balance: bal, time: _dt.time, date: _dt.date, auto: false }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
     // Server ledger computes the authoritative balance; no client balance sent.
     try {
       const r: any = await api.drawers.transactions.create({ dept, type: "in", title, category: cat || "", amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time, is_opening_balance: cat === "رصيد افتتاحي" });
-      return r?.id ?? null;
-    } catch { return null; }
+      if (!r || r.id == null) {
+        setDrawers(d => { if (!d[dept]) return d; const bal = d[dept].balance - amount; return { ...d, [dept]: { balance: bal, txs: (d[dept].txs || []).filter(t => t.id !== txId) } }; });
+        toast(`⚠️ فشل حفظ حركة الإيداع "${title}" بالخادم — الرصيد لم يتغيّر فعلياً، تحقق من الاتصال أو الجلسة وحاول مجدداً`, "error");
+        return null;
+      }
+      return r.id;
+    } catch {
+      setDrawers(d => { if (!d[dept]) return d; const bal = d[dept].balance - amount; return { ...d, [dept]: { balance: bal, txs: (d[dept].txs || []).filter(t => t.id !== txId) } }; });
+      toast(`⚠️ فشل حفظ حركة الإيداع "${title}" بالخادم — الرصيد لم يتغيّر فعلياً، تحقق من الاتصال أو الجلسة وحاول مجدداً`, "error");
+      return null;
+    }
   };
   const doAdjustBalance = (dept: string, newBalance: number, reason: string) => {
     const cur = drawersRef.current[dept]?.balance ?? 0;
@@ -16553,7 +16668,7 @@ export default function App() {
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
       case "fin-revenue": return <FinRevenueScreen drawers={drawers} debts={debts} customDepts={customDepts} toast={toast} sessions={sessions} receiptVouchers={receiptVouchersGlobal} />;
-      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} setPaymentVouchers={setPaymentVouchersGlobal} />; }
+      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} setPaymentVouchers={setPaymentVouchersGlobal} attendance={attendance} />; }
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
       case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />;

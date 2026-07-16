@@ -587,12 +587,19 @@ router.get('/attendance/:id', async (req, res) => {
   }
 });
 
+// نفس منطق hoursBetweenTimes بالفرونت‌إند (utils.ts) — مصدر واحد للحساب حتى
+// لا تتفرّق الصيغتان بمرور الوقت. يدعم الورديات العابرة لمنتصف الليل
+// (مثلاً check_in=22:00, check_out=06:00 → 8 ساعات بدل قيمة سالبة/فارغة)،
+// ويضيف حد أعلى منطقي (24 ساعة) كصمام أمان بسيط ضد إدخال قيم غير منطقية،
+// دون رفض أو منع أي فرق ساعات حقيقي بين الوردية الاسمية والساعات الفعلية.
 function calcTotalHours(check_in, check_out) {
   if (!check_in || !check_out) return null;
   const [h1, m1] = String(check_in).split(':').map(Number);
   const [h2, m2] = String(check_out).split(':').map(Number);
-  const mins = (h2 * 60 + m2) - (h1 * 60 + m1);
-  return mins > 0 ? Math.round((mins / 60) * 100) / 100 : null;
+  if ([h1, m1, h2, m2].some(n => Number.isNaN(n))) return null;
+  let mins = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (mins < 0) mins += 1440; // عبور منتصف الليل
+  return mins > 0 && mins <= 1440 ? Math.round((mins / 60) * 100) / 100 : null;
 }
 
 // BUG-16 fix: requireAdmin added — attendance records affect payroll

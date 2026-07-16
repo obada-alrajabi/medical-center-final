@@ -129,6 +129,34 @@ export const _lsSavePrintAdv = (dept: string, a: unknown): void => {
   try { localStorage.setItem(`print_adv_${dept}`, JSON.stringify(a)); } catch (_) {}
 };
 
+// ─── SHIFT / ATTENDANCE HOURS HELPERS ─────────────────────────────────────────
+// نقطة مصدر واحدة موثوقة لحساب الساعات بين وقتين — تُستخدم من شاشة الدوام
+// ومن حسابات الرواتب معاً، بدل نسخ منفصلة كانت تتفرّق بمرور الوقت وتحتوي على
+// نفس علة الورديات الليلية (checkOut أبكر من checkIn بسبب عبور منتصف الليل).
+
+// عدد الساعات بين وقتين "HH:MM"، مع دعم الورديات العابرة لمنتصف الليل
+// (مثلاً 22:00 → 06:00 = 8 ساعات). يرجع null لو الوقتان غير صالحين أو متطابقان.
+export const hoursBetweenTimes = (ci?: string, co?: string): number | null => {
+  if (!ci || !co) return null;
+  const [h1, m1] = ci.split(":").map(Number);
+  const [h2, m2] = co.split(":").map(Number);
+  if ([h1, m1, h2, m2].some(n => Number.isNaN(n))) return null;
+  let mins = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (mins < 0) mins += 1440; // عبور منتصف الليل
+  return mins > 0 && mins <= 1440 ? Math.round((mins / 60) * 100) / 100 : null;
+};
+
+// أجر الساعة لموظف نوع راتبه "وردية": قيمة الوردية ÷ مدة الوردية بالساعات.
+// بهيك لو الموظف داوم أكتر أو أقل من وردية المحددة بيوم معيّن، الحساب يبقى
+// صحيحاً دائماً (أجر_الساعة × الساعات الفعلية المسجَّلة ذاك اليوم) بدل ما
+// يُقيَّد بمدة الوردية الاسمية أو يُرفَض/يُصحَّح تعسفياً.
+export const staffHourlyRate = (s?: { shiftStart?: string; shiftEnd?: string; shiftAmount?: number }): number => {
+  if (!s || !s.shiftAmount || !s.shiftStart || !s.shiftEnd) return 0;
+  const shiftHours = hoursBetweenTimes(s.shiftStart, s.shiftEnd);
+  if (!shiftHours || shiftHours <= 0) return 0;
+  return s.shiftAmount / shiftHours;
+};
+
 // ─── STAFF HELPERS ────────────────────────────────────────────────────────────
 
 export const makeDefaultDeptPerms = (enabled = false): DeptPermissions => ({

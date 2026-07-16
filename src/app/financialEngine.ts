@@ -88,10 +88,17 @@ function inRange(date: string | null | undefined, fromMs: number | null, toMsVal
  *
  * Dates: handles both DD/MM/YYYY (sessions) and YYYY-MM-DD (vouchers/purchaseRequests).
  */
+// ── سندات القبض الصادرة "مرآةً" عن تسديد دين مريض موجود أصلاً (من ملف المريض
+//    أو من شاشة إدارة الديون) تحمل هذا النص دائماً بحقل reason (نصّ يضبطه
+//    النظام نفسه عند الإنشاء، وليس نصاً حراً يكتبه المستخدم) — نستخدمه لاستثناء
+//    هذه السندات من معادلة الإيرادات، لأن نفس المبلغ محتسب أصلاً عبر تحديث
+//    sessions.paid (انظر الشرح المفصّل عند فلترة filteredRV بالأسفل). ──
+const DEBT_SETTLEMENT_RV_MARKER = "تسديد دين مريض";
+
 export function calculateFinancials(
   sessions: { date: string; paid: number; dept: string }[],
-  receiptVouchers: { date?: string; amount: number; dept?: string | null }[],
-  paymentVouchers: { date?: string; amount: number; dept?: string | null; category?: string | null }[],
+  receiptVouchers: { date?: string; amount: number; dept?: string | null; reason?: string | null }[],
+  paymentVouchers: { date?: string; amount: number; dept?: string | null; category?: string | null; paid_to_type?: string | null }[],
   purchaseRequests: { date?: string; totalAmount?: number; total_amount?: number; paidAmount?: number; paid_amount?: number; status: string; dept?: string | null }[],
   drawerTxs: DrawerTransaction[],
   debts: DebtRow[],
@@ -111,8 +118,17 @@ export function calculateFinancials(
   );
   const patientPayments = filteredSessions.reduce((sum, s) => sum + (Number(s.paid) || 0), 0);
 
+  // ── استثناء سندات القبض "المرآة" لتسديد ديون المرضى: لما يُسدَّد دين مريض
+  //    (من ملف المريض أو من شاشة إدارة الديون)، الكود يعمل شيئين للمبلغ نفسه:
+  //    (1) ينشئ سند قبض حقيقي، و(2) يزيد sessions.paid لنفس الجلسة (حتى يبقى
+  //    "المدفوع" بملف المريض مطابقاً للواقع). فلو حسبنا كِلا الأثرين هون —
+  //    receiptVouchers (سندات القبض) + patientPayments (sessions.paid) — كل
+  //    تسديد دين كان يتضاعف بمعادلة الإيرادات. نبقي السند نفسه (للطباعة
+  //    والأرشفة) لكن نستثنيه من مجموع الإيرادات لأن مصدر الحقيقة الوحيد لهذا
+  //    المبلغ هو sessions.paid عبر patientPayments أدناه. ──
   const filteredRV = receiptVouchers.filter(v =>
-    (departmentId ? v.dept === departmentId : true) && ir(v.date)
+    (departmentId ? v.dept === departmentId : true) && ir(v.date) &&
+    !(v.reason || "").startsWith(DEBT_SETTLEMENT_RV_MARKER)
   );
   const receiptVoucherRev = filteredRV.reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
 
@@ -131,9 +147,16 @@ export function calculateFinancials(
     (sum, r) => sum + (Number(r.paidAmount ?? r.paid_amount) || 0), 0
   );
 
-  // Personal Expenses = Payment Vouchers
+  // Personal Expenses = Payment Vouchers — لكن نستثني سندات الصرف الصادرة
+  // "مرآةً" عن دفعة مورد/طلب شراء (paid_to_type === "supplier"): هذه بالأصل
+  // نفس المبلغ اللي زاد عليه purchase_requests.paid_amount أعلاه (عند الموافقة
+  // مع دفعة فورية، أو لاحقاً من "تسديد") — فحسابها هون كمان كان يضاعف كل دفعة
+  // مورد بمعادلة المصروفات. سندات الصرف الشخصية للموظفين (paid_to_type
+  // "staff") ما فيها هاي المشكلة — تلك مصممة عمداً لتُحسب هون وتُخصم لاحقاً من
+  // الراتب الفعلي المسحوب (salaryCost)، فمفيش ازدواج فيها.
   const filteredPV = paymentVouchers.filter(v =>
-    (departmentId ? v.dept === departmentId : true) && ir(v.date)
+    (departmentId ? v.dept === departmentId : true) && ir(v.date) &&
+    v.paid_to_type !== "supplier"
   );
   const personalExpenseVouchersAmt = filteredPV.reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
 
