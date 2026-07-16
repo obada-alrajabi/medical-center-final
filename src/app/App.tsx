@@ -8467,7 +8467,21 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const [vouchersLoaded, setVouchersLoaded] = useState(false);
   const ir = (d: string) => inRangeDDMMYYYY(d, dateFrom, dateTo);
   const allDepts = [...DEPARTMENTS, ...customDepts.map(d => ({ id: d.id, name: d.name, short: d.short }))];
-  const totalBalance = Object.values(drawers).reduce((s, d) => s + (d.balance || 0), 0);
+  // ── فلترة التاريخ تطبَّق الآن على كامل بطاقات الصناديق أيضاً (كانت هاي وحدها
+  //    تعرض الرصيد اللحظي الحقيقي دايماً بغض النظر عن الفترة المحددة، بعكس كل
+  //    بطاقات الإيرادات/السحوبات/الربح). لما تُحدَّد فترة، نعرض بدلها "صافي حركة
+  //    الصندوق خلال الفترة" (إيداعات ناقص سحوبات بنفس الفترة، من نفس سجل
+  //    حركات كل صندوق) — بدون فترة محددة، تبقى تعرض الرصيد الحالي الحقيقي
+  //    كما كانت (لا تغيير بالسلوك الافتراضي). هذا كمان بيسمح بتحقّق مباشر: لو
+  //    ضيّقت الفترة وبقي "صندوق المختبر" = "رصيد الصناديق الكلي" بالضبط، هذا
+  //    معناه فعلياً إنه ما في حركة مسجَّلة بهاي الفترة لأي قسم غير المختبر —
+  //    مش خلل بالمعادلة (المعادلتان منفصلتان تماماً: مجموع كل الصناديق مقابل
+  //    صندوق واحد بعينه)، بل انعكاس لواقع البيانات نفسها. ──
+  const hasDateFilter = !!(dateFrom || dateTo);
+  const deptBalanceForPeriod = (deptId: string) => (drawers[deptId]?.txs || []).filter(t => ir(t.date || "")).reduce((s, t) => s + (t.type === "in" ? t.amount : -t.amount), 0);
+  const totalBalance = hasDateFilter
+    ? Object.keys(drawers).reduce((s, dId) => s + deptBalanceForPeriod(dId), 0)
+    : Object.values(drawers).reduce((s, d) => s + (d.balance || 0), 0);
   const filteredTxs = Object.values(drawers).flatMap(d => d.txs || []).filter(t => ir(t.date || ""));
   // ── المحرك الموحد للإيرادات والمصاريف ────────────────────────────────────
   const enrichedTxsFinSum = Object.entries(drawers).flatMap(([dId, dr]) => (dr.txs || []).map(t => ({ ...t, dept: dId })));
@@ -8670,14 +8684,14 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
       <div className="flex items-center gap-3 flex-wrap">
         <DateRangePicker from={dateFrom} to={dateTo} onFrom={setDateFrom} onTo={setDateTo} onClear={() => { setDateFrom(""); setDateTo(""); }} />
         <div className="flex gap-2 mr-auto">
-          <Btn small variant="ghost" onClick={() => { const deptRows = allDepts.filter(d => drawers[d.id]).map(d => [d.name, fmt(drawers[d.id]?.balance || 0), fmt(Object.values(drawers[d.id]?.txs || []).filter(t => t.type === "in").reduce((s, t) => s + t.amount, 0)), fmt(Object.values(drawers[d.id]?.txs || []).filter(t => t.type === "out").reduce((s, t) => s + t.amount, 0))]); const ws = XLSX.utils.aoa_to_sheet([["القسم", "الرصيد الحالي", "إجمالي الإيرادات", "إجمالي السحوبات"], ...deptRows, [], ["الإجمالي", fmt(totalBalance), fmt(totalRevenue), fmt(totalWithdrawals)]]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "الملخص المالي"); XLSX.writeFile(wb, `الملخص_المالي_${periodLabel}.xlsx`); }}><Download size={14} />Excel</Btn>
-          <Btn small variant="ghost" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">رصيد الصناديق الكلي</div><div class="kpi-v">${fmt(totalBalance)}</div></div><div class="kpi-box"><div class="kpi-l">الإيرادات</div><div class="kpi-v in">${fmt(totalRevenue)}</div></div><div class="kpi-box"><div class="kpi-l">السحوبات</div><div class="kpi-v out">${fmt(totalWithdrawals)}</div></div><div class="kpi-box"><div class="kpi-l">صافي الربح</div><div class="kpi-v ${netProfit >= 0 ? "in" : "out"}">${fmt(netProfit)}</div></div></div><h2>الملخص المالي حسب القسم — ${periodLabel}</h2><table><thead><tr><th>القسم</th><th>الرصيد الحالي</th><th>الإيرادات</th><th>السحوبات</th></tr></thead><tbody>${allDepts.filter(d => drawers[d.id]).map(d => { const dr = drawers[d.id]; const inn = (dr.txs || []).filter(t => t.type === "in").reduce((s, t) => s + t.amount, 0); const out = (dr.txs || []).filter(t => t.type === "out").reduce((s, t) => s + t.amount, 0); return `<tr><td>${d.name}</td><td>${fmt(dr.balance)}</td><td class="in">${fmt(inn)}</td><td class="out">${fmt(out)}</td></tr>` }).join("")}</tbody><tfoot><tr><td>الإجمالي</td><td>${fmt(totalBalance)}</td><td class="in">${fmt(totalRevenue)}</td><td class="out">${fmt(totalWithdrawals)}</td></tr></tfoot></table>`; printHtml(html, `الملخص المالي — ${periodLabel}`, dateFrom, dateTo); }}><Printer size={14} />PDF</Btn>
+          <Btn small variant="ghost" onClick={() => { const balCol = hasDateFilter ? "صافي حركة الفترة" : "الرصيد الحالي"; const deptRows = allDepts.filter(d => drawers[d.id]).map(d => { const deptTxs = (drawers[d.id]?.txs || []).filter(t => ir(t.date || "")); const balVal = hasDateFilter ? deptBalanceForPeriod(d.id) : (drawers[d.id]?.balance || 0); return [d.name, fmt(balVal), fmt(deptTxs.filter(t => t.type === "in").reduce((s, t) => s + t.amount, 0)), fmt(deptTxs.filter(t => t.type === "out").reduce((s, t) => s + t.amount, 0))]; }); const ws = XLSX.utils.aoa_to_sheet([["القسم", balCol, "إجمالي الإيرادات", "إجمالي السحوبات"], ...deptRows, [], ["الإجمالي", fmt(totalBalance), fmt(totalRevenue), fmt(totalWithdrawals)]]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "الملخص المالي"); XLSX.writeFile(wb, `الملخص_المالي_${periodLabel}.xlsx`); }}><Download size={14} />Excel</Btn>
+          <Btn small variant="ghost" onClick={() => { const balLabel = hasDateFilter ? "صافي حركة الفترة" : "الرصيد الحالي"; const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">${hasDateFilter ? "صافي حركة الصناديق بالفترة" : "رصيد الصناديق الكلي"}</div><div class="kpi-v">${fmt(totalBalance)}</div></div><div class="kpi-box"><div class="kpi-l">الإيرادات</div><div class="kpi-v in">${fmt(totalRevenue)}</div></div><div class="kpi-box"><div class="kpi-l">السحوبات</div><div class="kpi-v out">${fmt(totalWithdrawals)}</div></div><div class="kpi-box"><div class="kpi-l">صافي الربح</div><div class="kpi-v ${netProfit >= 0 ? "in" : "out"}">${fmt(netProfit)}</div></div></div><h2>الملخص المالي حسب القسم — ${periodLabel}</h2><table><thead><tr><th>القسم</th><th>${balLabel}</th><th>الإيرادات</th><th>السحوبات</th></tr></thead><tbody>${allDepts.filter(d => drawers[d.id]).map(d => { const deptTxs = (drawers[d.id]?.txs || []).filter(t => ir(t.date || "")); const inn = deptTxs.filter(t => t.type === "in").reduce((s, t) => s + t.amount, 0); const out = deptTxs.filter(t => t.type === "out").reduce((s, t) => s + t.amount, 0); const balVal = hasDateFilter ? deptBalanceForPeriod(d.id) : (drawers[d.id]?.balance || 0); return `<tr><td>${d.name}</td><td>${fmt(balVal)}</td><td class="in">${fmt(inn)}</td><td class="out">${fmt(out)}</td></tr>` }).join("")}</tbody><tfoot><tr><td>الإجمالي</td><td>${fmt(totalBalance)}</td><td class="in">${fmt(totalRevenue)}</td><td class="out">${fmt(totalWithdrawals)}</td></tr></tfoot></table>`; printHtml(html, `الملخص المالي — ${periodLabel}`, dateFrom, dateTo); }}><Printer size={14} />PDF</Btn>
         </div>
       </div>
       <div className="rounded-2xl p-4 sm:p-6 text-white" style={{ background: `linear-gradient(135deg,#0D7377,#0a5c60)` }}>
         <p className="text-white/70 text-sm mb-1">صافي الربح — {periodLabel}</p><p className="text-3xl sm:text-5xl font-bold">{fmt(netProfit)}</p>
         <div className="flex flex-wrap gap-4 sm:gap-8 mt-4">
-          <div><p className="text-white/60 text-xs">رصيد الصناديق الكلي</p><p className="text-lg sm:text-xl font-bold">{fmt(totalBalance)}</p></div>
+          <div><p className="text-white/60 text-xs">{hasDateFilter ? "صافي حركة الصناديق بالفترة" : "رصيد الصناديق الكلي"}</p><p className="text-lg sm:text-xl font-bold">{fmt(totalBalance)}</p></div>
           <div><p className="text-white/60 text-xs">إجمالي الإيرادات</p><p className="text-lg sm:text-xl font-bold">{fmt(totalRevenue)}</p></div>
           <div><p className="text-white/60 text-xs">سندات القبض</p><p className="text-lg sm:text-xl font-bold text-[#A5D6A7]">{fmt(totalReceiptVouchersAll)}</p></div>
           <div><p className="text-white/60 text-xs">إجمالي السحوبات</p><p className="text-lg sm:text-xl font-bold">{fmt(totalWithdrawals)}</p></div>
@@ -8691,7 +8705,7 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
         </div>
       )}
       <div className="grid grid-cols-4 gap-3">
-        {allDepts.filter(d => drawers[d.id]).map(d => <KPICard key={d.id} title={`صندوق ${d.short}`} value={fmt(drawers[d.id]?.balance || 0)} Icon={Banknote} color="secondary" />)}
+        {allDepts.filter(d => drawers[d.id]).map(d => <KPICard key={d.id} title={hasDateFilter ? `صندوق ${d.short} (حركة الفترة)` : `صندوق ${d.short}`} value={fmt(hasDateFilter ? deptBalanceForPeriod(d.id) : (drawers[d.id]?.balance || 0))} Icon={Banknote} color="secondary" />)}
       </div>
       <div className="grid grid-cols-2 gap-4">
         <Card title="الإيرادات حسب القسم">
@@ -10662,13 +10676,16 @@ function PrintSettingsScreen({ toast }: { toast: (m: string, t?: any) => void })
 
 // ─── REPORTS ───────────────────────────────────────────────────────────────────
 
-function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [], insurances = [], purchaseRequests = [], suppliers = [], setInvoices, doDeposit, isAdmin = false }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; insurances?: InsuranceCo[]; purchaseRequests?: PurchaseRequest[]; suppliers?: { id: number; name: string; type: string; phone: string }[];
+function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [], insurances = [], purchaseRequests = [], suppliers = [], setInvoices, doDeposit, isAdmin = false, receiptVouchers: allReceiptVouchers = [], paymentVouchers: allPaymentVouchers = [], employeeAdvances = [] }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; insurances?: InsuranceCo[]; purchaseRequests?: PurchaseRequest[]; suppliers?: { id: number; name: string; type: string; phone: string }[];
   // ── زر "سداد" جنب كل فاتورة تأمين — حصراً لحساب المدير (بطلب صريح)، لتسجيل
   //    دفعة (كاملة أو جزئية) تستلمها العيادة فعلياً من شركة التأمين. ──
   setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
   doDeposit?: (dept: string, amount: number, title: string, type: string) => void;
   isAdmin?: boolean;
   setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
+  receiptVouchers?: any[];
+  paymentVouchers?: any[];
+  employeeAdvances?: EmployeeAdvance[];
 }) {
   const allDepts = [...DEPARTMENTS, ...customDepts.map(d => ({ id: d.id, name: d.name, short: d.short }))];
   const deptShortById = (id: string) => allDepts.find(d => d.id === id)?.short || id;
@@ -10745,14 +10762,22 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   const supplierTotal = supplierReqs.reduce((s, r) => s + r.totalAmount, 0); const supplierPaid = supplierReqs.reduce((s, r) => s + (r.paidAmount || 0), 0);
   // ── Tab 4
   const [p4Dept, setP4Dept] = useState("all");
-  // ── تصحيح: كان "rev" هون يُحسب من x.amount (قيمة الفاتورة الكاملة المفروضة
-  //    على المريض، تشمل الدين غير المُحصَّل) بدل x.paid (المبلغ المقبوض فعلياً
-  //    بالكاش) — فقسم عليه ديون كثيرة وسندات قبض صفر كان يظهر "بإيرادات" كبيرة
-  //    رغم إنه ولا قرش دخل فعلياً لصندوقه، بتناقض تام مع شاشة "السندات
-  //    وحساباتها" وصندوق القسم الحقيقي لنفس القسم. باقي شاشات النظام كلها
-  //    (الملخص المالي، الربح، إلخ) تستخدم paid أصلاً — هذا التقرير وحده كان
-  //    الاستثناء الشاذ. ──
-  const deptRevs = allDepts.map(d => { const rev = sessions.filter(s => s.dept === d.id && inRange(s.date)).reduce((s, x) => s + x.paid, 0); const wd = (drawers[d.id]?.txs || []).filter(t => t.type === "out" && inRange(t.date)).reduce((s, t) => s + t.amount, 0) || 0; return { name: d.short, id: d.id, rev, wd, net: rev - wd }; });
+  // ── تصحيح شامل: كان "rev" هون يُحسب من x.amount (قيمة الفاتورة الكاملة
+  //    المفروضة على المريض، تشمل الدين غير المُحصَّل) بدل المبلغ المقبوض فعلياً
+  //    — فقسم عليه ديون كثيرة وسندات قبض صفر كان يظهر "بإيرادات" كبيرة رغم
+  //    إنه ولا قرش دخل فعلياً لصندوقه. صحّحناها أول مرة لتستخدم x.paid، لكن
+  //    هذا وحده كشف مشكلة تانية: هذا التقرير كان يتجاهل سندات القبض تماماً
+  //    (كان لا يستقبل قائمتها إطلاقاً كـ prop)، فأي إيراد مصدره سند قبض (تسديد
+  //    دين، تحصيل تأمين، إدخال مباشر يدوي) كان يظهر صفراً هون رغم ظهوره بشكل
+  //    صحيح بشاشة "الملخص المالي" — تناقض واضح بين الشاشتين لنفس البيانات.
+  //    الحل الجذري: استخدام نفس محرك الحسابات الموحّد (calculateFinancials)
+  //    المستخدم بكل شاشة مالية أخرى بالنظام، بدل معادلة مبسّطة مكرَّرة يدوياً
+  //    هون كانت دايماً عرضة للتفرّق عن باقي الشاشات مع كل تعديل مستقبلي. ──
+  const enrichedTxsP4 = Object.entries(drawers).flatMap(([dId, dr]) => (dr.txs || []).map(t => ({ ...t, dept: dId })));
+  const deptRevs = allDepts.map(d => {
+    const eng = calculateFinancials(sessions, allReceiptVouchers, allPaymentVouchers, purchaseRequests, enrichedTxsP4, debts, invoices, [], d.id, fromDate || undefined, toDate || undefined, employeeAdvances);
+    return { name: d.short, id: d.id, rev: eng.revenue, wd: eng.expenses + eng.salaryCost, net: eng.profit };
+  });
   const p4Data = p4Dept === "all" ? deptRevs : deptRevs.filter(d => d.id === p4Dept);
   // ── Tab 5
   const [p5Fields, setP5Fields] = useState(["الاسم", "القسم", "الدين"]);
@@ -10780,7 +10805,7 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
           <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">من تاريخ</label><input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
           <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">إلى تاريخ</label><input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
         </div>
-        {tab === "depts" && <p className="text-xs text-[#999] mt-2">ملاحظة: إيرادات الأقسام تُحسب من الجلسات المسجلة ضمن الفترة المحددة.</p>}
+        {tab === "depts" && <p className="text-xs text-[#999] mt-2">ملاحظة: الإيرادات هون تشمل المبالغ المقبوضة فعلياً من الجلسات + سندات القبض (تسديد ديون، تحصيل تأمين، إدخال مباشر) ضمن الفترة المحددة — نفس معادلة "الملخص المالي" تماماً.</p>}
       </Card>
 
       {tab === "patients" && (
@@ -16672,7 +16697,7 @@ export default function App() {
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
       case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />;
-      case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} setInvoices={setInvoices} doDeposit={doDeposit} setReceiptVouchers={setReceiptVouchersGlobal} isAdmin />;
+      case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} setInvoices={setInvoices} doDeposit={doDeposit} setReceiptVouchers={setReceiptVouchersGlobal} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} isAdmin />;
       case "attendance": return <AttendanceScreen key={dept || "surgery"} dept={dept || "lab"} attendance={attendance} setAttendance={setAttendance} loggedUser={loggedUser} staffList={staffList} toast={toast} customDepts={customDepts} />;
       case "backup": return <BackupScreen toast={toast} />;
       case "print-settings": return <PrintSettingsScreen toast={toast} />;
