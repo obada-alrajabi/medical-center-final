@@ -4996,7 +4996,7 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
 
 // ─── LAB SESSION ───────────────────────────────────────────────────────────────
 
-function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patientId, inventory = [], setInventory, computeKitStatus, checkAndNotify, labTests: _labTests = initialLabTests, insurances = [], setInvoices }: {
+function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patientId, inventory = [], setInventory, computeKitStatus, checkAndNotify, labTests: _labTests = initialLabTests, insurances = [], setInvoices, sessions, setSessions }: {
   toast: (m: string, t?: any) => void; doDeposit: (dept: string, amount: number, title: string, type: string) => void;
   doWithdraw?: (dept: string, amount: number, title: string, cat?: string, ben?: string) => void;
   setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; debts: DebtRow[]; patientId?: string;
@@ -5007,6 +5007,8 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   labTests?: LabTest[];
   insurances?: InsuranceCo[];
   setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
+  sessions?: PatientSession[];
+  setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>;
 }) {
   const preselected = patientId ? mockPatients.find(p => p.id === patientId) || null : null;
   const [view, setView] = useState<"register" | "board">(preselected ? "register" : "board");
@@ -5101,6 +5103,17 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     const labLid = Date.now();
     setBoard(p => [{ id: labLid, patient: patName, tests: labTestNames, time: labTime, status: "pending" as const, labType: labTypeFilter }, ...p]);
     api.queues.create({ dept: "lab", patient_id: effectivePatId, patient_name: patName, items: labTestNames, queue_time: labTime, status: "pending", notes: labTypeFilter === "external" ? "lab_type:external" : "lab_type:internal" }).then(r => { if (r) setBoard(p => p.map(s => s.id === labLid ? { ...s, id: r.id } : s)); }).catch(() => { });
+
+    // ── تسجيل جلسة مريض فعلية (PatientSession) — بدون هذا لا يظهر المريض بأي
+    //    تقرير أو إحصائية إجمالية (لوحة التحكم، الملخص المالي، كشوفات الأقسام)
+    //    رغم وجود دفعة/دين حقيقي له؛ نفس النمط المستخدم في NewSessionScreen. ──
+    if (setSessions) {
+      const ns: PatientSession = { id: Date.now(), patientId: effectivePatId, dept: "lab", doctor: "المختبر", date: today, diagnoses: [], medications: [], notes: "", labRefs: labTestNames, radRefs: [], amount: netTotal, paid: paidAmt, debt: debtAmt };
+      setSessions(prev => [ns, ...prev]);
+      api.sessions.create({ patient_id: effectivePatId, dept: "lab", doctor: "المختبر", date: api.parseDateISO(today), diagnoses: [], medications: [], notes: "", lab_refs: labTestNames, rad_refs: [], amount: netTotal, paid: paidAmt, debt: debtAmt }).then((r: any) => {
+        if (r && r.id) setSessions(prev => prev.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
+      }).catch(() => { });
+    }
 
     // إشعار بنتيجة الجلسة
     const msg = `تم تسجيل ${selTests.length} فحص لـ ${patName}${debtAmt > 0 ? " — دين: " + fmt(debtAmt) : creditAmt > 0 ? " — رصيد: " + fmt(creditAmt) : " ✓"}`;
@@ -5608,12 +5621,14 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
 
 // ─── RAD SESSION ───────────────────────────────────────────────────────────────
 
-function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radImages: _radImgs = initialRadImages, insurances = [], setInvoices }: {
+function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radImages: _radImgs = initialRadImages, insurances = [], setInvoices, sessions, setSessions }: {
   toast: (m: string, t?: any) => void; doDeposit: (dept: string, amount: number, title: string, type: string) => void;
   setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; debts: DebtRow[]; patientId?: string;
   radImages?: RadImage[];
   insurances?: InsuranceCo[];
   setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
+  sessions?: PatientSession[];
+  setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>;
 }) {
   const preselected = patientId ? mockPatients.find(p => p.id === patientId) || null : null;
   const [view, setView] = useState<"register" | "board">(preselected ? "register" : "board");
@@ -5709,6 +5724,16 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     const radLid = Date.now();
     setBoard(p => [{ id: radLid, patient: patName, patientId: effectivePatId, images: radImgNames, time: radTime, status: "pending" as const }, ...p]);
     api.queues.create({ dept: "radiology", patient_id: effectivePatId, patient_name: patName, items: radImgNames, queue_time: radTime, status: "pending" }).then(r => { if (r) setBoard(p => p.map(s => s.id === radLid ? { ...s, id: r.id } : s)); }).catch(() => { });
+
+    // ── تسجيل جلسة مريض فعلية (PatientSession) — نفس علة المختبر تماماً: بدون
+    //    هذا لا يظهر مريض الأشعة بأي تقرير أو إحصائية إجمالية رغم دفعه فعلياً. ──
+    if (setSessions) {
+      const ns: PatientSession = { id: Date.now(), patientId: effectivePatId, dept: "radiology", doctor: "الأشعة", date: today, diagnoses: [], medications: [], notes: "", labRefs: [], radRefs: radImgNames, amount: netTotal, paid: paidAmt, debt: debtAmt };
+      setSessions(prev => [ns, ...prev]);
+      api.sessions.create({ patient_id: effectivePatId, dept: "radiology", doctor: "الأشعة", date: api.parseDateISO(today), diagnoses: [], medications: [], notes: "", lab_refs: [], rad_refs: radImgNames, amount: netTotal, paid: paidAmt, debt: debtAmt }).then((r: any) => {
+        if (r && r.id) setSessions(prev => prev.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
+      }).catch(() => { });
+    }
     toast(`تم تسجيل ${selImgs.length} صورة لـ ${patName}${debtAmt > 0 ? " — دين: " + fmt(debtAmt) : creditAmt > 0 ? " — رصيد: " + fmt(creditAmt) : " ✓"}`, "success");
     setSaving(false);
     reset(); setView("board");
@@ -10779,11 +10804,83 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
     return { name: d.short, id: d.id, rev: eng.revenue, wd: eng.expenses + eng.salaryCost, net: eng.profit };
   });
   const p4Data = p4Dept === "all" ? deptRevs : deptRevs.filter(d => d.id === p4Dept);
-  // ── Tab 5
+  // ── Tab 5 — منشئ التقارير المخصصة ──────────────────────────────────────────
+  // ── تصحيح: بطاقات "مرضى/شركات/تأمين/مالي شامل" الأربعة كانت مجرد عناصر
+  //    زخرفية بلا أي onClick — الضغط عليها ما كان يعمل أي إشي، وحتى لو كان
+  //    فيها onClick، الجدول والتصدير تحتهم كانا مبرمجين حصراً على المرضى بدون
+  //    أي حالة (state) تحدد النوع المختار. زر PDF كمان كان مجرد Toast وهمي
+  //    ("جارٍ التحضير...") بدون أي طباعة فعلية. الحل: أضفنا حالة p5ReportType
+  //    حقيقية تتحكم فعلياً بأي نوع تقرير مفعّل، مع حقول وبيانات وتصدير (Excel
+  //    وPDF حقيقي عبر نفس محرك الطباعة الموحّد) لكل نوع من الأربعة. ──
+  const [p5ReportType, setP5ReportType] = useState<"patients" | "companies" | "insurance" | "financial">("patients");
   const [p5Fields, setP5Fields] = useState(["الاسم", "القسم", "الدين"]);
   const p5Patients = mockPatients.filter(p => sessions.some(s => s.patientId === p.id && inRange(s.date)));
   const allFields = ["الاسم", "رقم الهوية", "القسم", "الجوال", "المبلغ", "المدفوع", "الدين", "التاريخ", "التشخيص", "التأمين"];
   const p5Toggle = (f: string) => setP5Fields(p => p.includes(f) ? p.filter(x => x !== f) : [...p, f]);
+  const REPORT_TYPE_META: Record<typeof p5ReportType, { label: string; fields: string[] }> = {
+    patients: { label: "مرضى", fields: allFields },
+    companies: { label: "شركات", fields: ["الشركة", "رقم الطلب", "القسم", "التاريخ", "الإجمالي", "المدفوع", "المتبقي", "الحالة"] },
+    insurance: { label: "تأمين", fields: ["الشركة", "المريض", "القسم", "التاريخ", "الإجمالي", "المدفوع", "المتبقي", "الحالة"] },
+    financial: { label: "مالي شامل", fields: ["القسم", "الإيرادات", "السحوبات", "الصافي"] },
+  };
+  const p5AllFieldsForType = REPORT_TYPE_META[p5ReportType].fields;
+  const p5ActiveCols = p5Fields.length ? p5Fields.filter(f => p5AllFieldsForType.includes(f)) : p5AllFieldsForType.slice(0, 4);
+  // ── يعيد صفوف التقرير كمصفوفة نصوص (نفس المصدر يُستخدم للمعاينة، Excel، وPDF معاً) ──
+  const p5BuildRows = (cols: string[]): (string | number)[][] => {
+    if (p5ReportType === "patients") {
+      return p5Patients.map(p => {
+        const pd = debts.filter(d => d.pid === p.id && inRange(d.date)).reduce((s, d) => s + d.amount, 0);
+        const ps = sessions.filter(s => s.patientId === p.id && inRange(s.date));
+        const totalAmt = ps.reduce((s, x) => s + x.amount, 0); const totalPaid = ps.reduce((s, x) => s + x.paid, 0);
+        const lastSess = [...ps].sort((a, b) => b.id - a.id)[0];
+        return cols.map(c => {
+          if (c === "الاسم") return p.name; if (c === "رقم الهوية") return p.id;
+          if (c === "القسم") return DEPARTMENTS.find(d => d.id === p.dept)?.short || p.dept;
+          if (c === "الجوال") return p.phone; if (c === "المبلغ") return fmt(totalAmt);
+          if (c === "المدفوع") return fmt(totalPaid); if (c === "الدين") return pd > 0 ? fmt(pd) : "مسدد";
+          if (c === "التاريخ") return lastSess?.date || ""; if (c === "التشخيص") return lastSess?.diagnoses?.[0] || "";
+          if (c === "التأمين") return p.insurance ? "مؤمَّن" : "—"; return "";
+        });
+      });
+    }
+    if (p5ReportType === "companies") {
+      return purchaseRequests.filter(r => inRange(r.date)).map(r => cols.map(c => {
+        if (c === "الشركة") return r.supplier || "—"; if (c === "رقم الطلب") return `#${r.id}`;
+        if (c === "القسم") return deptShortById(r.dept); if (c === "التاريخ") return r.date;
+        if (c === "الإجمالي") return fmt(r.totalAmount); if (c === "المدفوع") return fmt(r.paidAmount || 0);
+        if (c === "المتبقي") return fmt(Math.max(0, r.totalAmount - (r.paidAmount || 0)));
+        if (c === "الحالة") return r.status === "approved" ? "مُوافق" : r.status === "rejected" ? "مرفوض" : "معلق"; return "";
+      }));
+    }
+    if (p5ReportType === "insurance") {
+      return invoices.filter(i => inRange(i.date)).map(i => cols.map(c => {
+        if (c === "الشركة") return i.company; if (c === "المريض") return i.patientName || "—";
+        if (c === "القسم") return deptShortById(i.dept || ""); if (c === "التاريخ") return i.date;
+        if (c === "الإجمالي") return fmt(i.total); if (c === "المدفوع") return fmt(i.paid);
+        if (c === "المتبقي") return fmt(i.remaining);
+        if (c === "الحالة") return i.status === "paid" ? "مسدد" : i.status === "partial" ? "جزئي" : "غير مسدد"; return "";
+      }));
+    }
+    // financial — يستخدم نفس محرك الحسابات الموحّد اللي بيغذّي "كشوفات الأقسام" فوق
+    return deptRevs.map(d => cols.map(c => {
+      if (c === "القسم") return d.name; if (c === "الإيرادات") return fmt(d.rev);
+      if (c === "السحوبات") return fmt(d.wd); if (c === "الصافي") return fmt(d.net); return "";
+    }));
+  };
+  const p5Rows = p5BuildRows(p5ActiveCols);
+  const p5ExportFileBase = `تقرير_${REPORT_TYPE_META[p5ReportType].label}_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}`;
+  const p5ExportExcel = () => {
+    const ws = XLSX.utils.aoa_to_sheet([p5ActiveCols, ...p5Rows]);
+    ws["!cols"] = p5ActiveCols.map(() => ({ wch: 18 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "تقرير مخصص");
+    XLSX.writeFile(wb, `${p5ExportFileBase}.xlsx`);
+    toast("✅ تم تصدير Excel", "success");
+  };
+  const p5ExportPdf = () => {
+    const html = `<h2>تقرير ${REPORT_TYPE_META[p5ReportType].label} مخصص — ${fromDate || "..."} → ${toDate || "..."}</h2><table><thead><tr>${p5ActiveCols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${p5Rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    printHtml(html, p5ExportFileBase, fromDate, toDate);
+  };
   // ── ملخص المؤمَّنين (مدمج داخل تبويب "كشوفات شركات التأمين"): مبني على فواتير
   //    التأمين الفعلية (invoices) وليس فقط علم "مؤمَّن" العام على المريض — يُعاد
   //    استخدام فلتر الشركة (p2Company) نفسه من أعلى التبويب، مع فلتر قسم خاص به. ──
@@ -11084,10 +11181,10 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
         <div className="space-y-4">
           <Card title="منشئ التقارير المخصصة">
             <div className="grid grid-cols-4 gap-3 mb-5">
-              {[{ l: "مرضى", Icon: Users }, { l: "شركات", Icon: Building2 }, { l: "تأمين", Icon: CreditCard }, { l: "مالي شامل", Icon: Banknote }].map(t => (
-                <div key={t.l} className="flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer hover:bg-[#EBF3FB] transition-colors" style={{ border: "1px solid #E0E0E0" }}>
+              {([{ k: "patients", l: "مرضى", Icon: Users }, { k: "companies", l: "شركات", Icon: Building2 }, { k: "insurance", l: "تأمين", Icon: CreditCard }, { k: "financial", l: "مالي شامل", Icon: Banknote }] as const).map(t => (
+                <button key={t.k} onClick={() => { setP5ReportType(t.k); setP5Fields([...REPORT_TYPE_META[t.k].fields]); }} className="flex flex-col items-center gap-2 p-4 rounded-xl cursor-pointer transition-colors" style={{ border: p5ReportType === t.k ? "2px solid #0D7377" : "1px solid #E0E0E0", backgroundColor: p5ReportType === t.k ? "#E6F4F4" : "transparent" }}>
                   <t.Icon size={26} className="text-[#1B3A6B]" /><span className="text-xs font-semibold text-[#555]">{t.l}</span>
-                </div>
+                </button>
               ))}
             </div>
             <div className="grid grid-cols-2 gap-4 border-t border-[#E0E0E0] pt-4">
@@ -11095,33 +11192,18 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
               <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">إلى تاريخ</label><input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} /></div>
             </div>
             <div className="border-t border-[#E0E0E0] pt-4 mt-3">
-              <div className="flex items-center justify-between mb-3"><label className="text-xs font-semibold text-[#555]">اختر الحقول للتقرير</label><div className="flex gap-2"><button onClick={() => setP5Fields([...allFields])} className="text-xs text-[#0D7377] hover:underline">تحديد الكل</button><button onClick={() => setP5Fields([])} className="text-xs text-[#D32F2F] hover:underline">إلغاء الكل</button></div></div>
-              <div className="grid grid-cols-5 gap-2">{allFields.map(f => <label key={f} className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer ${p5Fields.includes(f) ? "bg-[#E6F4F4]" : "bg-[#FAFAFA]"}`} style={{ border: "1px solid #E0E0E0" }}><input type="checkbox" checked={p5Fields.includes(f)} onChange={() => p5Toggle(f)} className="accent-[#0D7377]" /><span className="text-xs">{f}</span></label>)}</div>
+              <div className="flex items-center justify-between mb-3"><label className="text-xs font-semibold text-[#555]">اختر الحقول للتقرير</label><div className="flex gap-2"><button onClick={() => setP5Fields([...p5AllFieldsForType])} className="text-xs text-[#0D7377] hover:underline">تحديد الكل</button><button onClick={() => setP5Fields([])} className="text-xs text-[#D32F2F] hover:underline">إلغاء الكل</button></div></div>
+              <div className="grid grid-cols-5 gap-2">{p5AllFieldsForType.map(f => <label key={f} className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer ${p5Fields.includes(f) ? "bg-[#E6F4F4]" : "bg-[#FAFAFA]"}`} style={{ border: "1px solid #E0E0E0" }}><input type="checkbox" checked={p5Fields.includes(f)} onChange={() => p5Toggle(f)} className="accent-[#0D7377]" /><span className="text-xs">{f}</span></label>)}</div>
             </div>
           </Card>
-          <Card title={`معاينة — ${p5Patients.length} نتائج`} action={<div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const cols = p5Fields.length ? p5Fields : ["الاسم", "القسم", "الدين"]; const rows = p5Patients.map(p => { const pd = debts.filter(d => d.pid === p.id && inRange(d.date)).reduce((s, d) => s + d.amount, 0); const ps = sessions.filter(s => s.patientId === p.id && inRange(s.date)); const totalAmt = ps.reduce((s, x) => s + x.amount, 0); const totalPaid = ps.reduce((s, x) => s + x.paid, 0); const lastSess = [...ps].sort((a, b) => b.id - a.id)[0]; return cols.map(c => { if (c === "الاسم") return p.name; if (c === "رقم الهوية") return p.id; if (c === "القسم") return DEPARTMENTS.find(d => d.id === p.dept)?.short || p.dept; if (c === "الجوال") return p.phone; if (c === "المبلغ") return totalAmt; if (c === "المدفوع") return totalPaid; if (c === "الدين") return pd; if (c === "التاريخ") return lastSess?.date || ""; if (c === "التشخيص") return lastSess?.diagnoses?.[0] || ""; if (c === "التأمين") return p.insurance ? "مؤمَّن" : "—"; return ""; }); }); const ws = XLSX.utils.aoa_to_sheet([cols, ...rows]); ws["!cols"] = cols.map(() => ({ wch: 18 })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "تقرير مخصص"); XLSX.writeFile(wb, `تقرير_مخصص_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => toast("جارٍ تحضير PDF...", "info")}><Printer size={14} />PDF</Btn></div>}>
-            <table className="w-full text-sm"><THead cols={p5Fields.length ? p5Fields : ["الاسم", "القسم", "الدين"]} />
-              <tbody>{p5Patients.map((p, i) => {
-                const pd = debts.filter(d => d.pid === p.id && inRange(d.date)).reduce((s, d) => s + d.amount, 0);
-                const ps = sessions.filter(s => s.patientId === p.id && inRange(s.date));
-                const totalAmt = ps.reduce((s, x) => s + x.amount, 0); const totalPaid = ps.reduce((s, x) => s + x.paid, 0);
-                const lastSess = ps.sort((a, b) => b.id - a.id)[0];
-                const cols = p5Fields.length ? p5Fields : ["الاسم", "القسم", "الدين"];
-                return <TRow key={p.id} i={i}>
-                  {cols.includes("الاسم") && <TD className="font-medium">{p.name}</TD>}
-                  {cols.includes("رقم الهوية") && <TD className="font-mono text-[#555]">{p.id}</TD>}
-                  {cols.includes("القسم") && <TD><Badge color="info">{DEPARTMENTS.find(d => d.id === p.dept)?.short || p.dept}</Badge></TD>}
-                  {cols.includes("الجوال") && <TD className="text-[#555]">{p.phone}</TD>}
-                  {cols.includes("المبلغ") && <TD className="font-semibold">{fmt(totalAmt)}</TD>}
-                  {cols.includes("المدفوع") && <TD className="text-[#388E3C] font-medium">{fmt(totalPaid)}</TD>}
-                  {cols.includes("الدين") && <TD className={pd > 0 ? "text-[#D32F2F] font-bold" : "text-[#388E3C]"}>{pd > 0 ? fmt(pd) : "مسدد"}</TD>}
-                  {cols.includes("التاريخ") && <TD className="text-[#555] text-xs">{lastSess?.date || "—"}</TD>}
-                  {cols.includes("التشخيص") && <TD className="text-[#555] text-xs">{lastSess?.diagnoses?.[0] || "—"}</TD>}
-                  {cols.includes("التأمين") && <TD>{p.insurance ? <Badge color="success">مؤمَّن</Badge> : <span className="text-[#999] text-xs">—</span>}</TD>}
-                </TRow>;
-              })}
-              </tbody>
-            </table>
+          <Card title={`معاينة — ${p5Rows.length} نتيجة (${REPORT_TYPE_META[p5ReportType].label})`} action={<div className="flex gap-2"><Btn small variant="ghost" onClick={p5ExportExcel}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={p5ExportPdf}><Printer size={14} />PDF</Btn></div>}>
+            {p5Rows.length === 0 ? <EmptyState msg="لا توجد نتائج بهذه الفترة/النوع" /> : (
+              <table className="w-full text-sm"><THead cols={p5ActiveCols} />
+                <tbody>{p5Rows.map((row, i) => (
+                  <TRow key={i} i={i}>{row.map((cell, ci) => <TD key={ci} className={ci === 0 ? "font-medium" : "text-[#555]"}>{cell}</TD>)}</TRow>
+                ))}</tbody>
+              </table>
+            )}
           </Card>
         </div>
       )}
@@ -13932,10 +14014,10 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={deptPerms?.canDeletePurchaseReqs ? onDeletePurchaseRequest : undefined} toast={staffToast} isAdmin={false} dept={activeDept} staffName={staff.name} suppliers={suppliersRoot} />
               )}
               {subScreen === "lab-session" && (
-                <LabSessionScreen toast={staffToast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} />
+                <LabSessionScreen toast={staffToast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} sessions={sessions} setSessions={setSessions} />
               )}
               {subScreen === "rad-session" && (
-                <RadSessionScreen toast={staffToast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} insurances={insurances} setInvoices={setInvoices} />
+                <RadSessionScreen toast={staffToast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} insurances={insurances} setInvoices={setInvoices} sessions={sessions} setSessions={setSessions} />
               )}
               {subScreen === "test-catalog" && <TestCatalogScreen toast={staffToast} labTests={labTests} setLabTests={setLabTests} perms={deptPerms || undefined} inventory={inventory} />}
               {subScreen === "image-catalog" && <ImageCatalogScreen toast={staffToast} perms={deptPerms || undefined} />}
@@ -16663,8 +16745,8 @@ export default function App() {
       case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} insurances={insurances} invoices={invoices} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" suppliers={suppliersRoot} />;
-      case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} />;
-      case "rad-session": return <RadSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} insurances={insurances} setInvoices={setInvoices} />;
+      case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} sessions={sessions} setSessions={setSessions} />;
+      case "rad-session": return <RadSessionScreen toast={toast} doDeposit={doDeposit} setDebts={setDebts} debts={debts} patientId={route.patientId} radImages={radImages} insurances={insurances} setInvoices={setInvoices} sessions={sessions} setSessions={setSessions} />;
       case "test-catalog": return <TestCatalogScreen toast={toast} labTests={labTests} setLabTests={setLabTests} inventory={inventory} />;
       case "lab-inventory": return <InventoryScreen toast={toast} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "lab-queue": return <LabQueueScreen toast={toast} />;
