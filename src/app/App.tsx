@@ -7756,9 +7756,12 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
   const saveEdit = () => {
     if (!editReq) return;
     if (editItems.some(it => !it.name.trim())) { toast("أدخل اسم جميع الأصناف", "error"); return; }
+    // ── نُرسل دائماً المبلغ المدفوع الأصلي كما هو (editReq.paidAmount) وليس أي
+    //    قيمة من الحقل — الحقل بات عرضاً فقط، وأي دفعة حقيقية لازم تمر عبر
+    //    "تسديد" حتى يبقى مرتبطاً بسحب فعلي من الصندوق ──
     onEditPurchaseRequest?.(editReq.id, {
       dept: editDept, requestedBy: editRequestedBy, date: editDate, supplier: editSupplier,
-      note: editNote, paidAmount: parseFloat(editPaid) || 0, items: editItems,
+      note: editNote, paidAmount: editReq.paidAmount || 0, items: editItems,
     });
     toast(`✅ تم تحديث طلب الشراء #${editReq.id}`, "success");
     closeEdit();
@@ -8131,7 +8134,17 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
               <p className="text-xs font-semibold text-[#1B3A6B] text-left">الإجمالي: {fmt(editTotal)}</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <InputField label="المبلغ المدفوع (₪)" type="number" value={editPaid} onChange={setEditPaid} />
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#555]">المبلغ المدفوع (₪)</label>
+                <div className="h-10 px-3 rounded-lg text-sm flex items-center" style={{ border: "1px solid #E0E0E0", backgroundColor: "#F5F5F5", color: "#555" }}>{fmt(parseFloat(editPaid) || 0)}</div>
+                {/* ── هذا الحقل عرض فقط عمداً: تعديله هون مباشرةً كان يُحدّث paid_amount
+                    بقاعدة البيانات (وبالتالي معادلة "المصروفات" بكل شاشات الربح) بدون أي
+                    سحب حقيقي مقابل من صندوق القسم إن لم يكن الطلب مرتبطاً بحركة صندوق
+                    سابقة — فيتضخّم "إجمالي التكاليف" المحسوب دون أي نقص فعلي بالرصيد
+                    الحقيقي. أي دفعة حقيقية يجب أن تمر حصراً عبر زر "تسديد" أو دفعة
+                    الموافقة، وكلاهما يسحب فعلياً من الصندوق وينشئ سند صرف حقيقي. ── */}
+                <p className="text-[10px] text-[#999]">لتعديل المبلغ المدفوع استخدم زر "تسديد" — أي دفعة حقيقية يجب أن تُسحب فعلياً من الصندوق</p>
+              </div>
               <InputField label="ملاحظات" value={editNote} onChange={setEditNote} />
             </div>
           </div>
@@ -8183,7 +8196,10 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
   const grossSalaryOut = stats.breakdown.salary.grossDisbursed;
   const personalOut = stats.breakdown.expenses.personalExpenseVouchers;
   const otherOut = 0;
-  const periodLabel = dateFrom || dateTo ? `${dateFrom || "..."} → ${dateTo || "..."}` : new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  // ── تصحيح: كان يُعرض اسم الشهر الحالي دايماً لو ما في فلترة تاريخ، بينما
+  //    الأرقام الفعلية بتُحسب لكل التاريخ (بدون أي قيد) — فيبدو للمستخدم وكأنها
+  //    أرقام "هذا الشهر" وهي فعلياً تراكمية منذ أول استخدام للنظام. ──
+  const periodLabel = dateFrom || dateTo ? `${dateFrom || "..."} → ${dateTo || "..."}` : "كل الوقت (بدون فلترة تاريخ)";
   const pcol = (v: number) => v >= 0 ? "text-[#2E7D32]" : "text-[#C62828]";
   const pbg = (v: number): React.CSSProperties => v >= 0 ? { backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" } : { backgroundColor: "#FFEBEE", border: "1px solid #FFCDD2" };
   return (
@@ -8239,7 +8255,7 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
             {fmt(rangeProfit)} صافي الربح
           </div>
         </div>
-        <p className="text-xs text-[#999] mt-2">جميع الأرقام مشتقة من معاملات الصناديق فقط — لا يوجد ازدواج في الاحتساب</p>
+        <p className="text-xs text-[#999] mt-2">الإيرادات من الجلسات وسندات القبض، والمصروفات من طلبات الشراء المسددة وسندات الصرف، والرواتب من حركات الصندوق — لا يوجد ازدواج في الاحتساب. ملاحظة: أي إيداع/سحب يدوي من الصندوق خارج هذه المسارات لا يظهر هنا</p>
       </Card>
     </div>
   );
@@ -8278,7 +8294,10 @@ function FinExpensesScreen({ drawers, purchaseRequests = [], employeeAdvances = 
     const name = [...DEPARTMENTS, { id: "general", short: "العام" }].find(d => d.id === deptId)?.short || deptId;
     return { name, إيرادات: rev };
   }).filter(d => d.إيرادات > 0);
-  const periodLabel = dateFrom || dateTo ? `${dateFrom || "..."} → ${dateTo || "..."}` : new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  // ── تصحيح: كان يُعرض اسم الشهر الحالي دايماً لو ما في فلترة تاريخ، بينما
+  //    الأرقام الفعلية بتُحسب لكل التاريخ (بدون أي قيد) — فيبدو للمستخدم وكأنها
+  //    أرقام "هذا الشهر" وهي فعلياً تراكمية منذ أول استخدام للنظام. ──
+  const periodLabel = dateFrom || dateTo ? `${dateFrom || "..."} → ${dateTo || "..."}` : "كل الوقت (بدون فلترة تاريخ)";
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3 flex-wrap">
@@ -8309,7 +8328,7 @@ function FinExpensesScreen({ drawers, purchaseRequests = [], employeeAdvances = 
           <span className="text-[#555] font-bold text-lg">=</span>
           <div className="px-4 py-2 rounded-lg font-bold text-white text-lg" style={{ backgroundColor: "#E65100" }}>{fmt(rangeOut)} التكاليف</div>
         </div>
-        <p className="text-xs text-[#999] mt-2">جميع الأرقام مشتقة من معاملات الصناديق الفعلية فقط</p>
+        <p className="text-xs text-[#999] mt-2">المصروفات من طلبات الشراء المسددة فعلياً وسندات الصرف والرواتب المصروفة — لا يوجد ازدواج في الاحتساب. ملاحظة: أي سحب يدوي من الصندوق خارج هذه المسارات لا يظهر هنا</p>
       </Card>
       <div className="grid grid-cols-2 gap-4">
         <Card title="تصنيف المصروفات">
@@ -8524,7 +8543,10 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const totalWithdrawals = engFinSum.expenses + engFinSum.salaryCost;
   const totalPurchases = engFinSum.breakdown.expenses.purchaseRequests;
 
-  const periodLabel = dateFrom || dateTo ? `${dateFrom || "..."} → ${dateTo || "..."}` : new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  // ── تصحيح: كان يُعرض اسم الشهر الحالي دايماً لو ما في فلترة تاريخ، بينما
+  //    الأرقام الفعلية بتُحسب لكل التاريخ (بدون أي قيد) — فيبدو للمستخدم وكأنها
+  //    أرقام "هذا الشهر" وهي فعلياً تراكمية منذ أول استخدام للنظام. ──
+  const periodLabel = dateFrom || dateTo ? `${dateFrom || "..."} → ${dateTo || "..."}` : "كل الوقت (بدون فلترة تاريخ)";
   const isAdmin = loggedUser?.type === "admin";
 
   // ── حسابات الرسوم البيانية (مصادر موحدة: sessions للإيرادات، صندوق للسحوبات) ──
@@ -16482,8 +16504,15 @@ export default function App() {
   const onEditPurchaseRequest = (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => {
     const orig = purchaseRequests.find(r => r.id === id); if (!orig) return;
     const totalAmount = updated.items.reduce((s, it) => s + (it.qty || 0) * (it.estimatedPrice || 0), 0);
-    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, dept: updated.dept, requestedBy: updated.requestedBy, date: updated.date, supplier: updated.supplier, note: updated.note, paidAmount: updated.paidAmount, totalAmount, items: updated.items } : r));
-    api.finance.purchaseRequests.update(id, { dept: updated.dept, requested_by: updated.requestedBy, date: _prDateISO(updated.date), total_amount: totalAmount, paid_amount: updated.paidAmount, note: updated.note, supplier: updated.supplier || null }).catch(() => { });
+    // ── حماية إضافية: هذا المسار (تعديل عام لطلب شراء) ما لازم يُستخدم أبداً
+    //    لتغيير المبلغ المدفوع الفعلي — أي تغيير حقيقي بالمدفوع لازم يمر حصراً
+    //    عبر "تسديد" (onSettlePurchaseRequestPayment) اللي بيسحب فعلياً من
+    //    الصندوق وينشئ سند صرف مرتبط. لو استُدعيت هذه الدالة بمبلغ مدفوع مختلف
+    //    (من أي مصدر مستقبلي)، نتجاهله ونُبقي المبلغ الأصلي — لمنع تضخّم
+    //    "المصروفات" بمعادلة الربح الموحّدة دون أي نقص حقيقي مقابل من الصندوق. ──
+    const safePaidAmount = orig.paidAmount || 0;
+    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, dept: updated.dept, requestedBy: updated.requestedBy, date: updated.date, supplier: updated.supplier, note: updated.note, paidAmount: safePaidAmount, totalAmount, items: updated.items } : r));
+    api.finance.purchaseRequests.update(id, { dept: updated.dept, requested_by: updated.requestedBy, date: _prDateISO(updated.date), total_amount: totalAmount, paid_amount: safePaidAmount, note: updated.note, supplier: updated.supplier || null }).catch(() => { });
     const origIds = new Set(orig.items.map(it => it.id));
     const keptIds = new Set(updated.items.map(it => it.id));
     orig.items.forEach(it => { if (!keptIds.has(it.id)) api.finance.purchaseRequests.items.delete(it.id).catch(() => { }); });
@@ -16494,11 +16523,6 @@ export default function App() {
         api.finance.purchaseRequests.items.create(id, { name: it.name, qty: it.qty, unit: it.unit, estimated_price: it.estimatedPrice, note: it.note }).catch(() => { });
       }
     });
-    // ── إذا كان الطلب مُعتمَداً وتغيّر المبلغ المدفوع، نصحّح مبلغ حركة السحب
-    //    الحقيقية المرتبطة بالصندوق بدل تركها بمبلغ قديم غير مطابق ──
-    if (orig.status === "approved" && orig.drawerTxId && updated.paidAmount !== orig.paidAmount) {
-      api.drawers.transactions.update(orig.drawerTxId, { amount: updated.paidAmount }).catch(() => { });
-    }
   };
   // ── تسديد دفعة (كاملة أو جزئية) لطلب شراء مُعتمَد — يُنشئ سجل دفعة منفصل
   //    (بدل الكتابة فوق حقل paidAmount المفرد فقط)، مع ملاحظة تلقائية، وسحب
