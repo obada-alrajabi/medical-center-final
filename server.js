@@ -771,6 +771,16 @@ pool
   .then(() => console.log("[migration] receipt_vouchers_drawer_tx_id applied"))
   .catch((e) => console.error("[migration] receipt_vouchers_drawer_tx_id:", e.message));
 
+pool
+  // ── settlement_breakdown: يسجّل بالضبط أي جلسات (sessions) وأي صفوف ديون
+  //    (debts) امتصت مبلغ سند تسديد الدين — بدون هذا، حذف سند التسديد لاحقاً
+  //    كان يصفّر السند نفسه بس يترك الجلسات "مدفوعة" والدين محذوفاً نهائياً
+  //    بلا رجعة. الحقل NULL لكل السندات القديمة (قبل هذا الإصلاح) وللسندات
+  //    العادية (غير المرتبطة بتسديد دين) — الحذف لهاي الحالة يبقى بسيط ──
+  .query(`ALTER TABLE receipt_vouchers ADD COLUMN IF NOT EXISTS settlement_breakdown JSONB`)
+  .then(() => console.log("[migration] receipt_vouchers_settlement_breakdown applied"))
+  .catch((e) => console.error("[migration] receipt_vouchers_settlement_breakdown:", e.message));
+
 // ── تعليم سندات الصرف الشخصية "مُستهلَكة" بعد احتسابها ضمن صرف راتب —
 //    بنفس مبدأ عمود employee_advances.repaid تماماً. قبل هذا العمود كانت
 //    دالة حساب صافي الراتب تجمع كل سندات الصرف الشخصية للموظف منذ استخدام
@@ -780,6 +790,14 @@ pool
   .query(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS applied_to_payroll BOOLEAN DEFAULT false`)
   .then(() => console.log("[migration] payment_vouchers_applied_to_payroll applied"))
   .catch((e) => console.error("[migration] payment_vouchers_applied_to_payroll:", e.message));
+
+pool
+  // ── settlement_breakdown: لسندات الصرف من نوع "مورّد" (سداد طلب شراء) —
+  //    يسجّل رقم الطلب والمبلغ بالضبط، ليكون ممكناً عكس paid_amount على طلب
+  //    الشراء بدقة لو انحذف السند لاحقاً (بدل ما يبقى الطلب "مسدَّد" وهمياً) ──
+  .query(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS settlement_breakdown JSONB`)
+  .then(() => console.log("[migration] payment_vouchers_settlement_breakdown applied"))
+  .catch((e) => console.error("[migration] payment_vouchers_settlement_breakdown:", e.message));
 
 // ── Base path (set APP_BASE_PATH env var on Hostinger, e.g. /45.159.160.11) ──
 const BASE = process.env.APP_BASE_PATH || "";

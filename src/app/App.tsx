@@ -57,6 +57,22 @@ import {
 } from "./components/shared";
 // ─── MOCK DATA ─────────────────────────────────────────────────────────────────
 
+// ── يوثّق بالضبط أي سجلات تانية بالنظام (جلسات مريض، صفوف ديون، أو فاتورة
+//    تأمين) امتصت مبلغ سند قبض معيّن (تسديد دين أو تحصيل فاتورة تأمين) —
+//    يُخزَّن على سند القبض نفسه (settlement_breakdown) ليكون ممكناً عكس الأثر
+//    بدقة كاملة لو انحذف السند لاحقاً، بغض النظر عن نوع السند، بدل ما يختفي
+//    الدين/تبقى الفاتورة "مدفوعة" نهائياً لمجرد حذف السند يلي وثّقها ──
+type SettlementBreakdown = {
+  sessions?: { sessionId: number; amount: number }[];
+  debts?: { debtId: number; amount: number; snapshot: { patient: string; pid: string; dept: string; date: string; days: number; phone: string } }[];
+  invoice?: { invoiceId: string; amount: number };
+  purchaseRequest?: { requestId: number; amount: number };
+};
+// ── سندات القبض المرتبطة بسجل آخر بالنظام (وليست سند إيراد مستقل بذاته) —
+//    تسديد دين مريض، أو تحصيل فاتورة تأمين. حذف أي منهما يجب أن يعكس أثره
+//    على السجل المرتبط (جلسات/ديون أو فاتورة التأمين)، وليس فقط سند القبض ──
+const INSURANCE_INVOICE_RV_MARKER = "تحصيل فاتورة تأمين";
+
 const makeTx = (id: number, type: "in" | "out", title: string, cat: string, amount: number, bal: number, time: string, date?: string, auto?: boolean, ben?: string): DrawerTx => ({ id, type, title, category: cat, amount, balance: bal, time, date: date || "28/06/2026", auto, beneficiary: ben });
 const initialDrawers: Record<string, DrawerState> = {
 
@@ -3708,7 +3724,7 @@ function PatientSearchScreen({ onNavigate, debts, customDepts = [] }: { onNaviga
 
 // ─── PATIENT FILE ──────────────────────────────────────────────────────────────
 
-function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, onSettleSessionsDebt, sessionFiles, setSessionFiles, setReceiptVouchers, receiptVouchers = [], perms, insurances = [], invoices = [] }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; receiptVouchers?: any[]; perms?: DeptPermissions; insurances?: InsuranceCo[]; invoices?: Invoice[] }) {
+function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, onSettleSessionsDebt, sessionFiles, setSessionFiles, setReceiptVouchers, receiptVouchers = [], perms, insurances = [], invoices = [] }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => { sessionId: number; amount: number }[]; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; receiptVouchers?: any[]; perms?: DeptPermissions; insurances?: InsuranceCo[]; invoices?: Invoice[] }) {
   const isAdmin = loggedUser?.type === "admin";
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
   const handleDeleteSession = async (id: number) => {
@@ -3896,18 +3912,11 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
     //    (نفس تصفية liveDebt) — موظف فاتح ملف المريض من قسم معيّن لا يجوز أن
     //    يُسدِّد أو يعدّل ديناً يخص قسماً آخر، حتى لو كان المبلغ كافياً لتغطيته. ──
     const myDeptShort = deptShort(dept);
-    try {
-      const rvBody = {
-        date: _localISO(), amount: amt,
-        received_from_type: "patient" as const,
-        received_from_id: p.id, received_from_name: p.name,
-        reason: `تسديد دين مريض — ${p.name}`,
-        dept, notes: `تسديد دين من ملف المريض — ${myDeptShort}`, approved_by: "",
-      };
-      const r = await api.finance.receiptVouchers.create(rvBody);
-      if (r && setReceiptVouchers) setReceiptVouchers(prev => [{ ...(r as any), amount: Number((r as any).amount) }, ...prev]);
-    } catch { /* still proceed with the deposit + debt update even if the RV call fails */ }
-    if (doDeposit) doDeposit(dept, amt, `سداد دين — ${p.name}`, "سند قبض");
+    // ── تسديد دين مريض ما عاد يُنشئ سند قبض إطلاقاً (بقرار صريح) — الإيراد
+    //    أصلاً بيدخل بالنظام المالي عبر تحديث "المدفوع" على الجلسة (session.paid)
+    //    بالأسفل، فسند قبض إضافي كان يكرر نفس المبلغ بمكانين ويلخبط شاشة/إجمالي
+    //    سندات القبض (كانت تحتوي دايماً على "مرآة" مستبعدة من الإيراد أصلاً).
+    //    السداد هلأ بس: تحديث صف الدين + الجلسة + إيداع بالصندوق ──
     if (setDebts) setDebts(prev => {
       let rem = amt;
       return prev.map(d => {
@@ -3922,6 +3931,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
     //    المريض مجمَّداً عند قيمته الأصلية رغم تسديد الدين (انظر التعليق أعلى
     //    onSettleSessionsDebt بمستوى App) ──
     if (onSettleSessionsDebt) onSettleSessionsDebt(p.id, isAdmin ? null : dept, amt);
+    if (doDeposit) doDeposit(dept, amt, `سداد دين — ${p.name}`, "سداد دين");
     setDebtModal(false); setDebtAmt("");
   };
   const TABS_ALL = [
@@ -8594,7 +8604,7 @@ function FinChartsScreen({ drawers, debts, employees, invoices = [], sessions = 
 
 function numToAr(n: number): string { const ones = ["صفر", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"]; const tens = ["", "عشرة", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"]; if (n <= 0) return "صفر"; if (n < 20) return ones[n]; if (n < 100) { const t = Math.floor(n / 10), o = n % 10; return o === 0 ? tens[t] : `${ones[o]} و${tens[t]}`; } if (n < 1000) { const h = Math.floor(n / 100), r = n % 100; const hs = h === 1 ? "مئة" : h === 2 ? "مئتان" : `${ones[h]} مئة`; return r === 0 ? hs : `${hs} و${numToAr(r)}`; } if (n < 1000000) { const k = Math.floor(n / 1000), r = n % 1000; const ks = k === 1 ? "ألف" : k === 2 ? "ألفان" : k < 11 ? `${ones[k]} آلاف` : `${numToAr(k)} ألف`; return r === 0 ? ks : `${ks} و${numToAr(r)}`; } const m = Math.floor(n / 1000000), r = n % 1000000; const ms = m === 1 ? "مليون" : m === 2 ? "مليونان" : `${numToAr(m)} مليون`; return r === 0 ? ms : `${ms} و${numToAr(r)}`; }
 
-function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurances = [], customDepts = [], doDeposit, doWithdraw, suppliers = [], sessions = [], purchaseRequests = [], allPaymentVouchers = [], allReceiptVouchers = [], employeeAdvances = [], deptIdsFilter }: { drawers: Record<string, DrawerState>; loggedUser?: LoggedUser | null; employees?: Employee[]; insurances?: InsuranceCo[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; doDeposit?: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>; doWithdraw?: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>; suppliers?: { id: number; name: string; type: string; phone: string }[]; sessions?: PatientSession[]; purchaseRequests?: PurchaseRequest[]; allPaymentVouchers?: any[]; allReceiptVouchers?: any[]; employeeAdvances?: EmployeeAdvance[]; deptIdsFilter?: string[] }) {
+function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurances = [], customDepts = [], doDeposit, doWithdraw, suppliers = [], sessions = [], purchaseRequests = [], allPaymentVouchers = [], allReceiptVouchers = [], employeeAdvances = [], deptIdsFilter, onReverseDebtSettlementRv }: { drawers: Record<string, DrawerState>; loggedUser?: LoggedUser | null; employees?: Employee[]; insurances?: InsuranceCo[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; doDeposit?: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>; doWithdraw?: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>; suppliers?: { id: number; name: string; type: string; phone: string }[]; sessions?: PatientSession[]; purchaseRequests?: PurchaseRequest[]; allPaymentVouchers?: any[]; allReceiptVouchers?: any[]; employeeAdvances?: EmployeeAdvance[]; deptIdsFilter?: string[]; onReverseDebtSettlementRv?: (breakdown: SettlementBreakdown) => void }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [receiptVouchers, setReceiptVouchers] = useState<any[]>([]);
@@ -8678,7 +8688,7 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
 
   // ── Voucher Types ──
   type RV = { id: number; voucher_no: string; date: string; amount: number; received_from_type: "patient" | "insurance" | "other"; received_from_id?: string; received_from_name: string; reason: string; dept?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
-  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; category?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
+  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; category?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number; settlement_breakdown?: SettlementBreakdown };
 
   useEffect(() => { Promise.all([api.finance.receiptVouchers.getAll(), api.finance.paymentVouchers.getAll()]).then(([rv, pv]) => { const filterDept = (arr: any[]) => deptIdsFilter?.length ? arr.filter(v => deptIdsFilter.includes(v.dept || "")) : arr; if (rv) setReceiptVouchers(filterDept(rv as any[]).map(v => ({ ...v, amount: Number(v.amount) }))); if (pv) setPaymentVouchers(filterDept(pv as any[]).map(v => ({ ...v, amount: Number(v.amount) }))); setVouchersLoaded(true); }).catch(() => { }); }, []);
 
@@ -8724,12 +8734,34 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const deleteRv = async (id: number) => {
     const target = receiptVouchers.find(v => v.id === id);
     if (!target) return;
-    const confirmed = window.confirm(`حذف سند القبض رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`);
+    // ── سند "مرتبط بسجل آخر" (تسديد دين مريض، أو تحصيل فاتورة تأمين) — بيمس
+    //    أيضاً paid/debt على جلسات المريض/صفوف الديون، أو paid/remaining/status
+    //    على فاتورة التأمين. الحذف البسيط كان يصفّر السند بس ويترك الأثر
+    //    التاني مختفياً نهائياً بلا رجعة. لو السند قديم (قبل هذا الإصلاح) وما
+    //    عنده خريطة توزيع محفوظة، ما فيه طريقة نرجّع أثره بدقة، فنمنع حذفه —
+    //    بغض النظر عن نوع السند (دين مريض أو تأمين، أو أي نوع مستقبلي) ──
+    const isDebtSettlement = typeof target.reason === "string" && target.reason.startsWith(DEBT_SETTLEMENT_RV_MARKER);
+    const isInsuranceSettlement = typeof target.reason === "string" && target.reason.startsWith(INSURANCE_INVOICE_RV_MARKER);
+    const isLinkedSettlement = isDebtSettlement || isInsuranceSettlement;
+    if (isLinkedSettlement && !target.settlement_breakdown) {
+      fireToast(`تعذّر الحذف — هذا سند ${isDebtSettlement ? "تسديد دين" : "تحصيل فاتورة تأمين"} قديم (قبل ربطه تلقائياً بالسجل المرتبط)، فحذفه سيُبقي ${isDebtSettlement ? "الجلسات المرتبطة \"مدفوعة\"" : "الفاتورة \"مدفوعة\""} بلا رجعة. لإرجاع الأثر، سجّله يدوياً بدل حذف السند.`, "error");
+      return;
+    }
+    const confirmed = window.confirm(
+      isDebtSettlement
+        ? `حذف سند تسديد الدين رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيُعاد هذا المبلغ كاملاً كدين على المريض، وترجع الجلسات المتأثرة لحالتها قبل السداد، بالإضافة لتصفير أثره المالي من صندوق القسم.`
+        : isInsuranceSettlement
+          ? `حذف سند تحصيل فاتورة التأمين رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسترجع الفاتورة المرتبطة لحالتها (المدفوع/المتبقي) قبل التحصيل، بالإضافة لتصفير أثره المالي من صندوق القسم.`
+          : `حذف سند القبض رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`
+    );
     if (!confirmed) return;
     try {
       const res = await api.finance.receiptVouchers.delete(id);
       if (res === null) { fireToast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setReceiptVouchers(p => p.filter(v => v.id !== id));
+      if (isLinkedSettlement && target.settlement_breakdown && onReverseDebtSettlementRv) {
+        onReverseDebtSettlementRv(target.settlement_breakdown);
+      }
       if (target.drawer_tx_id) {
         // ── حذف حقيقي لحركة الإيداع المرتبطة (بدون أي أثر متبقٍ) ──
         api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
@@ -8737,7 +8769,7 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
         // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id ──
         doWithdraw(target.dept, target.amount, `إلغاء سند قبض ${target.voucher_no} — ${target.reason}`, "إلغاء سند قبض", target.received_from_name);
       }
-      fireToast(`تم حذف سند القبض ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
+      fireToast(isDebtSettlement ? `تم حذف سند تسديد الدين ${target.voucher_no} وإرجاع الدين والجلسات لحالتها السابقة ✓` : isInsuranceSettlement ? `تم حذف سند التحصيل ${target.voucher_no} وإرجاع الفاتورة لحالتها السابقة ✓` : `تم حذف سند القبض ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { fireToast("خطأ في حذف سند القبض — حاول مجدداً", "error"); }
   };
   const printRv = (v: RV) => {
@@ -8798,12 +8830,28 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const deletePv = async (id: number) => {
     const target = paymentVouchers.find(v => v.id === id);
     if (!target) return;
-    const confirmed = window.confirm(`حذف سند الصرف رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`);
+    // ── سند صرف من نوع "مورّد" (paid_to_type=supplier) مرتبط بسداد طلب شراء —
+    //    بيمس paid_amount على طلب الشراء نفسه، مش بس رصيد الصندوق. لو السند
+    //    قديم (قبل هذا الإصلاح) وما عنده خريطة توزيع محفوظة، ما فيه طريقة
+    //    نرجّع أثره بدقة، فنمنع حذفه بدل ما يبقى الطلب "مسدَّد" وهمياً ──
+    const isSupplierPayment = (target as any).paid_to_type === "supplier";
+    if (isSupplierPayment && !(target as any).settlement_breakdown) {
+      fireToast("تعذّر الحذف — هذا سند صرف مورّد قديم (قبل ربطه تلقائياً بطلب الشراء)، فحذفه سيُبقي طلب الشراء \"مسدَّد\" بلا رجعة. لإرجاع الأثر، عدّل مبلغ المدفوع على طلب الشراء يدوياً بدل حذف السند.", "error");
+      return;
+    }
+    const confirmed = window.confirm(
+      isSupplierPayment
+        ? `حذف سند الصرف رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيرجع هذا المبلغ كمتبقٍ (غير مسدَّد) على طلب الشراء المرتبط، بالإضافة لتصفير أثره المالي من صندوق القسم.`
+        : `حذف سند الصرف رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`
+    );
     if (!confirmed) return;
     try {
       const res = await api.finance.paymentVouchers.delete(id);
       if (res === null) { fireToast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setPaymentVouchers(p => p.filter(v => v.id !== id));
+      if (isSupplierPayment && (target as any).settlement_breakdown && onReverseDebtSettlementRv) {
+        onReverseDebtSettlementRv((target as any).settlement_breakdown);
+      }
       if (target.drawer_tx_id) {
         // ── حذف حقيقي لحركة السحب المرتبطة (بدون أي أثر متبقٍ) ──
         api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
@@ -8811,7 +8859,7 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
         // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id ──
         doDeposit(target.dept, target.amount, `إلغاء سند صرف ${target.voucher_no} — ${target.reason}`, "إلغاء سند صرف");
       }
-      fireToast(`تم حذف سند الصرف ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
+      fireToast(isSupplierPayment ? `تم حذف سند الصرف ${target.voucher_no} وإرجاع طلب الشراء لحالته السابقة ✓` : `تم حذف سند الصرف ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { fireToast("خطأ في حذف سند الصرف — حاول مجدداً", "error"); }
   };
   const printPv = (v: PV) => {
@@ -9044,7 +9092,7 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
   // ── بدونها يبقى "المدفوع" بملف المريض مجمَّداً رغم تسديد الدين من هنا —
   //    نفس خلل PatientFileScreen.handleDebtPayment المصلَّح سابقاً، موجود هنا
   //    أيضاً لأنها مسار تسديد مستقل تماماً (شاشة إدارة الديون العامة). ──
-  onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => void;
+  onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => { sessionId: number; amount: number }[];
 }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [search, setSearch] = useState(""); const [deptFilter, setDeptFilter] = useState(""); const [ageFilter, setAgeFilter] = useState<"all" | "<30" | "30-90" | ">90">("all");
@@ -9092,25 +9140,15 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
     const deptId = matchedDept?.id || settleModal.dept || "surgery";
     setSettling(true);
     try {
-      // ── تسجيل السداد كسند قبض حقيقي (وليس فقط إيداع خام بالصندوق) — هذا ما
-      //    يجعله يدخل تلقائياً بكل المعادلات المالية الموحّدة بالنظام (لوحة
-      //    التحكم، النظام المالي العام، إلخ) تماماً مثل أي سند قبض آخر يُنشأ
-      //    يدوياً من شاشة "السندات وحساباتها". ──
-      const rvBody = {
-        date: _localISO(), amount: paid,
-        received_from_type: "patient" as const,
-        received_from_id: settleModal.pid, received_from_name: settleModal.patient,
-        reason: `تسديد دين مريض — ${settleModal.patient}`,
-        dept: deptId, notes: "تسديد دين من شاشة إدارة الديون", approved_by: "",
-      };
-      const r = await api.finance.receiptVouchers.create(rvBody);
-      if (r && setReceiptVouchers) setReceiptVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
-      doDeposit(deptId, paid, `تسديد دين — ${settleModal.patient}`, "سند قبض");
-      setDebts(p => p.map(d => { if (d.id !== settleModal.id) return d; const n = d.amount - paid; if (n <= 0) { api.finance.debts.delete(d.id); return null; } api.finance.debts.update(d.id, { amount: n }); return { ...d, amount: n }; }).filter(Boolean) as DebtRow[]);
-      // ── تحديث paid/debt على الجلسات الفعلية أيضاً، وإلا يبقى "المدفوع" بملف
-      //    المريض مجمَّداً رغم تسديد الدين من هنا (نفس إصلاح PatientFileScreen) ──
+      // ── تسديد دين مريض ما عاد يُنشئ سند قبض إطلاقاً (بقرار صريح) — الإيراد
+      //    أصلاً بيدخل بالنظام المالي عبر تحديث "المدفوع" على الجلسة
+      //    (session.paid عبر onSettleSessionsDebt)، فسند قبض إضافي كان يكرر
+      //    نفس المبلغ بمكانين. السداد هلأ بس: تحديث الجلسة + صف الدين + إيداع
+      //    بالصندوق (نفس منطق handleDebtPayment بملف المريض) ──
       if (onSettleSessionsDebt && settleModal.pid) onSettleSessionsDebt(settleModal.pid, deptId, paid);
-      toast(`تم تسجيل دفعة ${fmt(paid)} من ${settleModal.patient} كسند قبض ✓`);
+      doDeposit(deptId, paid, `تسديد دين — ${settleModal.patient}`, "سداد دين");
+      setDebts(p => p.map(d => { if (d.id !== settleModal.id) return d; const n = d.amount - paid; if (n <= 0) { api.finance.debts.delete(d.id); return null; } api.finance.debts.update(d.id, { amount: n }); return { ...d, amount: n }; }).filter(Boolean) as DebtRow[]);
+      toast(`تم تسجيل دفعة ${fmt(paid)} من ${settleModal.patient} ✓`);
     } catch {
       toast("تعذّر تسجيل السداد — حاول مجدداً", "error");
     } finally {
@@ -10887,6 +10925,9 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
           received_from_name: settleInvModal.company,
           reason: `تحصيل فاتورة تأمين ${settleInvModal.id}${settleInvModal.patientName ? " — " + settleInvModal.patientName : ""}`,
           dept: settleInvModal.dept, notes: `تسوية من تقرير كشوفات شركات التأمين — فاتورة #${settleInvModal.id}`, approved_by: "",
+          // ── نوثّق أي فاتورة ومبلغ اتحصّل فيها، عشان لو انحذف سند القبض هذا
+          //    لاحقاً، ترجع الفاتورة لحالتها (المدفوع/المتبقي/الحالة) قبل التحصيل ──
+          settlement_breakdown: { invoice: { invoiceId: settleInvModal.id, amount: amt } } as SettlementBreakdown,
         });
         if (rv && setReceiptVouchers) setReceiptVouchers(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]);
       } catch { /* نكمل تحصيل الفاتورة والإيداع حتى لو فشل إنشاء سند القبض */ }
@@ -10898,7 +10939,13 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
     } catch { toast("خطأ في تسوية الفاتورة", "error"); }
     finally { setSettlingInv(false); }
   };
-  const [fromDate, setFromDate] = useState(() => _localISO()); const [toDate, setToDate] = useState(() => _localISO());
+  // ── كان الفلتر الافتراضي "اليوم فقط" (fromDate=toDate=تاريخ اليوم) — بما إنه
+  //    inRange() بترجع "الكل" فقط لو الحقلين فاضيين، فكل تبويبات الشاشة كانت
+  //    تُظهر بيانات فاضية تلقائياً من أول فتح للشاشة، إلا لو المستخدم بالصدفة
+  //    كان عنده بيانات بتاريخ اليوم بالضبط — وهذا سبب شكوى "البيانات دايماً
+  //    فاضية بغض النظر شو بفلتر". الافتراضي الصحيح: بدون فلتر تاريخ إطلاقاً
+  //    (تعرض كل البيانات) لحد ما المستخدم يحدد فترة بنفسه ──
+  const [fromDate, setFromDate] = useState(""); const [toDate, setToDate] = useState("");
   const TABS = [{ k: "patients", l: "كشوفات المرضى" }, { k: "companies", l: "كشوفات شركات التأمين" }, { k: "suppliers", l: "كشوفات شركات الموردين" }, { k: "depts", l: "كشوفات الأقسام" }, { k: "custom", l: "التقارير المخصصة" }];
   const parseStrDate = (s: string) => { if (!s) return null; const clean = s.trim(); if (clean.includes("/")) { const p = clean.split("/"); if (p.length === 3) { const d = parseInt(p[0]), m = parseInt(p[1]), y = parseInt(p[2]); if (!isNaN(y) && y > 2000) return new Date(y, m - 1, d, 12, 0, 0); } } const parts = clean.split("-"); if (parts.length === 3 && parts[0].length === 4) { const y = parseInt(parts[0]), m = parseInt(parts[1]), d = parseInt(parts[2]); if (!isNaN(y)) return new Date(y, m - 1, d, 12, 0, 0); } const iso = Date.parse(clean); if (!isNaN(iso)) { const dt = new Date(iso); dt.setHours(12, 0, 0, 0); return dt; } return null; };
   const inRange = (d: string) => { const date = parseStrDate(d); if (!fromDate || !toDate) return true; if (!date) return false; const from = parseStrDate(fromDate); if (from) from.setHours(0, 0, 0, 0); const to = parseStrDate(toDate); if (to) to.setHours(23, 59, 59, 999); return (from ? date >= from : true) && (to ? date <= to : true); };
@@ -11260,7 +11307,11 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
               {[{ k: "all", l: "الكل" }, ...allDepts.map(d => ({ k: d.id, l: d.short }))].map(d => (
                 <button key={d.k} onClick={() => setP4Dept(d.k)} className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${p4Dept === d.k ? "bg-[#1B3A6B] text-white" : "bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{ border: "1px solid #E0E0E0" }}>{d.l}</button>
               ))}
-              <div className="mr-auto flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = p4Data.map(d => [d.name, d.rev, d.wd, d.net]); const ws = XLSX.utils.aoa_to_sheet([["القسم", "الإيرادات (₪)", "السحوبات (₪)", "صافي الربح (₪)"], ...rows, [], [" ", p4Data.reduce((s, d) => s + d.rev, 0), p4Data.reduce((s, d) => s + d.wd, 0), p4Data.reduce((s, d) => s + d.net, 0)]]); ws["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "كشوفات الأقسام"); XLSX.writeFile(wb, `كشوفات_الأقسام_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={13} />Excel</Btn><Btn small variant="ghost" onClick={() => toast("جارٍ التحضير...", "info")}><Printer size={13} />PDF</Btn></div>
+              <div className="mr-auto flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = p4Data.map(d => [d.name, d.rev, d.wd, d.net]); const ws = XLSX.utils.aoa_to_sheet([["القسم", "الإيرادات (₪)", "السحوبات (₪)", "صافي الربح (₪)"], ...rows, [], [" ", p4Data.reduce((s, d) => s + d.rev, 0), p4Data.reduce((s, d) => s + d.wd, 0), p4Data.reduce((s, d) => s + d.net, 0)]]); ws["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 16 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "كشوفات الأقسام"); XLSX.writeFile(wb, `كشوفات_الأقسام_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={13} />Excel</Btn><Btn small variant="ghost" onClick={() => {
+                const totalRev = p4Data.reduce((s, d) => s + d.rev, 0), totalWd = p4Data.reduce((s, d) => s + d.wd, 0), totalNet = p4Data.reduce((s, d) => s + d.net, 0);
+                const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الإيرادات</div><div class="kpi-v in">${fmt(totalRev)}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي السحوبات</div><div class="kpi-v out">${fmt(totalWd)}</div></div><div class="kpi-box"><div class="kpi-l">صافي الربح</div><div class="kpi-v ${totalNet >= 0 ? "in" : "out"}">${fmt(totalNet)}</div></div></div><h2>كشوفات الأقسام${p4Dept !== "all" ? " — " + (allDepts.find(d => d.id === p4Dept)?.short || p4Dept) : ""}</h2><table><thead><tr><th>القسم</th><th>الإيرادات</th><th>السحوبات</th><th>صافي الربح</th></tr></thead><tbody>${p4Data.map(d => `<tr><td>${d.name}</td><td class="in">${fmt(d.rev)}</td><td class="out">${fmt(d.wd)}</td><td class="${d.net >= 0 ? "in" : "out"}">${fmt(d.net)}</td></tr>`).join("")}</tbody><tfoot><tr><td>الإجمالي</td><td class="in">${fmt(totalRev)}</td><td class="out">${fmt(totalWd)}</td><td class="${totalNet >= 0 ? "in" : "out"}">${fmt(totalNet)}</td></tr></tfoot></table>`;
+                printHtml(html, `كشوفات الأقسام${p4Dept !== "all" ? " — " + (allDepts.find(d => d.id === p4Dept)?.short || p4Dept) : ""}`, fromDate, toDate);
+              }}><Printer size={13} />PDF</Btn></div>
             </div>
           </Card>
           <div className="grid grid-cols-2 gap-4">
@@ -13546,7 +13597,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
 
 function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles,
   setStaffList, setCustomDepts, onAddDeptDrawer, setEmployees, setInsurances, adminAccounts = [], setAdminAccounts,
-  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers, setInventory, computeKitStatus, onEditSession, onSettleSessionsDebt }: {
+  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers, setInventory, computeKitStatus, onEditSession, onSettleSessionsDebt, onReverseDebtSettlementRv }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -13614,7 +13665,8 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   setSuppliersRoot?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>>;
   setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
   onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void;
-  onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => void;
+  onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => { sessionId: number; amount: number }[];
+  onReverseDebtSettlementRv?: (breakdown: SettlementBreakdown) => void;
 }) {
 
   const customDeptsAsDepts = customDepts.map(d => ({ ...d, Icon: Building2 as React.ElementType }));
@@ -14186,7 +14238,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
               {subScreen === "rehab-catalog" && <RehabCatalogScreen toast={staffToast} rehabServices={rehabServices} setRehabServices={setRehabServices} perms={deptPerms || undefined} />}
               {subScreen === "vouchers" && activeDept && (
-                <DeptVouchersScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={staffToast} loggedUser={{ type: "staff", staff }} perms={deptPerms ?? undefined} />
+                <DeptVouchersScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={staffToast} loggedUser={{ type: "staff", staff }} perms={deptPerms ?? undefined} onReverseDebtSettlementRv={onReverseDebtSettlementRv} />
               )}
               {/* "dept-drawer" (صندوق القسم المالي الكامل) أُلغي نهائياً من جهة الموظف */}
               {subScreen === "my-account" && (
@@ -14209,7 +14261,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 const staffPRs = purchaseRequests.filter(r => allowedIds.has(r.dept || ""));
                 const staffRVs = allReceiptVouchers.filter(v => allowedIds.has(v.dept || ""));
                 const staffPVs = allPaymentVouchers.filter(v => allowedIds.has(v.dept || ""));
-                return <FinancialSummaryScreen drawers={staffDrawers} loggedUser={{ type: "staff", staff }} employees={employees} insurances={insurances} customDepts={staffCustomDepts as any} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={staffSessions} purchaseRequests={staffPRs} allPaymentVouchers={staffPVs} allReceiptVouchers={staffRVs} employeeAdvances={employeeAdvances} deptIdsFilter={[...allowedIds]} />;
+                return <FinancialSummaryScreen drawers={staffDrawers} loggedUser={{ type: "staff", staff }} employees={employees} insurances={insurances} customDepts={staffCustomDepts as any} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={staffSessions} purchaseRequests={staffPRs} allPaymentVouchers={staffPVs} allReceiptVouchers={staffRVs} employeeAdvances={employeeAdvances} deptIdsFilter={[...allowedIds]} onReverseDebtSettlementRv={onReverseDebtSettlementRv} />;
               })()}
               {subScreen === "print-export" && activeDept && (
                 <DeptPrintExportScreen dept={activeDept} deptName={activeDeptInfo?.name || activeDept} drawers={drawers} sessions={sessions} invoices={invoices} toast={staffToast} />
@@ -14285,7 +14337,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
 
 // ─── DEPT VOUCHERS SCREEN ─────────────────────────────────────────────────────
-function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, employees = [], insurances = [], suppliers = [], toast, loggedUser, perms }: {
+function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, employees = [], insurances = [], suppliers = [], toast, loggedUser, perms, onReverseDebtSettlementRv }: {
   dept: string; deptName: string; drawers: Record<string, DrawerState>;
   doDeposit: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>;
   doWithdraw: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>;
@@ -14293,9 +14345,10 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
   toast: (m: string, t?: ToastItem["type"]) => void;
   loggedUser?: LoggedUser | null;
   perms?: DeptPermissions;
+  onReverseDebtSettlementRv?: (breakdown: SettlementBreakdown) => void;
 }) {
-  type RV = { id: number; voucher_no: string; date: string; amount: number; received_from_type: "patient" | "insurance" | "other"; received_from_id?: string; received_from_name: string; reason: string; dept?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
-  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; notes?: string; category?: string; approved_by?: string; created_at: string; drawer_tx_id?: number };
+  type RV = { id: number; voucher_no: string; date: string; amount: number; received_from_type: "patient" | "insurance" | "other"; received_from_id?: string; received_from_name: string; reason: string; dept?: string; notes?: string; approved_by?: string; created_at: string; drawer_tx_id?: number; settlement_breakdown?: SettlementBreakdown };
+  type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; notes?: string; category?: string; approved_by?: string; created_at: string; drawer_tx_id?: number; settlement_breakdown?: SettlementBreakdown };
   const isAdminUser = loggedUser?.type === "admin";
   const canDeleteVoucher = isAdminUser || !!(perms?.canDeleteVoucher);
   const [tab, setTab] = useState<"rv" | "pv">("rv");
@@ -14348,11 +14401,32 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
     if (!isAdminUser) { toast("صلاحية الحذف متاحة للمدير فقط", "error"); return; }
     const target = rvList.find(v => v.id === id);
     if (!target) return;
-    if (!window.confirm(`حذف سند القبض رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`)) return;
+    // ── سند "مرتبط بسجل آخر" (تسديد دين مريض، أو تحصيل فاتورة تأمين) بيمس
+    //    أيضاً سجلاً غير سند القبض نفسه — الحذف البسيط كان يصفّر السند بس
+    //    ويترك الأثر التاني مختفياً نهائياً بلا رجعة. لو السند قديم (قبل هذا
+    //    الإصلاح) وما عنده خريطة توزيع محفوظة، ما فيه طريقة نرجّع أثره بدقة،
+    //    فنمنع حذفه — بغض النظر عن نوع السند ──
+    const isDebtSettlement = typeof target.reason === "string" && target.reason.startsWith(DEBT_SETTLEMENT_RV_MARKER);
+    const isInsuranceSettlement = typeof target.reason === "string" && target.reason.startsWith(INSURANCE_INVOICE_RV_MARKER);
+    const isLinkedSettlement = isDebtSettlement || isInsuranceSettlement;
+    if (isLinkedSettlement && !target.settlement_breakdown) {
+      toast(`تعذّر الحذف — هذا سند ${isDebtSettlement ? "تسديد دين" : "تحصيل فاتورة تأمين"} قديم (قبل ربطه تلقائياً بالسجل المرتبط)، فحذفه سيُبقي ${isDebtSettlement ? "الجلسات المرتبطة \"مدفوعة\"" : "الفاتورة \"مدفوعة\""} بلا رجعة. لإرجاع الأثر، سجّله يدوياً بدل حذف السند.`, "error");
+      return;
+    }
+    if (!window.confirm(
+      isDebtSettlement
+        ? `حذف سند تسديد الدين رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيُعاد هذا المبلغ كاملاً كدين على المريض، وترجع الجلسات المتأثرة لحالتها قبل السداد، بالإضافة لتصفير أثره المالي من صندوق القسم.`
+        : isInsuranceSettlement
+          ? `حذف سند تحصيل فاتورة التأمين رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسترجع الفاتورة المرتبطة لحالتها (المدفوع/المتبقي) قبل التحصيل، بالإضافة لتصفير أثره المالي من صندوق القسم.`
+          : `حذف سند القبض رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`
+    )) return;
     try {
       const res = await api.finance.receiptVouchers.delete(id);
       if (res === null) { toast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setRvList(p => p.filter(v => v.id !== id));
+      if (isLinkedSettlement && target.settlement_breakdown && onReverseDebtSettlementRv) {
+        onReverseDebtSettlementRv(target.settlement_breakdown);
+      }
       if (target.drawer_tx_id) {
         // ── حذف حقيقي لحركة الإيداع المرتبطة (بدون أي أثر متبقٍ) ──
         api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
@@ -14360,7 +14434,7 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
         // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id: نعكس الأثر بحركة معاكسة كما كان سابقاً ──
         doWithdraw(dept, target.amount, `إلغاء سند قبض ${target.voucher_no} — ${target.reason}`, "إلغاء سند قبض", target.received_from_name);
       }
-      toast(`تم حذف سند القبض ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
+      toast(isDebtSettlement ? `تم حذف سند تسديد الدين ${target.voucher_no} وإرجاع الدين والجلسات لحالتها السابقة ✓` : isInsuranceSettlement ? `تم حذف سند التحصيل ${target.voucher_no} وإرجاع الفاتورة لحالتها السابقة ✓` : `تم حذف سند القبض ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { toast("خطأ في حذف سند القبض — حاول مجدداً", "error"); }
   };
   const printRv = (v: RV) => { const aw = numToAr(Math.floor(v.amount)); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم السند</div><div class="kpi-v">${v.voucher_no}</div></div><div class="kpi-box"><div class="kpi-l">التاريخ</div><div class="kpi-v">${v.date}</div></div><div class="kpi-box"><div class="kpi-l">المبلغ بالأرقام</div><div class="kpi-v in">₪ ${Number(v.amount).toLocaleString("en-US")}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المبلغ بالحروف</div><div class="kpi-v">${aw} شيكل فقط لا غير</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المقبوض من</div><div class="kpi-v">${v.received_from_name}</div></div><div class="kpi-box"><div class="kpi-l">النوع</div><div class="kpi-v">${v.received_from_type === "patient" ? "مريض" : v.received_from_type === "insurance" ? "شركة تأمين" : "أخرى"}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">سبب القبض</div><div class="kpi-v">${v.reason}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptName}</div></div>${v.notes ? `<div class="kpi-box"><div class="kpi-l">ملاحظات</div><div class="kpi-v">${v.notes}</div></div>` : ""}</div><div style="margin-top:60px;display:flex;justify-content:space-between;"><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">توقيع الموظف</div></div></div>`; printHtml(html, `سند قبض — ${v.voucher_no}`, undefined, undefined, true, dept); };
@@ -14394,11 +14468,26 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
     if (!isAdminUser) { toast("صلاحية الحذف متاحة للمدير فقط", "error"); return; }
     const target = pvList.find(v => v.id === id);
     if (!target) return;
-    if (!window.confirm(`حذف سند الصرف رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`)) return;
+    // ── سند صرف من نوع "مورّد" مرتبط بسداد طلب شراء — بيمس paid_amount على
+    //    طلب الشراء نفسه. لو السند قديم وما عنده خريطة توزيع، ما فيه طريقة
+    //    نرجّع أثره بدقة، فنمنع حذفه بدل ما يبقى الطلب "مسدَّد" وهمياً ──
+    const isSupplierPayment = target.paid_to_type === "supplier";
+    if (isSupplierPayment && !target.settlement_breakdown) {
+      toast("تعذّر الحذف — هذا سند صرف مورّد قديم (قبل ربطه تلقائياً بطلب الشراء)، فحذفه سيُبقي طلب الشراء \"مسدَّد\" بلا رجعة. لإرجاع الأثر، عدّل مبلغ المدفوع على طلب الشراء يدوياً بدل حذف السند.", "error");
+      return;
+    }
+    if (!window.confirm(
+      isSupplierPayment
+        ? `حذف سند الصرف رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيرجع هذا المبلغ كمتبقٍ (غير مسدَّد) على طلب الشراء المرتبط، بالإضافة لتصفير أثره المالي من صندوق القسم.`
+        : `حذف سند الصرف رقم ${target.voucher_no}؟\nالمبلغ: ${fmt(target.amount)} ₪\nسيتم تصفير أثره المالي فوراً من صندوق القسم.`
+    )) return;
     try {
       const res = await api.finance.paymentVouchers.delete(id);
       if (res === null) { toast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
       setPvList(p => p.filter(v => v.id !== id));
+      if (isSupplierPayment && target.settlement_breakdown && onReverseDebtSettlementRv) {
+        onReverseDebtSettlementRv(target.settlement_breakdown);
+      }
       if (target.drawer_tx_id) {
         // ── حذف حقيقي لحركة السحب المرتبطة (بدون أي أثر متبقٍ) ──
         api.drawers.transactions.delete(target.drawer_tx_id).catch(() => { });
@@ -14406,7 +14495,7 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
         // ── توافق مع سندات قديمة أُنشئت قبل ربط drawer_tx_id: نعكس الأثر بحركة معاكسة كما كان سابقاً ──
         doDeposit(dept, target.amount, `إلغاء سند صرف ${target.voucher_no} — ${target.reason}`, "إلغاء سند صرف");
       }
-      toast(`تم حذف سند الصرف ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
+      toast(isSupplierPayment ? `تم حذف سند الصرف ${target.voucher_no} وإرجاع طلب الشراء لحالته السابقة ✓` : `تم حذف سند الصرف ${target.voucher_no} وتصفير أثره المالي ✓`, "warning");
     } catch { toast("خطأ في حذف سند الصرف — حاول مجدداً", "error"); }
   };
   const printPv = (v: PV) => { const aw = numToAr(Math.floor(v.amount)); const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم السند</div><div class="kpi-v">${v.voucher_no}</div></div><div class="kpi-box"><div class="kpi-l">التاريخ</div><div class="kpi-v">${v.date}</div></div><div class="kpi-box"><div class="kpi-l">المبلغ بالأرقام</div><div class="kpi-v out">₪ ${Number(v.amount).toLocaleString("en-US")}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المبلغ بالحروف</div><div class="kpi-v">${aw} شيكل فقط لا غير</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">المصروف له</div><div class="kpi-v">${v.paid_to_name}</div></div><div class="kpi-box"><div class="kpi-l">النوع</div><div class="kpi-v">${v.paid_to_type === "supplier" ? "مورد" : v.paid_to_type === "staff" ? "موظف" : "أخرى"}</div></div></div><div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">سبب الصرف</div><div class="kpi-v">${v.reason}</div></div><div class="kpi-box"><div class="kpi-l">القسم</div><div class="kpi-v">${deptName}</div></div>${v.notes ? `<div class="kpi-box"><div class="kpi-l">ملاحظات</div><div class="kpi-v">${v.notes}</div></div>` : ""}</div><div style="margin-top:60px;display:flex;justify-content:space-between;"><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">المستلِم / الدافِع</div></div><div style="text-align:center;"><div style="border-top:1px solid #333;width:200px;padding-top:8px;">${v.approved_by || "المعتمِد"}</div></div></div>`; printHtml(html, `سند صرف — ${v.voucher_no}`, undefined, undefined, true, dept); };
@@ -16886,7 +16975,7 @@ export default function App() {
         }
         let voucherId: number | null = null;
         try {
-          const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: paidNow, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "مشتريات مُعتمدة", notes: note, drawer_tx_id: txId || null });
+          const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: paidNow, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "مشتريات مُعتمدة", notes: note, drawer_tx_id: txId || null, settlement_breakdown: { purchaseRequest: { requestId: id, amount: paidNow } } as SettlementBreakdown });
           if (rv && (rv as any).id) { voucherId = (rv as any).id; setPaymentVouchersGlobal(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]); }
         } catch { /* نكمل حتى لو فشل إنشاء سند الصرف */ }
         const r = await api.finance.purchaseRequests.payments.create(id, { amount: paidNow, note, drawer_tx_id: txId || null, payment_voucher_id: voucherId });
@@ -16961,7 +17050,7 @@ export default function App() {
       const txId = await doWithdraw(req.dept, amt, note, "دفعة مورد");
       let voucherId: number | null = null;
       try {
-        const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: amt, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "دفعة مورد", notes: note, drawer_tx_id: txId || null });
+        const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: amt, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "دفعة مورد", notes: note, drawer_tx_id: txId || null, settlement_breakdown: { purchaseRequest: { requestId: id, amount: amt } } as SettlementBreakdown });
         if (rv && (rv as any).id) { voucherId = (rv as any).id; setPaymentVouchersGlobal(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]); }
       } catch { /* نكمل حتى لو فشل إنشاء سند الصرف */ }
       const r = await api.finance.purchaseRequests.payments.create(id, { amount: amt, note, drawer_tx_id: txId || null, payment_voucher_id: voucherId });
@@ -17026,7 +17115,11 @@ export default function App() {
   //    على جلسات المريض (بنفس القسم، أو كل الأقسام لو مدير) التي ما زال عليها
   //    دين، الأقدم فالأحدث — بنفس منطق التوزيع المستخدم أصلاً لتخفيض صفوف
   //    debts — لتبقى paid/debt على مستوى الجلسة متوافقة دائماً مع سجل الديون. ──
-  const onSettleSessionsDebt = (patientId: string, deptId: string | null, amount: number) => {
+  // ── ترجع "خريطة توزيع" السداد بالضبط (أي جلسة أخدت قد إيش) — هذا ما كان
+  //    موجوداً سابقاً، وهو السبب إنه حذف سند تسديد دين ما كان ممكن يرجّع
+  //    أثره بدقة على الجلسات (انظر settlement_breakdown بالأسفل) ──
+  const onSettleSessionsDebt = (patientId: string, deptId: string | null, amount: number): { sessionId: number; amount: number }[] => {
+    const breakdown: { sessionId: number; amount: number }[] = [];
     setSessions(prev => {
       let rem = amount;
       // نمرّ بترتيب الأقدم أولاً (id تصاعدي) لتحديد المبلغ المطبَّق على كل جلسة،
@@ -17041,10 +17134,71 @@ export default function App() {
         const paid = s.paid + apply;
         const debt = s.debt - apply;
         applyMap.set(s.id, { paid, debt });
+        breakdown.push({ sessionId: s.id, amount: apply });
         api.sessions.update(s.id, { paid, debt }).catch(() => { });
       }
       return prev.map(s => applyMap.has(s.id) ? { ...s, ...applyMap.get(s.id)! } : s);
     });
+    return breakdown;
+  };
+  // ── يعكس بدقة أثر سند تسديد دين محذوف: يرجّع لكل جلسة القيمة يلي كانت
+  //    امتصتها من مبلغ السداد (المدفوع ينقص، الدين يزيد)، ويرجّع أي صف دين
+  //    (debts) انحذف بالكامل وقتها أو نقص مبلغه — بدل ما يختفي الدين نهائياً
+  //    من النظام لمجرد حذف سند القبض يلي وثّقه ──
+  const reverseSettlementBreakdown = (breakdown: SettlementBreakdown) => {
+    if (breakdown.sessions?.length) {
+      setSessions(prev => {
+        const applyMap = new Map<number, { paid: number; debt: number }>();
+        prev.forEach(s => {
+          const item = breakdown.sessions!.find(b => b.sessionId === s.id);
+          if (!item) return;
+          const paid = Math.max(0, s.paid - item.amount);
+          const debt = s.debt + item.amount;
+          applyMap.set(s.id, { paid, debt });
+          api.sessions.update(s.id, { paid, debt }).catch(() => { });
+        });
+        return prev.map(s => applyMap.has(s.id) ? { ...s, ...applyMap.get(s.id)! } : s);
+      });
+    }
+    if (breakdown.debts?.length) {
+      setDebts(prev => {
+        let next = [...prev];
+        breakdown.debts!.forEach(item => {
+          const idx = next.findIndex(d => d.id === item.debtId);
+          if (idx >= 0) {
+            const nd = { ...next[idx], amount: next[idx].amount + item.amount };
+            next[idx] = nd;
+            api.finance.debts.update(item.debtId, { amount: nd.amount }).catch(() => { });
+          } else {
+            // الصف انحذف بالكامل وقت السداد — نعيد إنشاءه بنفس بيانات المريض/القسم الأصلية
+            const nd: DebtRow = { id: Date.now() + Math.floor(Math.random() * 1000), patient: item.snapshot.patient, pid: item.snapshot.pid, dept: item.snapshot.dept, amount: item.amount, date: item.snapshot.date, days: item.snapshot.days, phone: item.snapshot.phone };
+            next = [nd, ...next];
+            api.finance.debts.create({ patient: item.snapshot.patient, patient_id: item.snapshot.pid, dept: item.snapshot.dept, amount: item.amount, date: api.parseDateISO(item.snapshot.date), phone: item.snapshot.phone }).then(r => { if (r && (r as any).id) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
+          }
+        });
+        return next;
+      });
+    }
+    if (breakdown.invoice) {
+      const { invoiceId, amount } = breakdown.invoice;
+      setInvoices(prev => prev.map(inv => {
+        if (inv.id !== invoiceId) return inv;
+        const paid = Math.max(0, inv.paid - amount);
+        const remaining = inv.total - paid;
+        const status: Invoice["status"] = remaining <= 0 ? "paid" : (paid > 0 ? "partial" : "unpaid");
+        api.finance.invoices.update(invoiceId, { paid, status }).catch(() => { });
+        return { ...inv, paid, remaining: Math.max(0, remaining), status };
+      }));
+    }
+    if (breakdown.purchaseRequest) {
+      const { requestId, amount } = breakdown.purchaseRequest;
+      setPurchaseRequests(prev => prev.map(r => {
+        if (r.id !== requestId) return r;
+        const paidAmount = Math.max(0, (r.paidAmount || 0) - amount);
+        api.finance.purchaseRequests.update(requestId, { paid_amount: paidAmount }).catch(() => { });
+        return { ...r, paidAmount };
+      }));
+    }
   };
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
   useEffect(() => {
@@ -17123,6 +17277,7 @@ export default function App() {
       setSessions={setSessions} setDebts={setDebts}
       onEditSession={onEditSession}
       onSettleSessionsDebt={onSettleSessionsDebt}
+      onReverseDebtSettlementRv={reverseSettlementBreakdown}
       purchaseRequests={purchaseRequests}
       onSubmitPurchaseRequest={onSubmitPurchaseRequest}
       onApprovePurchaseRequest={onApprovePurchaseRequest}
@@ -17204,9 +17359,9 @@ export default function App() {
       case "fin-expenses": return <FinExpensesScreen drawers={drawers} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} />;
       case "fin-purchase-reqs": return <FinAllPurchaseReqsScreen purchaseRequests={purchaseRequests} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} onEditPurchaseRequest={onEditPurchaseRequest} onSettlePayment={onSettlePurchaseRequestPayment} toast={toast} customDepts={customDepts} suppliers={suppliersRoot} />;
       case "fin-charts": return <FinChartsScreen drawers={drawers} debts={debts} employees={employees} invoices={invoices} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} />;
-      case "fin-summary": return <FinancialSummaryScreen drawers={drawers} loggedUser={loggedUser} employees={employees} insurances={insurances} customDepts={customDepts} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={sessions} purchaseRequests={purchaseRequests} allPaymentVouchers={paymentVouchersGlobal} allReceiptVouchers={receiptVouchersGlobal} employeeAdvances={employeeAdvances} />;
+      case "fin-summary": return <FinancialSummaryScreen drawers={drawers} loggedUser={loggedUser} employees={employees} insurances={insurances} customDepts={customDepts} doDeposit={doDeposit} doWithdraw={doWithdraw} suppliers={suppliersRoot} sessions={sessions} purchaseRequests={purchaseRequests} allPaymentVouchers={paymentVouchersGlobal} allReceiptVouchers={receiptVouchersGlobal} employeeAdvances={employeeAdvances} onReverseDebtSettlementRv={reverseSettlementBreakdown} />;
 
-      case "dept-vouchers": return route.dept ? <DeptVouchersScreen dept={route.dept} deptName={[...DEPARTMENTS, ...customDepts].find((d: any) => d.id === route.dept)?.name || route.dept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={toast} loggedUser={loggedUser} /> : null;
+      case "dept-vouchers": return route.dept ? <DeptVouchersScreen dept={route.dept} deptName={[...DEPARTMENTS, ...customDepts].find((d: any) => d.id === route.dept)?.name || route.dept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={toast} loggedUser={loggedUser} onReverseDebtSettlementRv={reverseSettlementBreakdown} /> : null;
       case "dept-profit": return <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts} />;
       {/* تصحيح: debts.dept مربوط بقيد foreign key على departments.id (الرمز الإنجليزي) — نقارن بكلا الشكلين (route.dept الخام + dsh الاسم العربي) احتياطاً لأي سجل قديم */}
       case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={route.dept ? debts.filter(d => d.dept === route.dept || d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />; }

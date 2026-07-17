@@ -510,17 +510,20 @@ router.get('/receipt-vouchers/:id', async (req, res) => {
 // voucher (creation moved money twice, cancellation reversed it once). That
 // side effect has been removed so creation and cancellation are symmetric.
 router.post('/receipt-vouchers', requireFinancialAuth, async (req, res) => {
-  const { date, amount, received_from_type, received_from_id, received_from_name, reason, dept, notes, approved_by, drawer_tx_id } = req.body;
+  const { date, amount, received_from_type, received_from_id, received_from_name, reason, dept, notes, approved_by, drawer_tx_id, settlement_breakdown } = req.body;
   try {
     const year = new Date(Date.now()+3*60*60*1000).getUTCFullYear();
     const { rows: [{ next_num }] } = await pool.query(
       `SELECT COALESCE(MAX(CAST(NULLIF(SPLIT_PART(voucher_no,'-',3),'') AS INTEGER)),0)+1 AS next_num FROM receipt_vouchers`
     );
     const voucher_no = `RV-${year}-${String(next_num).padStart(4,'0')}`;
+    // ── settlement_breakdown: يُخزَّن فقط لسندات تسديد الدين — يسجّل بالضبط أي
+    //    جلسات (sessions) وأي صفوف ديون (debts) امتصت المبلغ، ليكون ممكناً
+    //    عكس الأثر بدقة لو انحذف السند لاحقاً (بدل ما يختفي الدين نهائياً) ──
     const { rows } = await pool.query(
-      `INSERT INTO receipt_vouchers (voucher_no,date,amount,received_from_type,received_from_id,received_from_name,reason,dept,notes,approved_by,drawer_tx_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [voucher_no, date, amount, received_from_type, received_from_id||null, received_from_name, reason, dept||null, notes||null, approved_by||null, drawer_tx_id||null]
+      `INSERT INTO receipt_vouchers (voucher_no,date,amount,received_from_type,received_from_id,received_from_name,reason,dept,notes,approved_by,drawer_tx_id,settlement_breakdown)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [voucher_no, date, amount, received_from_type, received_from_id||null, received_from_name, reason, dept||null, notes||null, approved_by||null, drawer_tx_id||null, settlement_breakdown ? JSON.stringify(settlement_breakdown) : null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -589,17 +592,20 @@ router.get('/payment-vouchers/:id', async (req, res) => {
 // previous auto drawer_transaction + balance mutation was removed (it
 // double-counted every payment voucher).
 router.post('/payment-vouchers', requireFinancialAuth, async (req, res) => {
-  const { date, amount, paid_to_type, paid_to_id, paid_to_name, reason, dept, category, notes, approved_by, drawer_tx_id } = req.body;
+  const { date, amount, paid_to_type, paid_to_id, paid_to_name, reason, dept, category, notes, approved_by, drawer_tx_id, settlement_breakdown } = req.body;
   try {
     const year = new Date(Date.now()+3*60*60*1000).getUTCFullYear();
     const { rows: [{ next_num }] } = await pool.query(
       `SELECT COALESCE(MAX(CAST(NULLIF(SPLIT_PART(voucher_no,'-',3),'') AS INTEGER)),0)+1 AS next_num FROM payment_vouchers`
     );
     const voucher_no = `PV-${year}-${String(next_num).padStart(4,'0')}`;
+    // ── settlement_breakdown: يُخزَّن فقط لسندات صرف مرتبطة بسداد طلب شراء
+    //    (paid_to_type='supplier') — يسجّل رقم الطلب والمبلغ بالضبط، ليكون
+    //    ممكناً عكس أثره على purchase_requests.paid_amount لو انحذف السند لاحقاً ──
     const { rows } = await pool.query(
-      `INSERT INTO payment_vouchers (voucher_no,date,amount,paid_to_type,paid_to_id,paid_to_name,reason,dept,category,notes,approved_by,drawer_tx_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [voucher_no, date, amount, paid_to_type, paid_to_id||null, paid_to_name, reason, dept||null, category||null, notes||null, approved_by||null, drawer_tx_id||null]
+      `INSERT INTO payment_vouchers (voucher_no,date,amount,paid_to_type,paid_to_id,paid_to_name,reason,dept,category,notes,approved_by,drawer_tx_id,settlement_breakdown)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [voucher_no, date, amount, paid_to_type, paid_to_id||null, paid_to_name, reason, dept||null, category||null, notes||null, approved_by||null, drawer_tx_id||null, settlement_breakdown ? JSON.stringify(settlement_breakdown) : null]
     );
     res.status(201).json(rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
