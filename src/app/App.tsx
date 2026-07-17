@@ -15355,27 +15355,38 @@ function LoginScreen({ onLogin, staffList, adminAccounts = [] }: { onLogin: (use
 
 // ─── DATA IMPORT SCREEN ────────────────────────────────────────────────────────
 
-function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
+function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], toast }: {
   setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
   setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>;
   doDeposit?: (dept: string, amount: number, title: string, type: string) => void;
+  insurances?: InsuranceCo[];
   toast: (m: string, t?: ToastItem["type"]) => void;
 }) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [results, setResults] = useState<Record<string, { patients: number; sessions: number; errors: number; warnings: string[] }>>({});
+  const [results, setResults] = useState<Record<string, { patients: number; sessions: number; errors: number; warnings: string[]; rejected?: boolean }>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeDept, setActiveDept] = useState<string>("");
 
+  // ── تصحيح: النموذج القديم (14 عمود) ما كان فيه عمود لاسم شركة التأمين —
+  //    عمود "تامين_صحي_نعم_لا" بس Yes/No، بدون تحديد أي شركة. النتيجة: مريض
+  //    مستورد "مؤمَّن" بدون شركة محددة تنكسر معه كل معادلة خصم التأمين لاحقاً
+  //    (نفس منطق insComp = insurances.find(c => c.name === ...) المستخدم بكل
+  //    شاشات تسجيل المريض/الجلسات). أضفنا عمود شركة التأمين (يُتحقق من مطابقته
+  //    لاسم شركة موجودة فعلياً بالنظام قبل أي استيراد)، وأيضاً البريد الإلكتروني
+  //    ورقم الهوية الوطنية (كان بند "رقم_الملف_او_الهوية" يخلط بين رقم الملف
+  //    ورقم الهوية بعمود واحد، بينما هما حقلان منفصلان بباقي شاشات النظام). ──
   const PATIENT_FIELDS = [
-    "رقم_الملف_او_الهوية", "الاسم_الكامل", "العمر", "رقم_الهاتف", "الجنس",
-    "فصيلة_الدم", "العنوان", "تامين_صحي_نعم_لا", "امراض_مزمنة", "حساسية",
+    "رقم_الملف (اختياري)", "الاسم_الكامل", "العمر", "رقم_الهاتف", "الجنس",
+    "فصيلة_الدم", "العنوان", "تامين_صحي_نعم_لا", "شركة_التأمين", "رقم_الهوية_الوطنية",
+    "البريد_الالكتروني", "امراض_مزمنة", "حساسية",
     "تاريخ_التسجيل", "المبلغ_الاجمالي", "المدفوع", "الدين",
   ];
   const PATIENT_SAMPLE = [
-    "123456789", "محمد أحمد علي", "35", "+970599123456", "ذكر",
-    "A+", "رام الله — المركز", "نعم", "ضغط دم", "بنسلين",
+    "", "محمد أحمد علي", "35", "+970599123456", "ذكر",
+    "A+", "رام الله — المركز", "نعم", "شركة التأمين الوطنية", "123456789",
+    "example@mail.com", "ضغط دم", "بنسلين",
     "01/07/2026", "250", "200", "50",
   ];
   const DEPT_CONFIGS: { id: string; label: string; emoji: string; color: string }[] = [
@@ -15427,12 +15438,61 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
     return { date: fallback, ok: false };
   };
 
-  // ── المعالجة الفعلية — تصلح العلة الجوهرية: الاستيراد كان يضيف كل شيء
-  //    بذاكرة المتصفح فقط (بدون أي استدعاء API)، فيختفي فور تحديث الصفحة، وحتى
-  //    وقتياً كان "المدفوع" المستورد يظهر إيراداً بشاشات الربح دون أي دخول
-  //    فعلي للصندوق. هلق كل صف بيُنشئ مريضاً حقيقياً (لو جديد) + جلسة حقيقية
-  //    بالخادم + إيداع حقيقي بالصندوق (doDeposit) لو المدفوع > 0 + سجل دين
-  //    حقيقي لو تبقّى دين — تماماً بنفس مسار "تسجيل مريض جديد" العادي. ──
+  const GENDER_VALUES = ["ذكر", "أنثى"];
+  const BLOOD_VALUES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+  // ── فحص شامل لكل صفوف الملف قبل أي حفظ فعلي — لو في أي صف فيه مشكلة، نرفض
+  //    الملف بالكامل ونعرض كل الأسباب دفعة وحدة، بدل ما نستورد جزء وين المشكلة
+  //    تظهر بمنتصف الملف (كان هذا سلوك النظام سابقاً: كتابة فورية صف-صف بدون
+  //    أي فحص مسبق، فيصير استيراد جزئي غير قابل للتراجع). ──
+  const validateRows = (rows: string[][]): string[] => {
+    const problems: string[] = [];
+    const seenIds = new Set<string>();
+    rows.forEach((row, i) => {
+      const rowNum = i + 2;
+      const rawId = String(row[0] ?? "").trim();
+      const name = String(row[1] ?? "").trim();
+      if (!name) { problems.push(`صف ${rowNum}: الاسم فارغ — إلزامي لكل صف`); return; }
+      const ageRaw = String(row[2] ?? "").trim();
+      if (ageRaw && isNaN(Number(ageRaw))) problems.push(`صف ${rowNum} (${name}): العمر "${ageRaw}" ليس رقماً`);
+      const gender = String(row[4] ?? "").trim();
+      if (gender && !GENDER_VALUES.includes(gender)) problems.push(`صف ${rowNum} (${name}): الجنس "${gender}" غير صحيح — لازم يكون "ذكر" أو "أنثى" بالضبط`);
+      const blood = String(row[5] ?? "").trim();
+      if (blood && !BLOOD_VALUES.includes(blood)) problems.push(`صف ${rowNum} (${name}): فصيلة الدم "${blood}" غير صحيحة — لازم تكون واحدة من: ${BLOOD_VALUES.join(" / ")}`);
+      const insRaw = String(row[7] ?? "").trim().toLowerCase();
+      const hasInsurance = insRaw === "نعم" || insRaw === "yes" || insRaw === "1" || insRaw === "true";
+      const insValid = !insRaw || hasInsurance || insRaw === "لا" || insRaw === "no" || insRaw === "0";
+      if (!insValid) problems.push(`صف ${rowNum} (${name}): قيمة "تامين_صحي_نعم_لا" غير مفهومة ("${row[7]}") — اكتب "نعم" أو "لا" فقط`);
+      const insCompanyRaw = String(row[8] ?? "").trim();
+      if (hasInsurance) {
+        if (!insCompanyRaw) {
+          problems.push(`صف ${rowNum} (${name}): تأمين_صحي = نعم لكن عمود شركة_التأمين فارغ`);
+        } else if (!insurances.some(c => c.name === insCompanyRaw)) {
+          problems.push(`صف ${rowNum} (${name}): شركة التأمين "${insCompanyRaw}" غير مسجَّلة بالنظام — تحقق من الاسم بالضبط بشاشة شركات التأمين`);
+        }
+      }
+      const amountRaw = String(row[14] ?? "").trim();
+      if (amountRaw && isNaN(Number(amountRaw))) problems.push(`صف ${rowNum} (${name}): المبلغ الإجمالي "${amountRaw}" ليس رقماً`);
+      const paidRaw = String(row[15] ?? "").trim();
+      if (paidRaw && isNaN(Number(paidRaw))) problems.push(`صف ${rowNum} (${name}): المدفوع "${paidRaw}" ليس رقماً`);
+      const debtRaw = String(row[16] ?? "").trim();
+      if (debtRaw && isNaN(Number(debtRaw))) problems.push(`صف ${rowNum} (${name}): الدين "${debtRaw}" ليس رقماً`);
+      const { ok: dateOk } = normalizeImportDate(String(row[13] ?? ""), "01/01/2000");
+      if (!dateOk) problems.push(`صف ${rowNum} (${name}): تاريخ_التسجيل "${row[13]}" غير مفهوم — استخدم صيغة DD/MM/YYYY`);
+      if (rawId) {
+        if (seenIds.has(rawId)) problems.push(`صف ${rowNum} (${name}): رقم الملف "${rawId}" مكرر بنفس الملف (صف آخر يستخدمه أيضاً)`);
+        seenIds.add(rawId);
+      }
+    });
+    return problems;
+  };
+
+  // ── المعالجة الفعلية — تُستدعى فقط بعد نجاح validateRows بالكامل. تصلح العلة
+  //    الجوهرية القديمة: الاستيراد كان يضيف كل شيء بذاكرة المتصفح فقط (بدون أي
+  //    استدعاء API)، فيختفي فور تحديث الصفحة، وحتى وقتياً كان "المدفوع"
+  //    المستورد يظهر إيراداً بشاشات الربح دون أي دخول فعلي للصندوق. هلق كل صف
+  //    بيُنشئ مريضاً حقيقياً (لو جديد) + جلسة حقيقية بالخادم + إيداع حقيقي
+  //    بالصندوق (doDeposit) لو المدفوع > 0 + سجل دين حقيقي لو تبقّى دين. ──
   const processRows = async (deptId: string, rows: string[][], fileName: string) => {
     const today = _today();
     let patientsAdded = 0, sessionsAdded = 0, errors = 0;
@@ -15444,7 +15504,6 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
       const bump = () => setProgress(p => p ? { ...p, done: p.done + 1 } : p);
       const rawId = String(row[0] ?? "").trim();
       const name = String(row[1] ?? "").trim();
-      if (!name) { errors++; warnings.push(`صف ${rowNum}: تم تجاهله — الاسم فارغ`); bump(); continue; }
       const age = parseInt(String(row[2] ?? "0")) || 0;
       const phone = String(row[3] ?? "").trim() || "—";
       const gender = String(row[4] ?? "").trim() || "ذكر";
@@ -15452,16 +15511,18 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
       const address = String(row[6] ?? "").trim();
       const insRaw = String(row[7] ?? "").trim().toLowerCase();
       const insurance = insRaw === "نعم" || insRaw === "yes" || insRaw === "1" || insRaw === "true";
-      const chronic = String(row[8] ?? "").trim();
-      const allergy = String(row[9] ?? "").trim();
-      const { date: sessionDate, ok: dateOk } = normalizeImportDate(String(row[10] ?? ""), today);
-      if (!dateOk) warnings.push(`صف ${rowNum}: تاريخ غير مفهوم "${row[10]}" — استُخدم تاريخ اليوم بدلاً منه`);
-      const amount = parseFloat(String(row[11] ?? "0")) || 0;
-      const paid = parseFloat(String(row[12] ?? "0")) || 0;
+      const insCompany = String(row[8] ?? "").trim();
+      const nationalId = String(row[9] ?? "").trim();
+      const email = String(row[10] ?? "").trim();
+      const chronic = String(row[11] ?? "").trim();
+      const allergy = String(row[12] ?? "").trim();
+      const { date: sessionDate } = normalizeImportDate(String(row[13] ?? ""), today);
+      const amount = parseFloat(String(row[14] ?? "0")) || 0;
+      const paid = parseFloat(String(row[15] ?? "0")) || 0;
       // ── تصحيح: كان يعامل "0" الصريحة بحقل الدين نفس معاملة الحقل الفارغ
       //    (بسبب || مع صفر) فيعيد حساب دين رغم إدخال 0 صراحةً — هلق نميّز بين
       //    "فارغ" (نحسبه تلقائياً) و"0 مكتوبة صراحةً" (نحترمها كما هي) ──
-      const debtRaw = String(row[13] ?? "").trim();
+      const debtRaw = String(row[16] ?? "").trim();
       const debt = debtRaw !== "" ? (parseFloat(debtRaw) || 0) : Math.max(0, amount - paid);
       try {
         let effectiveId = rawId;
@@ -15469,13 +15530,15 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
         if (!existing) {
           const created = await api.patients.create({
             id: rawId || undefined, name, age, gender, phone, blood_type: blood, address,
-            has_insurance: insurance, has_chronic: !!chronic, chronic_detail: chronic || null,
+            email: email || null, national_id: nationalId || null,
+            has_insurance: insurance, insurance_company: insurance ? insCompany : null,
+            has_chronic: !!chronic, chronic_detail: chronic || null,
             has_allergy: !!allergy, allergy_detail: allergy || null,
             dept: deptId, debt: 0, date: api.parseDateISO(sessionDate), notes: `مستورد من ملف — ${fileName}`,
           });
           if (!created || !(created as any).id) { errors++; warnings.push(`صف ${rowNum}: فشل حفظ بيانات المريض "${name}" بالخادم`); bump(); continue; }
           effectiveId = String((created as any).id);
-          mockPatients.push({ id: effectiveId, name, age, phone, blood, insurance, dept: deptId, debt, date: sessionDate, gender, address, chronic, allergy });
+          mockPatients.push({ id: effectiveId, name, age, phone, blood, insurance, dept: deptId, debt, date: sessionDate, gender, address, chronic, allergy, nationalId, email, insuranceCompany: insurance ? insCompany : undefined } as any);
           _syncPatients();
           patientsAdded++;
         }
@@ -15506,6 +15569,19 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
     else toast("لم يتم استيراد أي صف — راجع الأخطاء أسفل البطاقة", "error");
   };
 
+  // ── البوابة: تفحص الملف بالكامل أولاً (validateRows). لو في أي مشكلة، نرفض
+  //    الاستيراد كاملاً — صفر استدعاءات API — ونعرض كل الأسباب دفعة وحدة، تماماً
+  //    متل ما طُلب: "رفض الطلب وإعطاء سبب المشاكل" بدل استيراد جزئي غامض. ──
+  const validateAndProcess = async (deptId: string, rows: string[][], fileName: string) => {
+    const problems = validateRows(rows);
+    if (problems.length > 0) {
+      setResults(r => ({ ...r, [deptId]: { patients: 0, sessions: 0, errors: problems.length, warnings: problems.slice(0, 60), rejected: true } }));
+      toast(`تم رفض الملف بالكامل — ${problems.length} مشكلة يجب تصحيحها أولاً (راجع القائمة أسفل البطاقة)`, "error");
+      return;
+    }
+    await processRows(deptId, rows, fileName);
+  };
+
   const importFile = (deptId: string, file: File) => {
     setImporting(deptId);
     const reader = new FileReader();
@@ -15514,7 +15590,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
         const text = e.target?.result as string;
         const { rows } = parseCSV(text);
         if (rows.length === 0) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
-        await processRows(deptId, rows, file.name);
+        await validateAndProcess(deptId, rows, file.name);
       } catch { toast("خطأ في قراءة الملف — تأكد من صيغة CSV", "error"); }
       finally { setImporting(null); }
     };
@@ -15533,7 +15609,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
         const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" }) as string[][];
         if (rows.length < 2) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
         const dataRows = rows.slice(1).filter(r => r.some(c => String(c).trim()));
-        await processRows(deptId, dataRows, file.name);
+        await validateAndProcess(deptId, dataRows, file.name);
       } catch { toast("خطأ في قراءة ملف Excel — تأكد أن الملف سليم", "error"); }
       finally { setImporting(null); }
     };
@@ -15595,11 +15671,14 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
           ))}
         </div>
         <div className="mt-3 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
+          <p><strong>الجنس:</strong> اكتب <strong>ذكر</strong> أو <strong>أنثى</strong> بالضبط (أي قيمة أخرى تُرفض)</p>
           <p><strong>تأمين_صحي:</strong> اكتب <strong>نعم</strong> أو <strong>لا</strong></p>
-          <p><strong>فصيلة_الدم:</strong> A+ / A- / B+ / B- / AB+ / AB- / O+ / O-</p>
+          <p><strong>شركة_التأمين:</strong> إلزامي إذا كان تأمين_صحي = نعم — يجب أن يطابق <u>حرفياً</u> اسم شركة مسجَّلة مسبقاً بالنظام (شاشة شركات التأمين)، وإلا يُرفض الملف بالكامل</p>
+          <p><strong>فصيلة_الدم:</strong> اتركه فارغاً أو اكتب واحدة من: A+ / A- / B+ / B- / AB+ / AB- / O+ / O-</p>
           <p><strong>الدين:</strong> يُحسب تلقائياً (المبلغ − المدفوع) إن تُرك فارغاً — اكتب 0 صراحةً إن كان مسدداً بالكامل فعلاً</p>
           <p><strong>تاريخ_التسجيل:</strong> اكتبه نصاً بصيغة DD/MM/YYYY (مثال: 01/07/2026) لتفادي تنسيق إكسل التلقائي للتاريخ</p>
           <p><strong>الصيغة:</strong> Excel (XLSX) مباشرةً، أو CSV (UTF-8) — كلاهما مقبول عند الرفع</p>
+          <p className="text-[#B71C1C] font-semibold">⚠️ يتم فحص كل صفوف الملف أولاً قبل أي حفظ فعلي — لو في أي صف فيه مشكلة (اسم فارغ، جنس/فصيلة دم/شركة تأمين غير صحيحة، رقم غير رقمي...) يُرفض الملف <u>بالكامل</u> ولا يُستورد ولا صف واحد، مع بيان سبب كل مشكلة بالتحديد.</p>
         </div>
       </div>
 
@@ -15650,11 +15729,11 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
                 {/* Result banner */}
                 {res && (
                   <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 p-2 rounded-lg text-xs" style={{ backgroundColor: res.sessions > 0 ? "#E8F5E9" : "#FFEBEE", border: `1px solid ${res.sessions > 0 ? "#A5D6A7" : "#FFCDD2"}` }}>
-                      {res.sessions > 0 ? <CheckCircle size={13} className="text-[#388E3C] flex-shrink-0" /> : <AlertTriangle size={13} className="text-[#D32F2F] flex-shrink-0" />}
+                    <div className="flex items-center gap-2 p-2 rounded-lg text-xs" style={{ backgroundColor: res.rejected ? "#FFEBEE" : res.sessions > 0 ? "#E8F5E9" : "#FFEBEE", border: `1px solid ${res.rejected ? "#EF9A9A" : res.sessions > 0 ? "#A5D6A7" : "#FFCDD2"}` }}>
+                      {res.rejected ? <XCircle size={13} className="text-[#D32F2F] flex-shrink-0" /> : res.sessions > 0 ? <CheckCircle size={13} className="text-[#388E3C] flex-shrink-0" /> : <AlertTriangle size={13} className="text-[#D32F2F] flex-shrink-0" />}
                       <div>
-                        <p className="font-bold" style={{ color: res.sessions > 0 ? "#2E7D32" : "#D32F2F" }}>{res.sessions > 0 ? "تم الحفظ فعلياً بالخادم ✓" : "لم يُحفظ أي صف"}</p>
-                        <p className="text-[#555]">{res.sessions} جلسة ({res.patients} مريض جديد){res.errors > 0 ? ` · ${res.errors} خطأ` : ""}</p>
+                        <p className="font-bold" style={{ color: res.rejected || res.sessions === 0 ? "#D32F2F" : "#2E7D32" }}>{res.rejected ? "❌ تم رفض الملف بالكامل — لم يُحفظ أي شيء" : res.sessions > 0 ? "تم الحفظ فعلياً بالخادم ✓" : "لم يُحفظ أي صف"}</p>
+                        <p className="text-[#555]">{res.rejected ? `${res.errors} مشكلة يجب تصحيحها بالملف` : `${res.sessions} جلسة (${res.patients} مريض جديد)${res.errors > 0 ? ` · ${res.errors} خطأ` : ""}`}</p>
                       </div>
                     </div>
                     {res.warnings.length > 0 && (
@@ -16943,7 +17022,7 @@ export default function App() {
       case "backup": return <BackupScreen toast={toast} />;
       case "print-settings": return <PrintSettingsScreen toast={toast} />;
       case "general-settings": return <GeneralSettingsScreen toast={toast} insurances={insurances} setInsurances={setInsurances} adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} sidebarSettings={sidebarSettings} setSidebarSettings={setSidebarSettings} loggedUser={loggedUser} setLoggedUser={setLoggedUser} suppliers={suppliersRoot} setSuppliers={setSuppliersRoot} />;
-      case "data-import": return <DataImportScreen setSessions={setSessions} setDebts={setDebts} doDeposit={doDeposit} toast={toast} />;
+      case "data-import": return <DataImportScreen setSessions={setSessions} setDebts={setDebts} doDeposit={doDeposit} insurances={insurances} toast={toast} />;
       case "data-delete": return <DataDeletionScreen sessions={sessions} setSessions={setSessions} debts={debts} setDebts={setDebts} attendance={attendance} setAttendance={setAttendance} purchaseRequests={purchaseRequests} setPurchaseRequests={setPurchaseRequests} drawers={drawers} setDrawers={setDrawers} invoices={invoices} setInvoices={setInvoices} toast={toast} />;
       case "surgery-print": return <PrintExportScreen dept="surgery" deptLabel="العيادة والطوارئ" sessions={sessions} toast={toast} />;
       case "lab-print": return <PrintExportScreen dept="lab" deptLabel="مختبر التحاليل الطبية" sessions={sessions} toast={toast} />;
