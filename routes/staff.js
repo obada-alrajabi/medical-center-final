@@ -300,6 +300,13 @@ router.put('/:id', requireAdmin, async (req, res) => {
 
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
+    // staff_advance_requests.staff_id has a RESTRICT FK (no CASCADE/SET NULL) —
+    // must be cleaned up first or the DELETE below fails with a raw FK-violation
+    // 500 for any staff member who ever had an advance request, even an old
+    // settled one. The matching employee_advances row (if the request was
+    // approved) is handled separately below via SET NULL on staff_id, which is
+    // safe to leave — it's a real historical financial record.
+    await pool.query('DELETE FROM staff_advance_requests WHERE staff_id=$1', [req.params.id]);
     const { rowCount } = await pool.query('DELETE FROM staff_members WHERE id=$1', [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: 'Not found' });
     // Matches prior behavior: the linked payroll row is removed too (now matched

@@ -245,10 +245,24 @@ router.put("/:id", requireFinancialAuth, async (req, res) => {
 
 router.delete("/:id", requireFinancialAuth, async (req, res) => {
   try {
+    // session_files rows cascade in the DB automatically, but the physical
+    // uploaded files on disk don't delete themselves — read the filenames
+    // first (before the CASCADE removes the rows) so we can unlink them,
+    // same as the single-file delete route above already does.
+    const { rows: filesToRemove } = await pool.query(
+      "SELECT filename FROM session_files WHERE session_id=$1",
+      [req.params.id]
+    );
     const { rowCount } = await pool.query("DELETE FROM sessions WHERE id=$1", [
       req.params.id,
     ]);
     if (!rowCount) return res.status(404).json({ error: "Not found" });
+    for (const f of filesToRemove) {
+      try {
+        const filePath = path.join(uploadsDir, f.filename);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch { /* best-effort disk cleanup — DB row is already gone regardless */ }
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

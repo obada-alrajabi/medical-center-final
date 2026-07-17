@@ -181,7 +181,7 @@ router.patch('/queue/:id', async (req, res) => {
   }
 });
 
-router.delete('/queue/:id', async (req, res) => {
+router.delete('/queue/:id', requireAdmin, async (req, res) => {
   try {
     const { rowCount } = await pool.query('DELETE FROM rehab_queue_entries WHERE id=$1', [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: 'Not found' });

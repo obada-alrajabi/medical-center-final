@@ -7795,6 +7795,17 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
   const saveEdit = () => {
     if (!editReq) return;
     if (editItems.some(it => !it.name.trim())) { toast("أدخل اسم جميع الأصناف", "error"); return; }
+    // ── المبلغ المدفوع ثابت (لا يُعدَّل إلا عبر "تسديد" فعلي من الصندوق)، فلو
+    //    عدّل المدير الأصناف/الأسعار بحيث يصير إجمالي الطلب الجديد أقل من
+    //    المبلغ المدفوع فعلياً، بصير "الدين" سالباً — أي إنه المريض/المورد
+    //    دفع أكتر من قيمة الطلب الفعلية، وهذا يكسر منطق الحسابات. نمنع الحفظ
+    //    بهاي الحالة ونطلب من المدير إما يرفع قيمة الأصناف لتغطي المدفوع، أو
+    //    يسترجع الفرق الزائد يدوياً (خارج هالنافذة) قبل التعديل ──
+    const safePaid = editReq.paidAmount || 0;
+    if (editTotal < safePaid) {
+      toast(`لا يمكن الحفظ: إجمالي الطلب الجديد (${editTotal}) أقل من المبلغ المدفوع فعلياً (${safePaid}) — هذا سينتج عنه دين سالب. عدّل الأصناف بحيث لا يقل الإجمالي عن ${safePaid}، أو استرجع الفرق الزائد أولاً`, "error");
+      return;
+    }
     // ── نُرسل دائماً المبلغ المدفوع الأصلي كما هو (editReq.paidAmount) وليس أي
     //    قيمة من الحقل — الحقل بات عرضاً فقط، وأي دفعة حقيقية لازم تمر عبر
     //    "تسديد" حتى يبقى مرتبطاً بسحب فعلي من الصندوق ──
@@ -8132,7 +8143,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
 
       {/* ── تعديل طلب الشراء — المدير يقدر يعدّل أي معلومة، بغض النظر عن حالة الطلب ── */}
       <Modal open={!!editReq} onClose={closeEdit} title={`تعديل طلب شراء #${editReq?.id ?? ""}`} wide
-        footer={<><Btn variant="secondary" onClick={saveEdit}><Save size={16} />حفظ التعديلات</Btn><Btn variant="outline" onClick={closeEdit}>إلغاء</Btn></>}>
+        footer={<><Btn variant="secondary" disabled={!!editReq && editTotal < (editReq.paidAmount || 0)} onClick={saveEdit}><Save size={16} />حفظ التعديلات</Btn><Btn variant="outline" onClick={closeEdit}>إلغاء</Btn></>}>
         {editReq && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -8171,6 +8182,9 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
                 </div>
               ))}
               <p className="text-xs font-semibold text-[#1B3A6B] text-left">الإجمالي: {fmt(editTotal)}</p>
+              {editTotal < (editReq.paidAmount || 0) && (
+                <p className="text-xs font-bold text-[#D32F2F] text-left">⚠️ الإجمالي الجديد أقل من المبلغ المدفوع فعلياً ({fmt(editReq.paidAmount || 0)}) — هذا سينتج عنه دين سالب، لن يُحفظ التعديل بهذا الشكل. ارفع قيمة/كمية الأصناف حتى لا يقل الإجمالي عن المبلغ المدفوع.</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
@@ -12977,7 +12991,15 @@ function DeptManagementScreen({ customDepts, setCustomDepts, onAddDeptDrawer, to
     setDeptForm({ name: "", short: "", iconId: "building", subItemIds: ["open-patient", "finance", "purchase-reqs"] });
     setEditDeptId(null);
   };
-  const deleteDept = (id: string) => { setCustomDepts(p => p.filter(d => d.id !== id)); api.departments.delete(id); toast("تم حذف القسم", "warning"); };
+  const deleteDept = async (id: string) => {
+    const res = await api.departments.delete(id);
+    if (res === null) {
+      toast("تعذّر حذف القسم — على الأغلب القسم فيه بيانات مرتبطة (مرضى/جلسات/موظفين/صناديق...) لازم تُحذف أو تُنقل أولاً", "error");
+      return;
+    }
+    setCustomDepts(p => p.filter(d => d.id !== id));
+    toast("تم حذف القسم", "warning");
+  };
 
   return (
     <div className="space-y-5">

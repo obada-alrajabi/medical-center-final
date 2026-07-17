@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { requireAdmin } from '../middleware/adminAuth.js';
+import path from 'path';
+import fs from 'fs';
 
 const router = Router();
+const sessionUploadsDir = path.join(process.cwd(), 'uploads', 'sessions');
 
 // ─── Patients ──────────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
@@ -200,6 +203,12 @@ router.put('/:id', async (req, res) => {
 router.delete('/cascade/:id', requireAdmin, async (req, res) => {
   const { id } = req.params;
   try {
+    // 0. Grab uploaded session-file names before the CASCADE below wipes the
+    //    session_files rows, so we can unlink the physical files too (the DB
+    //    rows disappear automatically via CASCADE, but nothing on disk does).
+    const { rows: filesToRemove } = await pool.query(
+      'SELECT filename FROM session_files WHERE session_id IN (SELECT id FROM sessions WHERE patient_id=$1)', [id]
+    );
     // 1. Session child tables (FK order)
     await pool.query(
       'DELETE FROM session_diagnoses WHERE session_id IN (SELECT id FROM sessions WHERE patient_id=$1)', [id]
@@ -236,6 +245,12 @@ router.delete('/cascade/:id', requireAdmin, async (req, res) => {
     // 7. Patient record
     const { rowCount } = await pool.query('DELETE FROM patients WHERE id=$1', [id]);
     if (!rowCount) return res.status(404).json({ error: 'Patient not found' });
+    for (const f of filesToRemove) {
+      try {
+        const filePath = path.join(sessionUploadsDir, f.filename);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch { /* best-effort disk cleanup — DB rows are already gone regardless */ }
+    }
     res.json({ success: true, deleted: id });
   } catch (err) {
     res.status(500).json({ error: err.message });
