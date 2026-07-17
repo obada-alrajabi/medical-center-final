@@ -221,7 +221,19 @@ router.delete('/cascade/:id', requireAdmin, async (req, res) => {
     await pool.query('DELETE FROM patient_debts WHERE patient_id=$1', [id]);
     // 4. Delete requests
     await pool.query('DELETE FROM patient_delete_requests WHERE patient_id=$1', [id]);
-    // 5. Patient record
+    // 5. Receipt vouchers issued to this patient (سندات القبض) — these were
+    //    previously left behind, still naming a patient id that no longer
+    //    exists, which is exactly the "leftover financial data" bug reported.
+    //    We only match received_from_type='patient' so we never touch vouchers
+    //    from insurance companies/other sources that happen to reuse the id text.
+    await pool.query(
+      "DELETE FROM receipt_vouchers WHERE received_from_type='patient' AND received_from_id=$1", [id]
+    );
+    // 6. Rehab plans + queue entries tied to this patient (rehab pricing data
+    //    was also being left behind with no patient FK to clean it up).
+    await pool.query('DELETE FROM rehab_queue_entries WHERE patient_id=$1', [id]);
+    await pool.query('DELETE FROM rehab_plans WHERE patient_id=$1', [id]);
+    // 7. Patient record
     const { rowCount } = await pool.query('DELETE FROM patients WHERE id=$1', [id]);
     if (!rowCount) return res.status(404).json({ error: 'Patient not found' });
     res.json({ success: true, deleted: id });

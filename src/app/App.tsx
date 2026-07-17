@@ -8985,7 +8985,11 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
   // تصحيح: deptFilter الآن رمز إنجليزي (d.id) — نقارن أيضاً بالاسم العربي المقابل احتياطاً لأي سجل قديم بالشكل العربي
   const deptFilterShort = deptFilter ? (DEPARTMENTS.find(d => d.id === deptFilter)?.short || customDepts.find(d => d.id === deptFilter)?.short) : "";
   const filtered = debts.filter(d => { if (search && !d.patient.includes(search) && !d.pid.includes(search)) return false; if (deptFilter && d.dept !== deptFilter && d.dept !== deptFilterShort) return false; if (ageFilter === "<30" && d.days >= 30) return false; if (ageFilter === "30-90" && (d.days < 30 || d.days > 90)) return false; if (ageFilter === ">90" && d.days <= 90) return false; if (!inDebtRange(d.date)) return false; return true; });
-  const total = debts.reduce((s, d) => s + d.amount, 0); const under30 = debts.filter(d => d.days < 30).reduce((s, d) => s + d.amount, 0); const mid = debts.filter(d => d.days >= 30 && d.days <= 90).reduce((s, d) => s + d.amount, 0); const over90 = debts.filter(d => d.days > 90).reduce((s, d) => s + d.amount, 0);
+  // ── تصحيح: البطاقات الأربع فوق (أقل من 30/30-90/أكثر من 90/الإجمالي) كانت
+  //    دايماً محسوبة من debts الخام بالكامل، بغض النظر عن فلترة التاريخ/القسم/
+  //    البحث المطبَّقة تحت — فقط الجدول كان يحترم الفلترة. هلق الأربعة بيُحسبوا
+  //    من نفس القائمة المفلترة (filtered) تماماً متل الجدول. ──
+  const total = filtered.reduce((s, d) => s + d.amount, 0); const under30 = filtered.filter(d => d.days < 30).reduce((s, d) => s + d.amount, 0); const mid = filtered.filter(d => d.days >= 30 && d.days <= 90).reduce((s, d) => s + d.amount, 0); const over90 = filtered.filter(d => d.days > 90).reduce((s, d) => s + d.amount, 0);
   const ageBadge = (days: number) => days < 30 ? <Badge color="success">&lt;30 يوم</Badge> : days <= 90 ? <Badge color="warning">30–90 يوم</Badge> : <Badge color="danger">&gt;90 يوم</Badge>;
   const sendSMS = async () => {
     if (!smsModal) return;
@@ -16151,6 +16155,13 @@ export default function App() {
       setDebts(p => p.filter(d => d.pid !== patientId));
       setPatientDeleteRequests(p => p.filter(r => r.patientId !== patientId));
       setDeletedPatientIds(p => [...p, patientId]);
+      // ── تصحيح: الحذف كان يسيب سندات القبض وخطط التأهيل مرتبطة برقم ملف
+      //    مريض بات غير موجود (بيانات مالية "متبقّية" رغم حذف الملف). الخادم
+      //    هلق بيحذفهم فعلياً (routes/patients.js)، ولازم نطابق نفس الشي محلياً
+      //    حتى تختفي فوراً من الشاشة المفتوحة بدون انتظار إعادة تحميل. ──
+      setReceiptVouchersGlobal(p => p.filter(v => !(v.received_from_type === "patient" && v.received_from_id === patientId)));
+      setRehabPlans(p => p.filter(r => r.patientId !== patientId));
+      setRehabQueueEntries(p => p.filter(e => e.patientId !== patientId));
       const idx = mockPatients.findIndex(x => x.id === patientId);
       if (idx >= 0) { mockPatients.splice(idx, 1); _syncPatients(); }
       toast("تم حذف المريض وجميع سجلاته نهائياً من قاعدة البيانات ✓", "success");
@@ -16439,15 +16450,37 @@ export default function App() {
     }, 15000);
     return () => clearInterval(_pollIv);
   }, []);
-  const approveDeleteRequest = (id: number) => {
+  // ── تصحيح جوهري: هذه الدالة كانت تكتفي بتحديث حالة الطلب لـ"موافق عليه" محلياً
+  //    وبالخادم، بدون أي حذف فعلي — لا للمريض، ولا لجلساته، ولا لديونه، ولا
+  //    لسنداته. المريض كان يختفي فقط من الشاشة المفتوحة حالياً (متغيّر بالذاكرة
+  //    غير محفوظ) ثم يرجع يظهر فور أي تحديث للصفحة، بينما كل بياناته باقية 100%
+  //    بقاعدة البيانات. هلق الموافقة بتنفّذ فعلياً نفس الحذف الشامل الحقيقي
+  //    (cascadeDelete) المستخدم بزر "حذف مباشر" — الموافقة على طلب الحذف لازم
+  //    تعني حذف حقيقي، مش مجرد تغيير حالة نص. ──
+  const approveDeleteRequest = async (id: number) => {
     const req = patientDeleteRequests.find(r => r.id === id);
     if (!req) return;
     const today = _today();
     const reviewedBy = (loggedUser?.type === "admin" ? loggedUser.adminName : loggedUser?.staff?.name) || "المدير";
-    setPatientDeleteRequests(p => p.map(r => r.id === id ? { ...r, status: "approved" as const, reviewedBy, reviewDate: today } : r));
-    setDeletedPatientIds(p => [...p, req.patientId]);
-    api.patients.deleteRequests.update(id, { status: "approved", reviewed_by: reviewedBy, review_date: today }).catch(() => { });
-    toast(`تمت الموافقة على حذف ملف: ${req.patientName}`, "success");
+    try {
+      await api.patients.cascadeDelete(req.patientId);
+      setSessions(p => p.filter(s => s.patientId !== req.patientId));
+      setDebts(p => p.filter(d => d.pid !== req.patientId));
+      setReceiptVouchersGlobal(p => p.filter(v => !(v.received_from_type === "patient" && v.received_from_id === req.patientId)));
+      setRehabPlans(p => p.filter(r => r.patientId !== req.patientId));
+      setRehabQueueEntries(p => p.filter(e => e.patientId !== req.patientId));
+      setDeletedPatientIds(p => [...p, req.patientId]);
+      const idx = mockPatients.findIndex(x => x.id === req.patientId);
+      if (idx >= 0) { mockPatients.splice(idx, 1); _syncPatients(); }
+      // ── حذف الطلب نفسه بدل إبقائه "موافق عليه" — الخادم أصلاً بيحذف صفوف
+      //    patient_delete_requests الخاصة بهذا المريض ضمن cascadeDelete، فلازم
+      //    تختفي محلياً كمان بدل ما تضل بقائمة "موافق عليها" لمريض ما عاد موجود. ──
+      setPatientDeleteRequests(p => p.filter(r => r.id !== id));
+      toast(`تم حذف ملف "${req.patientName}" وكل سجلاته نهائياً من قاعدة البيانات ✓`, "success");
+    } catch (e) {
+      console.error("[ApproveDeleteRequest]", e);
+      toast("تعذّر تنفيذ الحذف — تحقق من الاتصال وحاول مرة أخرى", "error");
+    }
   };
   const rejectDeleteRequest = (id: number, reason: string) => {
     const today = _today();
