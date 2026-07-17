@@ -2906,13 +2906,17 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   const v1 = () => {
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = "الاسم إلزامي";
+    else if (/[0-9٠-٩]/.test(form.name)) e.name = "الاسم يجب ألا يحتوي على أرقام";
     if (!form.age || isNaN(Number(form.age)) || Number(form.age) <= 0) e.age = "العمر إلزامي";
     if (!form.phone.trim()) e.phone = "أدخل رقم صحيح";
-    else if (!/^[0-9]{10}$/.test(form.phone.trim())) e.phone = "رقم الجوال يجب أن يتكوّن من 10 أرقام";
+    else if (!/^[0-9]{10}$/.test(form.phone.trim())) e.phone = "رقم الجوال يجب أن يتكوّن من 10 أرقام، بدون رمز دولة (+970) أو مسافات";
     if (!false && form.phone.trim()) { const dup = mockPatients.find(p => p.phone === form.phone); setDupWarning(dup || null); }
     setErrors(e); return Object.keys(e).length === 0;
   };
-  const v2 = () => { const e: Record<string, string> = {}; if (!form.price || parseFloat(form.price) <= 0) e.price = "أدخل سعر الخدمة"; setErrors(e); return Object.keys(e).length === 0; };
+  // ── السعر إلزامي ويجب أن يكون رقماً موجباً فعلياً — كان الشرط القديم
+  //    (parseFloat(form.price) <= 0) بيسمح بمرور نص غير رقمي متل "abc" بالغلط
+  //    لأنه NaN <= 0 تُقيَّم false بجافاسكربت، فيفوت التحقق رغم إنه مو رقم ──
+  const v2 = () => { const e: Record<string, string> = {}; if (!form.price || isNaN(parseFloat(form.price)) || parseFloat(form.price) <= 0) e.price = "أدخل سعر الخدمة (رقم أكبر من صفر)"; else if (form.paid && (isNaN(parseFloat(form.paid)) || parseFloat(form.paid) < 0)) e.paid = "المبلغ المدفوع يجب أن يكون رقماً غير سالب"; setErrors(e); return Object.keys(e).length === 0; };
   const handleSave = async () => {
     setSaving(true);
     if (!false) {
@@ -3615,7 +3619,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
               <div className="flex gap-2"><input type="number" placeholder="0" value={form.discount} onChange={e => set("discount", e.target.value)} className="flex-1 h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }} /><select value={form.discountType} onChange={e => set("discountType", e.target.value)} className="h-10 px-2 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCCCCC", backgroundColor: "#FAFAFA" }}><option value="amount">₪</option><option value="percent">%</option></select></div>
               {insComp && insDiscPct > 0 && <p className="text-[10px] text-[#999] mt-0.5">خصم التأمين ({insDiscPct}%) يُطبَّق تلقائياً بشكل منفصل — لا تدخله هنا</p>}
             </div>
-            <InputField label="المبلغ المدفوع (₪)" required type="number" placeholder="0" value={form.paid} onChange={v => set("paid", v)} />
+            <div><InputField label="المبلغ المدفوع (₪)" required type="number" placeholder="0" value={form.paid} onChange={v => set("paid", v)} />{errF("paid")}</div>
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-[#555]">{remaining > 0 ? "الباقي / الدين على المريض (₪)" : remaining < 0 ? "رصيد لصالح المريض (₪)" : "الحالة"}</label>
               <div className={`h-10 px-3 rounded-lg flex items-center text-xl font-bold ${remaining > 0 ? "bg-[#FFEBEE] text-[#D32F2F]" : "bg-[#E8F5E9] text-[#388E3C]"}`} style={{ border: `1px solid ${remaining > 0 ? "#FFCDD2" : "#C8E6C9"}` }}>
@@ -15421,18 +15425,58 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
   //    لاسم شركة موجودة فعلياً بالنظام قبل أي استيراد)، وأيضاً البريد الإلكتروني
   //    ورقم الهوية الوطنية (كان بند "رقم_الملف_او_الهوية" يخلط بين رقم الملف
   //    ورقم الهوية بعمود واحد، بينما هما حقلان منفصلان بباقي شاشات النظام). ──
-  const PATIENT_FIELDS = [
-    "رقم_الملف (اختياري)", "الاسم_الكامل", "العمر", "رقم_الهاتف", "الجنس",
-    "فصيلة_الدم", "العنوان", "تامين_صحي_نعم_لا", "شركة_التأمين", "رقم_الهوية_الوطنية",
-    "البريد_الالكتروني", "امراض_مزمنة", "حساسية",
-    "تاريخ_التسجيل", "المبلغ_الاجمالي", "المدفوع", "الدين",
+  // ── تسميات الأعمدة تعكس بالضبط نفس قواعد الإلزامي/الاختياري بشاشة التسجيل
+  //    اليدوي (NewPatientScreen): الاسم/العمر/الهاتف/المبلغ_الاجمالي إلزامية
+  //    (v1/v2 هناك)، وباقي الحقول اختيارية ولها نفس القيم الافتراضية عند
+  //    تركها فارغة (مثلاً فصيلة الدم الفارغة → "غير معروف" تلقائياً) ──
+  // ── تعريف موحَّد لكل عمود: مفتاح منطقي (للقراءة بالاسم لاحقاً، مش بالترتيب
+  //    الثابت) + التسمية الأساسية (بدون لاحقة إلزامي/اختياري — تُستخدم لمطابقة
+  //    عناوين الأعمدة بالملف المرفوع بغض النظر عن ترتيبها) + هل هو إلزامي + قيمة
+  //    توضيحية. هذا يسمح بتحميل نموذج "الحقول الإلزامية فقط" يحتوي أعمدة أقل،
+  //    بينما لسا القراءة تلقائياً تكتشف أي عمود اختياري إضافي لو المستخدم زاده
+  //    يدوياً بنفس اسم العمود — القراءة بقت بالاسم مش بموقع العمود الثابت. ──
+  const PATIENT_FIELD_DEFS: { key: string; label: string; required: boolean; sample: string }[] = [
+    { key: "id", label: "رقم_الملف", required: false, sample: "" },
+    { key: "name", label: "الاسم_الكامل", required: true, sample: "محمد أحمد علي" },
+    { key: "age", label: "العمر", required: true, sample: "35" },
+    { key: "phone", label: "رقم_الهاتف", required: true, sample: "0599123456" },
+    { key: "gender", label: "الجنس", required: false, sample: "ذكر" },
+    { key: "blood", label: "فصيلة_الدم", required: false, sample: "A+" },
+    { key: "address", label: "العنوان", required: false, sample: "رام الله — المركز" },
+    { key: "hasIns", label: "تامين_صحي_نعم_لا", required: false, sample: "نعم" },
+    { key: "insCompany", label: "شركة_التأمين", required: false, sample: "شركة التأمين الوطنية" },
+    { key: "nationalId", label: "رقم_الهوية_الوطنية", required: false, sample: "123456789" },
+    { key: "email", label: "البريد_الالكتروني", required: false, sample: "example@mail.com" },
+    { key: "chronic", label: "امراض_مزمنة", required: false, sample: "ضغط دم" },
+    { key: "allergy", label: "حساسية", required: false, sample: "بنسلين" },
+    { key: "date", label: "تاريخ_التسجيل", required: false, sample: "01/07/2026" },
+    { key: "amount", label: "المبلغ_الاجمالي", required: true, sample: "250" },
+    { key: "paid", label: "المدفوع", required: false, sample: "200" },
+    { key: "debt", label: "الدين", required: false, sample: "50" },
   ];
-  const PATIENT_SAMPLE = [
-    "", "محمد أحمد علي", "35", "+970599123456", "ذكر",
-    "A+", "رام الله — المركز", "نعم", "شركة التأمين الوطنية", "123456789",
-    "example@mail.com", "ضغط دم", "بنسلين",
-    "01/07/2026", "250", "200", "50",
-  ];
+  const REQ_NOTE: Record<string, string> = { insCompany: "(إلزامي إذا التأمين=نعم)", debt: "(يُحسب تلقائياً إن تُرك فارغاً)", phone: "(10 أرقام)" };
+  const fieldDisplayLabel = (f: typeof PATIENT_FIELD_DEFS[number]) => `${f.label} ${f.required ? "(إلزامي)" : `(اختياري)${REQ_NOTE[f.key] ? " " + REQ_NOTE[f.key] : ""}`}`;
+  // ── تُستخدم فقط بالبطاقة التوضيحية (كل الأعمدة، إلزامية واختيارية) — النموذج
+  //    القابل للتحميل نفسه يستخدم فقط PATIENT_FIELD_DEFS.filter(required) ──
+  const PATIENT_FIELDS = PATIENT_FIELD_DEFS.map(fieldDisplayLabel);
+  // ── يبني خريطة "مفتاح منطقي → رقم عمود بالملف المرفوع" بالاعتماد على مطابقة
+  //    اسم العمود بالسطر الأول (Header)، بدل الاعتماد على ترتيب ثابت للأعمدة.
+  //    هذا يسمح برفع ملف فيه فقط الأعمدة الإلزامية (بدون أي عمود اختياري على
+  //    الإطلاق) دون أن ينكسر الاستيراد أو تنزاح باقي القيم لعمود غلط — أي عمود
+  //    اختياري غير موجود بالملف يُعتبر ببساطة فارغاً لكل الصفوف. ──
+  const buildHeaderIndex = (headerRow: string[]): Record<string, number> => {
+    const norm = (s: string) => String(s || "").trim().replace(/\s*\(.*?\)\s*$/g, ""); // يشيل "(إلزامي)"/"(اختياري)..." إن وُجدت
+    const map: Record<string, number> = {};
+    PATIENT_FIELD_DEFS.forEach(f => {
+      const idx = headerRow.findIndex(h => norm(h) === f.label);
+      map[f.key] = idx; // -1 لو العمود مو موجود بالملف (يُعتبر فارغاً)
+    });
+    return map;
+  };
+  const col = (row: string[], hIdx: Record<string, number>, key: string): string => {
+    const i = hIdx[key];
+    return i == null || i < 0 ? "" : String(row[i] ?? "").trim();
+  };
   const DEPT_CONFIGS: { id: string; label: string; emoji: string; color: string }[] = [
     { id: "surgery", label: "العيادة والطوارئ", emoji: "🏥", color: "#1B3A6B" },
     { id: "lab", label: "مختبر التحاليل الطبية", emoji: "🧪", color: "#0D7377" },
@@ -15483,31 +15527,47 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
   };
 
   const GENDER_VALUES = ["ذكر", "أنثى"];
-  const BLOOD_VALUES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+  // ── "غير معروف" مضافة عمداً: هي قيمة صحيحة وقابلة للاختيار فعلياً من القائمة
+  //    المنسدلة بشاشة التسجيل اليدوي (فصيلة الدم اختيارية هناك)، فكانت مرفوضة
+  //    هنا رغم أنها نفس القيمة اللي بيولّدها النظام تلقائياً لو تُركت فارغة ──
+  const BLOOD_VALUES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "غير معروف"];
 
   // ── فحص شامل لكل صفوف الملف قبل أي حفظ فعلي — لو في أي صف فيه مشكلة، نرفض
   //    الملف بالكامل ونعرض كل الأسباب دفعة وحدة، بدل ما نستورد جزء وين المشكلة
   //    تظهر بمنتصف الملف (كان هذا سلوك النظام سابقاً: كتابة فورية صف-صف بدون
   //    أي فحص مسبق، فيصير استيراد جزئي غير قابل للتراجع). ──
-  const validateRows = (rows: string[][]): string[] => {
+  const validateRows = (rows: string[][], hIdx: Record<string, number>): string[] => {
     const problems: string[] = [];
     const seenIds = new Set<string>();
     rows.forEach((row, i) => {
       const rowNum = i + 2;
-      const rawId = String(row[0] ?? "").trim();
-      const name = String(row[1] ?? "").trim();
+      const rawId = col(row, hIdx, "id");
+      const name = col(row, hIdx, "name");
       if (!name) { problems.push(`صف ${rowNum}: الاسم فارغ — إلزامي لكل صف`); return; }
-      const ageRaw = String(row[2] ?? "").trim();
-      if (ageRaw && isNaN(Number(ageRaw))) problems.push(`صف ${rowNum} (${name}): العمر "${ageRaw}" ليس رقماً`);
-      const gender = String(row[4] ?? "").trim();
+      // ── الاسم يجب ألا يحتوي على أي رقم (أرقام عربية أو إنجليزية) — منع إدخال
+      //    غلط زي رقم هاتف/هوية بالغلط بخانة الاسم ──
+      if (/[0-9٠-٩]/.test(name)) problems.push(`صف ${rowNum}: الاسم "${name}" يحتوي على أرقام — يجب أن يكون نصاً فقط`);
+      // ── العمر ورقم الهاتف إلزاميان بنفس شاشة التسجيل اليدوي (NewPatientScreen،
+      //    v1()) — العمر رقم موجب، والهاتف بالضبط 10 أرقام. كانا مسموحَين فاضيين
+      //    هون سابقاً رغم إنهما إلزاميان بالتسجيل اليدوي، وهاي عكس المشكلة اللي
+      //    أبلغ عنها المستخدم (يبغى نفس قواعد الإلزامي/الاختياري بالضبط) ──
+      const ageRaw = col(row, hIdx, "age");
+      if (!ageRaw) problems.push(`صف ${rowNum} (${name}): العمر فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
+      else if (isNaN(Number(ageRaw)) || Number(ageRaw) <= 0) problems.push(`صف ${rowNum} (${name}): العمر "${ageRaw}" يجب أن يكون رقماً موجباً`);
+      // ── رقم الهاتف: 10 أرقام بالضبط، بدون رمز دولة (+970...) أو مسافات أو
+      //    أي رمز آخر — الـ regex بيرفض أي شي غير 10 خانات رقمية متتالية تماماً ──
+      const phoneRaw = col(row, hIdx, "phone");
+      if (!phoneRaw) problems.push(`صف ${rowNum} (${name}): رقم الهاتف فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
+      else if (!/^[0-9]{10}$/.test(phoneRaw)) problems.push(`صف ${rowNum} (${name}): رقم الهاتف "${phoneRaw}" يجب أن يتكوّن من 10 أرقام بالضبط، بدون رمز دولة (+970) أو مسافات أو أي رمز آخر`);
+      const gender = col(row, hIdx, "gender");
       if (gender && !GENDER_VALUES.includes(gender)) problems.push(`صف ${rowNum} (${name}): الجنس "${gender}" غير صحيح — لازم يكون "ذكر" أو "أنثى" بالضبط`);
-      const blood = String(row[5] ?? "").trim();
+      const blood = col(row, hIdx, "blood");
       if (blood && !BLOOD_VALUES.includes(blood)) problems.push(`صف ${rowNum} (${name}): فصيلة الدم "${blood}" غير صحيحة — لازم تكون واحدة من: ${BLOOD_VALUES.join(" / ")}`);
-      const insRaw = String(row[7] ?? "").trim().toLowerCase();
+      const insRaw = col(row, hIdx, "hasIns").toLowerCase();
       const hasInsurance = insRaw === "نعم" || insRaw === "yes" || insRaw === "1" || insRaw === "true";
       const insValid = !insRaw || hasInsurance || insRaw === "لا" || insRaw === "no" || insRaw === "0";
-      if (!insValid) problems.push(`صف ${rowNum} (${name}): قيمة "تامين_صحي_نعم_لا" غير مفهومة ("${row[7]}") — اكتب "نعم" أو "لا" فقط`);
-      const insCompanyRaw = String(row[8] ?? "").trim();
+      if (!insValid) problems.push(`صف ${rowNum} (${name}): قيمة "تامين_صحي_نعم_لا" غير مفهومة ("${col(row, hIdx, "hasIns")}") — اكتب "نعم" أو "لا" فقط`);
+      const insCompanyRaw = col(row, hIdx, "insCompany");
       if (hasInsurance) {
         if (!insCompanyRaw) {
           problems.push(`صف ${rowNum} (${name}): تأمين_صحي = نعم لكن عمود شركة_التأمين فارغ`);
@@ -15515,14 +15575,22 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
           problems.push(`صف ${rowNum} (${name}): شركة التأمين "${insCompanyRaw}" غير مسجَّلة بالنظام — تحقق من الاسم بالضبط بشاشة شركات التأمين`);
         }
       }
-      const amountRaw = String(row[14] ?? "").trim();
-      if (amountRaw && isNaN(Number(amountRaw))) problems.push(`صف ${rowNum} (${name}): المبلغ الإجمالي "${amountRaw}" ليس رقماً`);
-      const paidRaw = String(row[15] ?? "").trim();
-      if (paidRaw && isNaN(Number(paidRaw))) problems.push(`صف ${rowNum} (${name}): المدفوع "${paidRaw}" ليس رقماً`);
-      const debtRaw = String(row[16] ?? "").trim();
+      // ── المبلغ الإجمالي والمدفوع: أرقام فقط (عشرية مسموحة، مثال 250.50)، ما
+      //    فيهم أي نص، وما بينفع يكونوا سالبين — نفس منطق أي حقل مبلغ بباقي
+      //    شاشات النظام. المبلغ الإجمالي إلزامي وأكبر من صفر (نفس شرط v2()
+      //    بشاشة التسجيل اليدوي)، المدفوع اختياري لكن لازم يكون رقماً غير سالب
+      //    لو كُتب. الدين مستثنى عمداً من هذا الشرط لأنه دايماً محسوب تلقائياً
+      //    (amount − paid) ولا يُطلب من المستخدم إدخاله يدوياً أصلاً ──
+      const NUM_RE = /^\d+(\.\d+)?$/; // رقم موجب (أو صفر) بخانات عشرية اختيارية — بدون نصوص وبدون إشارة سالبة
+      const amountRaw = col(row, hIdx, "amount");
+      if (!amountRaw) problems.push(`صف ${rowNum} (${name}): المبلغ الإجمالي فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
+      else if (!NUM_RE.test(amountRaw) || Number(amountRaw) <= 0) problems.push(`صف ${rowNum} (${name}): المبلغ الإجمالي "${amountRaw}" يجب أن يكون رقماً (عشرياً مسموح) أكبر من صفر — بدون نصوص أو إشارة سالبة`);
+      const paidRaw = col(row, hIdx, "paid");
+      if (paidRaw && !NUM_RE.test(paidRaw)) problems.push(`صف ${rowNum} (${name}): المدفوع "${paidRaw}" يجب أن يكون رقماً (عشرياً مسموح) غير سالب — بدون نصوص أو إشارة سالبة`);
+      const debtRaw = col(row, hIdx, "debt");
       if (debtRaw && isNaN(Number(debtRaw))) problems.push(`صف ${rowNum} (${name}): الدين "${debtRaw}" ليس رقماً`);
-      const { ok: dateOk } = normalizeImportDate(String(row[13] ?? ""), "01/01/2000");
-      if (!dateOk) problems.push(`صف ${rowNum} (${name}): تاريخ_التسجيل "${row[13]}" غير مفهوم — استخدم صيغة DD/MM/YYYY`);
+      const { ok: dateOk } = normalizeImportDate(col(row, hIdx, "date"), "01/01/2000");
+      if (!dateOk) problems.push(`صف ${rowNum} (${name}): تاريخ_التسجيل "${col(row, hIdx, "date")}" غير مفهوم — استخدم صيغة DD/MM/YYYY`);
       if (rawId) {
         if (seenIds.has(rawId)) problems.push(`صف ${rowNum} (${name}): رقم الملف "${rawId}" مكرر بنفس الملف (صف آخر يستخدمه أيضاً)`);
         seenIds.add(rawId);
@@ -15537,7 +15605,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
   //    المستورد يظهر إيراداً بشاشات الربح دون أي دخول فعلي للصندوق. هلق كل صف
   //    بيُنشئ مريضاً حقيقياً (لو جديد) + جلسة حقيقية بالخادم + إيداع حقيقي
   //    بالصندوق (doDeposit) لو المدفوع > 0 + سجل دين حقيقي لو تبقّى دين. ──
-  const processRows = async (deptId: string, rows: string[][], fileName: string) => {
+  const processRows = async (deptId: string, rows: string[][], fileName: string, hIdx: Record<string, number>) => {
     const today = _today();
     let patientsAdded = 0, sessionsAdded = 0, errors = 0;
     const warnings: string[] = [];
@@ -15546,27 +15614,27 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
       const row = rows[i];
       const rowNum = i + 2; // +1 للعنوان، +1 للترقيم من 1
       const bump = () => setProgress(p => p ? { ...p, done: p.done + 1 } : p);
-      const rawId = String(row[0] ?? "").trim();
-      const name = String(row[1] ?? "").trim();
-      const age = parseInt(String(row[2] ?? "0")) || 0;
-      const phone = String(row[3] ?? "").trim() || "—";
-      const gender = String(row[4] ?? "").trim() || "ذكر";
-      const blood = String(row[5] ?? "").trim() || "غير معروف";
-      const address = String(row[6] ?? "").trim();
-      const insRaw = String(row[7] ?? "").trim().toLowerCase();
+      const rawId = col(row, hIdx, "id");
+      const name = col(row, hIdx, "name");
+      const age = parseInt(col(row, hIdx, "age") || "0") || 0;
+      const phone = col(row, hIdx, "phone") || "—";
+      const gender = col(row, hIdx, "gender") || "ذكر";
+      const blood = col(row, hIdx, "blood") || "غير معروف";
+      const address = col(row, hIdx, "address");
+      const insRaw = col(row, hIdx, "hasIns").toLowerCase();
       const insurance = insRaw === "نعم" || insRaw === "yes" || insRaw === "1" || insRaw === "true";
-      const insCompany = String(row[8] ?? "").trim();
-      const nationalId = String(row[9] ?? "").trim();
-      const email = String(row[10] ?? "").trim();
-      const chronic = String(row[11] ?? "").trim();
-      const allergy = String(row[12] ?? "").trim();
-      const { date: sessionDate } = normalizeImportDate(String(row[13] ?? ""), today);
-      const amount = parseFloat(String(row[14] ?? "0")) || 0;
-      const paid = parseFloat(String(row[15] ?? "0")) || 0;
+      const insCompany = col(row, hIdx, "insCompany");
+      const nationalId = col(row, hIdx, "nationalId");
+      const email = col(row, hIdx, "email");
+      const chronic = col(row, hIdx, "chronic");
+      const allergy = col(row, hIdx, "allergy");
+      const { date: sessionDate } = normalizeImportDate(col(row, hIdx, "date"), today);
+      const amount = parseFloat(col(row, hIdx, "amount") || "0") || 0;
+      const paid = parseFloat(col(row, hIdx, "paid") || "0") || 0;
       // ── تصحيح: كان يعامل "0" الصريحة بحقل الدين نفس معاملة الحقل الفارغ
       //    (بسبب || مع صفر) فيعيد حساب دين رغم إدخال 0 صراحةً — هلق نميّز بين
       //    "فارغ" (نحسبه تلقائياً) و"0 مكتوبة صراحةً" (نحترمها كما هي) ──
-      const debtRaw = String(row[16] ?? "").trim();
+      const debtRaw = col(row, hIdx, "debt");
       const debt = debtRaw !== "" ? (parseFloat(debtRaw) || 0) : Math.max(0, amount - paid);
       try {
         let effectiveId = rawId;
@@ -15616,14 +15684,25 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
   // ── البوابة: تفحص الملف بالكامل أولاً (validateRows). لو في أي مشكلة، نرفض
   //    الاستيراد كاملاً — صفر استدعاءات API — ونعرض كل الأسباب دفعة وحدة، تماماً
   //    متل ما طُلب: "رفض الطلب وإعطاء سبب المشاكل" بدل استيراد جزئي غامض. ──
-  const validateAndProcess = async (deptId: string, rows: string[][], fileName: string) => {
-    const problems = validateRows(rows);
+  const validateAndProcess = async (deptId: string, rows: string[][], fileName: string, hIdx: Record<string, number>) => {
+    // ── نتحقق إنه كل الأعمدة الإلزامية موجودة فعلاً بملف الرفع (وليس فقط
+    //    إنها غير فارغة بكل صف) — لو المستخدم حمّل نموذج "الحقول الإلزامية
+    //    فقط" وحذف عمود إلزامي بالغلط، أو غيّر اسم العمود، نرفض بوضوح بدل ما
+    //    نتعامل مع كل الصفوف وكأن هذا الحقل فارغ صف-صف ──
+    const missingRequiredCols = PATIENT_FIELD_DEFS.filter(f => f.required && hIdx[f.key] < 0);
+    if (missingRequiredCols.length > 0) {
+      const msg = `الملف ناقص عمود/أعمدة إلزامية: ${missingRequiredCols.map(f => f.label).join("، ")} — تأكد من وجود هذه الأعمدة بنفس الاسم بالسطر الأول من الملف`;
+      setResults(r => ({ ...r, [deptId]: { patients: 0, sessions: 0, errors: 1, warnings: [msg], rejected: true } }));
+      toast(msg, "error");
+      return;
+    }
+    const problems = validateRows(rows, hIdx);
     if (problems.length > 0) {
       setResults(r => ({ ...r, [deptId]: { patients: 0, sessions: 0, errors: problems.length, warnings: problems.slice(0, 60), rejected: true } }));
       toast(`تم رفض الملف بالكامل — ${problems.length} مشكلة يجب تصحيحها أولاً (راجع القائمة أسفل البطاقة)`, "error");
       return;
     }
-    await processRows(deptId, rows, fileName);
+    await processRows(deptId, rows, fileName, hIdx);
   };
 
   const importFile = (deptId: string, file: File) => {
@@ -15632,9 +15711,9 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     reader.onload = async e => {
       try {
         const text = e.target?.result as string;
-        const { rows } = parseCSV(text);
+        const { rows, headers } = parseCSV(text);
         if (rows.length === 0) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
-        await validateAndProcess(deptId, rows, file.name);
+        await validateAndProcess(deptId, rows, file.name, buildHeaderIndex(headers));
       } catch { toast("خطأ في قراءة الملف — تأكد من صيغة CSV", "error"); }
       finally { setImporting(null); }
     };
@@ -15653,7 +15732,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
         const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" }) as string[][];
         if (rows.length < 2) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
         const dataRows = rows.slice(1).filter(r => r.some(c => String(c).trim()));
-        await validateAndProcess(deptId, dataRows, file.name);
+        await validateAndProcess(deptId, dataRows, file.name, buildHeaderIndex(rows[0]));
       } catch { toast("خطأ في قراءة ملف Excel — تأكد أن الملف سليم", "error"); }
       finally { setImporting(null); }
     };
@@ -15669,11 +15748,21 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     importFile(deptId, file);
   };
 
+  // ── النموذج القابل للتحميل يحتوي فقط الأعمدة الإلزامية (نفس ما طلبه المستخدم:
+  //    "بدي بس البيانات الإجبارية بالنموذج") — الاسم/العمر/الهاتف/المبلغ_الاجمالي.
+  //    القراءة صارت بالاسم مش بموقع ثابت (buildHeaderIndex/col أعلاه)، فلو حدا
+  //    بدّه يضيف عمود اختياري (فصيلة الدم، شركة التأمين...) يقدر يزيده يدوياً
+  //    بنفس اسم العمود من البطاقة التوضيحية تحت — النظام بيكتشفه تلقائياً ويقرأه،
+  //    وأي عمود اختياري ما انضاف يُعتبر ببساطة فارغاً ويُملأ بنفس القيمة
+  //    الافتراضية المستخدمة بالتسجيل اليدوي ──
+  const REQUIRED_FIELD_DEFS = PATIENT_FIELD_DEFS.filter(f => f.required);
   const _buildTemplateWb = (sheetName: string) => {
     const wb = XLSX.utils.book_new();
-    const data = [PATIENT_FIELDS, PATIENT_SAMPLE, ...Array(20).fill(Array(PATIENT_FIELDS.length).fill(""))];
+    const headers = REQUIRED_FIELD_DEFS.map(f => f.label);
+    const sample = REQUIRED_FIELD_DEFS.map(f => f.sample);
+    const data = [headers, sample, ...Array(20).fill(Array(headers.length).fill(""))];
     const ws = XLSX.utils.aoa_to_sheet(data);
-    ws["!cols"] = PATIENT_FIELDS.map(() => ({ wch: 22 }));
+    ws["!cols"] = headers.map(() => ({ wch: 22 }));
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     return wb;
   };
@@ -15682,13 +15771,13 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     const cfg = DEPT_CONFIGS.find(d => d.id === deptId)!;
     const wb = _buildTemplateWb(cfg.label);
     XLSX.writeFile(wb, `نموذج_استيراد_${cfg.label}.xlsx`);
-    toast("تم تحميل نموذج Excel — عبّئ البيانات وارفع الملف مباشرةً", "success");
+    toast("تم تحميل نموذج Excel (الحقول الإلزامية فقط) — عبّئ البيانات وارفع الملف مباشرةً", "success");
   };
 
   const downloadGeneralTemplate = () => {
     const wb = _buildTemplateWb("بيانات المرضى");
     XLSX.writeFile(wb, "نموذج_استيراد_المرضى.xlsx");
-    toast("تم تحميل نموذج Excel — عبّئ البيانات وارفع الملف مباشرةً", "success");
+    toast("تم تحميل نموذج Excel (الحقول الإلزامية فقط) — عبّئ البيانات وارفع الملف مباشرةً", "success");
   };
 
   return (
@@ -15699,30 +15788,42 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
           <p className="text-xs text-[#999] mt-0.5">ارفع ملف Excel (XLSX) أو CSV لترحيل بيانات المرضى السابقين — حمّل النموذج، عبّئه في Excel، ثم ارفعه مباشرةً. كل صف يُحفظ فعلياً بالخادم (مريض + جلسة)، وأي مبلغ "مدفوع" يُودَع فعلياً بصندوق القسم تلقائياً</p>
         </div>
         <button onClick={downloadGeneralTemplate} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all hover:opacity-90" style={{ backgroundColor: "#1B3A6B", border: "1px solid #1B3A6B" }}>
-          <Download size={16} />تحميل نموذج الاستيراد ({PATIENT_FIELDS.length} عمود)
+          <Download size={16} />تحميل نموذج الاستيراد ({REQUIRED_FIELD_DEFS.length} أعمدة إلزامية فقط)
         </button>
       </div>
 
       {/* Fields legend */}
       <div className="bg-white rounded-2xl p-5 shadow-sm" style={{ border: "1px solid #E0E0E0" }}>
-        <p className="text-sm font-bold text-[#1B3A6B] mb-3">📋 أعمدة النموذج الموحَّد — {PATIENT_FIELDS.length} حقل</p>
+        <p className="text-sm font-bold text-[#1B3A6B] mb-3">📋 النموذج القابل للتحميل يحتوي {REQUIRED_FIELD_DEFS.length} أعمدة إلزامية فقط:</p>
         <div className="grid grid-cols-2 gap-2">
-          {PATIENT_FIELDS.map((f, i) => (
-            <div key={f} className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ backgroundColor: "#F5F9FF", border: "1px solid #BEDCF5" }}>
+          {REQUIRED_FIELD_DEFS.map((f, i) => (
+            <div key={f.key} className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ backgroundColor: "#F5F9FF", border: "1px solid #BEDCF5" }}>
               <span className="w-5 h-5 rounded-full bg-[#1B3A6B] text-white text-[10px] flex items-center justify-center font-bold flex-shrink-0">{i + 1}</span>
-              <span className="text-xs font-medium text-[#1B3A6B]">{f.replace(/_/g, " ")}</span>
+              <span className="text-xs font-medium text-[#1B3A6B]">{f.label.replace(/_/g, " ")}</span>
             </div>
           ))}
         </div>
-        <div className="mt-3 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
-          <p><strong>الجنس:</strong> اكتب <strong>ذكر</strong> أو <strong>أنثى</strong> بالضبط (أي قيمة أخرى تُرفض)</p>
-          <p><strong>تأمين_صحي:</strong> اكتب <strong>نعم</strong> أو <strong>لا</strong></p>
-          <p><strong>شركة_التأمين:</strong> إلزامي إذا كان تأمين_صحي = نعم — يجب أن يطابق <u>حرفياً</u> اسم شركة مسجَّلة مسبقاً بالنظام (شاشة شركات التأمين)، وإلا يُرفض الملف بالكامل</p>
-          <p><strong>فصيلة_الدم:</strong> اتركه فارغاً أو اكتب واحدة من: A+ / A- / B+ / B- / AB+ / AB- / O+ / O-</p>
-          <p><strong>الدين:</strong> يُحسب تلقائياً (المبلغ − المدفوع) إن تُرك فارغاً — اكتب 0 صراحةً إن كان مسدداً بالكامل فعلاً</p>
-          <p><strong>تاريخ_التسجيل:</strong> اكتبه نصاً بصيغة DD/MM/YYYY (مثال: 01/07/2026) لتفادي تنسيق إكسل التلقائي للتاريخ</p>
+        <div className="mt-3 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
+          <p className="font-bold text-[#1B5E20]">✅ هذه فقط الحقول التي لا يمكن تركها فارغة — نفس شاشة التسجيل اليدوي بالضبط، لا أكثر ولا أقل:</p>
+          <p><strong>الاسم_الكامل</strong>، <strong>العمر</strong> (رقم موجب)، <strong>رقم_الهاتف</strong> (10 أرقام بالضبط)، و<strong>المبلغ_الاجمالي</strong> (رقم أكبر من صفر).</p>
+        </div>
+        <div className="mt-2 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
+          <p className="font-bold">النموذج المُحمَّل ما فيه غير هاي الأعمدة عمداً. لو عندك بيانات إضافية لبعض المرضى (فصيلة دم، تأمين...)، تقدر تضيف أي عمود من القائمة تحت يدوياً بنفس الاسم بالضبط بالسطر الأول بملف Excel — النظام بيكتشفه ويقرأه تلقائياً بغض النظر عن ترتيبه. أي عمود ما تضيفه بيُعتبر فارغاً ويُملأ بنفس القيمة الافتراضية المستخدمة بالتسجيل اليدوي:</p>
+          <div className="flex flex-wrap gap-1.5 py-1">
+            {PATIENT_FIELDS.filter((_, i) => !PATIENT_FIELD_DEFS[i].required).map(f => (
+              <span key={f} className="px-2 py-0.5 rounded-full text-[10px] font-mono" style={{ backgroundColor: "#FFFFFF", border: "1px solid #FFCC80", color: "#795548" }}>{PATIENT_FIELD_DEFS.find(d => fieldDisplayLabel(d) === f)?.label}</span>
+            ))}
+          </div>
+          <p><strong>الجنس:</strong> اختياري — إن تُرك فارغاً يُسجَّل "ذكر" تلقائياً (نفس افتراضي الشاشة اليدوية). إن كُتب، يجب أن يكون <strong>ذكر</strong> أو <strong>أنثى</strong> بالضبط</p>
+          <p><strong>فصيلة_الدم:</strong> اختياري تماماً — اتركه فارغاً وسيُسجَّل "غير معروف" تلقائياً (تماماً كما بالشاشة اليدوية)، أو اكتب واحدة من: A+ / A- / B+ / B- / AB+ / AB- / O+ / O- / غير معروف</p>
+          <p><strong>العنوان، رقم_الهوية_الوطنية، البريد_الالكتروني، امراض_مزمنة، حساسية:</strong> اختيارية بالكامل — اتركها فارغة بدون أي مشكلة</p>
+          <p><strong>تأمين_صحي:</strong> اختياري — اتركه فارغاً إن كان المريض غير مؤمَّن. اكتب <strong>نعم</strong> أو <strong>لا</strong> فقط إن كتبته</p>
+          <p><strong>شركة_التأمين:</strong> إلزامي <u>فقط</u> إذا كان تأمين_صحي = نعم — ويجب أن يطابق <u>حرفياً</u> اسم شركة مسجَّلة مسبقاً بالنظام (شاشة شركات التأمين)</p>
+          <p><strong>المدفوع:</strong> اختياري — يُعتبر صفراً إن تُرك فارغاً</p>
+          <p><strong>الدين:</strong> اختياري — يُحسب تلقائياً (المبلغ − المدفوع) إن تُرك فارغاً، أو اكتب 0 صراحةً إن كان مسدداً بالكامل فعلاً</p>
+          <p><strong>تاريخ_التسجيل:</strong> اختياري — يُستخدم تاريخ اليوم إن تُرك فارغاً. إن كُتب، اكتبه نصاً بصيغة DD/MM/YYYY (مثال: 01/07/2026) لتفادي تنسيق إكسل التلقائي للتاريخ</p>
           <p><strong>الصيغة:</strong> Excel (XLSX) مباشرةً، أو CSV (UTF-8) — كلاهما مقبول عند الرفع</p>
-          <p className="text-[#B71C1C] font-semibold">⚠️ يتم فحص كل صفوف الملف أولاً قبل أي حفظ فعلي — لو في أي صف فيه مشكلة (اسم فارغ، جنس/فصيلة دم/شركة تأمين غير صحيحة، رقم غير رقمي...) يُرفض الملف <u>بالكامل</u> ولا يُستورد ولا صف واحد، مع بيان سبب كل مشكلة بالتحديد.</p>
+          <p className="text-[#B71C1C] font-semibold">⚠️ يتم فحص كل صفوف الملف أولاً قبل أي حفظ فعلي — لو في أي صف فيه مشكلة بحقل إلزامي فارغ أو قيمة غير صحيحة، يُرفض الملف <u>بالكامل</u> ولا يُستورد ولا صف واحد، مع بيان سبب كل مشكلة بالتحديد.</p>
         </div>
       </div>
 
@@ -15740,7 +15841,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
                   <span className="text-xl">{dept.emoji}</span>
                   <p className="font-bold text-sm leading-tight" style={{ color: dept.color }}>{dept.label}</p>
                 </div>
-                <p className="text-[10px] text-[#777]">{PATIENT_FIELDS.length} حقل · نفس النموذج لجميع الأقسام</p>
+                <p className="text-[10px] text-[#777]">{REQUIRED_FIELD_DEFS.length} أعمدة إلزامية · نفس النموذج لجميع الأقسام</p>
               </div>
 
               {/* Drop zone */}
