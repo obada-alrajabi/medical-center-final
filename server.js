@@ -752,6 +752,20 @@ pool
   .then(() => console.log("[migration] purchase_requests_supplier applied"))
   .catch((e) => console.error("[migration] purchase_requests_supplier:", e.message));
 
+// ── ربط طلبات الشراء بمعرّف المورد الحقيقي (suppliers.id) بدل مطابقة الاسم
+//    النصي فقط — يحل مشكلة فشل الفلترة الصامت بسبب اختلافات المسافات ──
+pool
+  .query(`ALTER TABLE purchase_requests ADD COLUMN IF NOT EXISTS supplier_id BIGINT REFERENCES suppliers(id)`)
+  .then(() => console.log("[migration] purchase_requests_supplier_id applied"))
+  .catch((e) => console.error("[migration] purchase_requests_supplier_id:", e.message));
+
+// ── ربط الفواتير بمعرّف شركة التأمين الحقيقي (insurance_companies.id) بدل
+//    مطابقة الاسم النصي فقط — نفس مشكلة الفلترة الصامتة أعلاه ──
+pool
+  .query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES insurance_companies(id)`)
+  .then(() => console.log("[migration] invoices_company_id applied"))
+  .catch((e) => console.error("[migration] invoices_company_id:", e.message));
+
 // ── ربط طلبات الشراء وسندات الصرف/القبض بحركة الصندوق (drawer_transactions)
 //    التي أنشأتها فعلياً — يحل مشكلة: عند حذف الطلب/السند بعد اعتماده، كانت
 //    حركة السحب/الإيداع المرتبطة تبقى معلّقة للأبد في سجل الصندوق (رصيد غير
@@ -798,6 +812,29 @@ pool
   .query(`ALTER TABLE payment_vouchers ADD COLUMN IF NOT EXISTS settlement_breakdown JSONB`)
   .then(() => console.log("[migration] payment_vouchers_settlement_breakdown applied"))
   .catch((e) => console.error("[migration] payment_vouchers_settlement_breakdown:", e.message));
+
+// ── سجل دفعات تسديد ديون المرضى — مستقل تماماً عن سندات القبض (بقرار صريح:
+//    تسديد الدين يدخل بالإيرادات مباشرة عبر sessions.paid، وما بينشئ سند قبض
+//    إطلاقاً). بدون هذا الجدول، ما كان في أي أثر تاريخي لتسديدات الدين (لا
+//    تاريخ ولا مبلغ ولا الباقي بعدها) — صف الدين نفسه يُحذف/يُنقَّص مباشرة
+//    بدون أي سجل. هذا الجدول بديل خفيف مخصَّص فقط لعرض "سجل دفعات تسديد
+//    الديون" بملف المريض، وليس له أي أثر على المعادلات المالية. ──
+pool
+  .query(`
+    CREATE TABLE IF NOT EXISTS debt_payments (
+      id SERIAL PRIMARY KEY,
+      patient_id VARCHAR(50) NOT NULL,
+      patient_name VARCHAR(200) NOT NULL,
+      dept VARCHAR(50),
+      amount NUMERIC(12,2) NOT NULL,
+      date DATE NOT NULL,
+      remaining_after NUMERIC(12,2),
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `)
+  .then(() => console.log("[migration] debt_payments table applied"))
+  .catch((e) => console.error("[migration] debt_payments:", e.message));
 
 // ── Base path (set APP_BASE_PATH env var on Hostinger, e.g. /45.159.160.11) ──
 const BASE = process.env.APP_BASE_PATH || "";

@@ -37,13 +37,13 @@ router.get('/invoices/:id', async (req, res) => {
 });
 
 router.post('/invoices', requireFinancialAuth, async (req, res) => {
-  const { id, company, date, total, paid, status, dept, notes, claim_no, patient_id, patient_name } = req.body;
+  const { id, company, company_id, date, total, paid, status, dept, notes, claim_no, patient_id, patient_name } = req.body;
   const t = total ?? 0; const p = paid ?? 0;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO invoices (id,company,date,total,paid,status,dept,notes,claim_no,patient_id,patient_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [id, company, date, t, p, status ?? 'unpaid', dept ?? null, notes ?? null, claim_no ?? null, patient_id ?? null, patient_name ?? null]
+      `INSERT INTO invoices (id,company,company_id,date,total,paid,status,dept,notes,claim_no,patient_id,patient_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [id, company, company_id ?? null, date, t, p, status ?? 'unpaid', dept ?? null, notes ?? null, claim_no ?? null, patient_id ?? null, patient_name ?? null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -56,12 +56,13 @@ router.put('/invoices/:id', requireFinancialAuth, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM invoices WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { company, date, total, paid, status, dept, notes, claim_no, patient_id, patient_name } = req.body;
+    const { company, company_id, date, total, paid, status, dept, notes, claim_no, patient_id, patient_name } = req.body;
     const { rows } = await pool.query(
-      `UPDATE invoices SET company=$1,date=$2,total=$3,paid=$4,status=$5,dept=$6,notes=$7,claim_no=$8,patient_id=$9,patient_name=$10,updated_at=NOW()
-       WHERE id=$11 RETURNING *`,
+      `UPDATE invoices SET company=$1,company_id=$2,date=$3,total=$4,paid=$5,status=$6,dept=$7,notes=$8,claim_no=$9,patient_id=$10,patient_name=$11,updated_at=NOW()
+       WHERE id=$12 RETURNING *`,
       [
         company !== undefined ? company : c.company,
+        company_id !== undefined ? company_id : c.company_id,
         date    !== undefined ? date    : c.date,
         total   !== undefined ? total   : c.total,
         paid    !== undefined ? paid    : c.paid,
@@ -345,14 +346,14 @@ router.post('/purchase-requests/:id/payments', requireFinancialAuth, async (req,
 });
 
 router.post('/purchase-requests', requireFinancialAuth, async (req, res) => {
-  const { dept, requested_by, date, total_amount, paid_amount, status, note, items, supplier, drawer_tx_id } = req.body;
+  const { dept, requested_by, date, total_amount, paid_amount, status, note, items, supplier, supplier_id, drawer_tx_id } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO purchase_requests (dept,requested_by,date,total_amount,paid_amount,status,note,supplier,drawer_tx_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [dept ?? null, requested_by ?? null, date, total_amount ?? 0, paid_amount ?? 0, status ?? 'pending', note ?? null, supplier ?? null, drawer_tx_id ?? null]
+      `INSERT INTO purchase_requests (dept,requested_by,date,total_amount,paid_amount,status,note,supplier,supplier_id,drawer_tx_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [dept ?? null, requested_by ?? null, date, total_amount ?? 0, paid_amount ?? 0, status ?? 'pending', note ?? null, supplier ?? null, supplier_id ?? null, drawer_tx_id ?? null]
     );
     const pr = rows[0];
     if (items && items.length) {
@@ -379,11 +380,11 @@ router.put('/purchase-requests/:id', requireFinancialAuth, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM purchase_requests WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
-    const { dept, requested_by, date, total_amount, paid_amount, status, approved_by, approved_date, rejection_reason, note, supplier, drawer_tx_id, discount_amount } = req.body;
+    const { dept, requested_by, date, total_amount, paid_amount, status, approved_by, approved_date, rejection_reason, note, supplier, supplier_id, drawer_tx_id, discount_amount } = req.body;
     const { rows } = await pool.query(
       `UPDATE purchase_requests SET dept=$1,requested_by=$2,date=$3,total_amount=$4,
-       paid_amount=$5,status=$6,approved_by=$7,approved_date=$8,rejection_reason=$9,note=$10,supplier=$11,drawer_tx_id=$12,discount_amount=$13
-       WHERE id=$14 RETURNING *`,
+       paid_amount=$5,status=$6,approved_by=$7,approved_date=$8,rejection_reason=$9,note=$10,supplier=$11,supplier_id=$12,drawer_tx_id=$13,discount_amount=$14
+       WHERE id=$15 RETURNING *`,
       [
         dept             !== undefined ? dept             : c.dept,
         requested_by     !== undefined ? requested_by     : c.requested_by,
@@ -396,6 +397,7 @@ router.put('/purchase-requests/:id', requireFinancialAuth, async (req, res) => {
         rejection_reason !== undefined ? rejection_reason : c.rejection_reason,
         note             !== undefined ? note             : c.note,
         supplier         !== undefined ? supplier         : c.supplier,
+        supplier_id      !== undefined ? supplier_id      : c.supplier_id,
         drawer_tx_id     !== undefined ? drawer_tx_id     : c.drawer_tx_id,
         discount_amount  !== undefined ? discount_amount  : c.discount_amount,
         req.params.id,
@@ -642,6 +644,40 @@ router.put('/payment-vouchers/:id', requireAdmin, async (req, res) => {
 router.delete('/payment-vouchers/:id', requireFinancialAuth, async (req, res) => {
   try {
     await pool.query('DELETE FROM payment_vouchers WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Debt Payments (سجل دفعات تسديد ديون المرضى) ─────────────────────────────
+// مستقل تماماً عن سندات القبض — للعرض التاريخي فقط بملف المريض، بدون أي أثر
+// على المعادلات المالية (الإيراد أصلاً محسوب من sessions.paid مباشرة).
+router.get('/debt-payments', async (req, res) => {
+  try {
+    const { patient_id } = req.query;
+    let sql = 'SELECT * FROM debt_payments WHERE 1=1';
+    const params = [];
+    if (patient_id) { params.push(patient_id); sql += ` AND patient_id=$${params.length}`; }
+    sql += ' ORDER BY date DESC, id DESC';
+    const { rows } = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/debt-payments', requireFinancialAuth, async (req, res) => {
+  const { patient_id, patient_name, dept, amount, date, remaining_after, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO debt_payments (patient_id, patient_name, dept, amount, date, remaining_after, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [patient_id, patient_name, dept || null, amount, date, remaining_after ?? null, notes || null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/debt-payments/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM debt_payments WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

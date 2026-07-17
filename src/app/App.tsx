@@ -38,7 +38,7 @@ import type {
   StaffAdvanceRequest, ExternalDebt, AdminAccount, SidebarSettings, SalaryType,
   DeptPermissions, StaffMember, LoggedUser, TestParam, KitParam, SurgeryClinicItem,
   PatientDeleteRequest, RehabPlan, RehabQueueEntry, RehabServiceItem,
-  PrintExportSaved, DeptPrintAdv,
+  PrintExportSaved, DeptPrintAdv, Supplier,
 } from "./types";
 import {
   C, PIE_COLORS, DEPARTMENTS, WITHDRAW_CATS, DEPOSIT_TYPES, LAB_CATS, RAD_DEVICES,
@@ -2313,9 +2313,10 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
 // ─── DEPT PURCHASE REQS ─────────────────────────────────────────────────────────
 
 type RecPurchItem = { id: number; name: string; qty: string; unit: string; price: string };
-function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, toast, isAdmin, dept: screenDept = "surgery", staffName, suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onSubmitPurchaseRequest: (req: Omit<PurchaseRequest, "id" | "status">) => void; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; toast: (m: string, t?: any) => void; isAdmin?: boolean; dept?: string; staffName?: string; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
+function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, toast, isAdmin, dept: screenDept = "surgery", staffName, suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onSubmitPurchaseRequest: (req: Omit<PurchaseRequest, "id" | "status">) => void; onApprovePurchaseRequest: (id: number) => void; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; toast: (m: string, t?: any) => void; isAdmin?: boolean; dept?: string; staffName?: string; suppliers?: Supplier[] }) {
   const [tab, setTab] = useState<"list" | "new">("list");
   const [company, setCompany] = useState("");
+  const [companySupplierId, setCompanySupplierId] = useState<number | undefined>(undefined);
   const [paidAmt, setPaidAmt] = useState("");
   const [note, setNote] = useState("");
   const [items, setItems] = useState<RecPurchItem[]>([{ id: 1, name: "", qty: "1", unit: "قطعة", price: "" }]);
@@ -2345,10 +2346,11 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
       items: purchItems, totalAmount: totalCalc,
       paidAmount: parseFloat(paidAmt) || 0,
       supplier: company,
+      supplierId: companySupplierId,
       note
     });
     toast("✅ تم تقديم طلب الشراء — في انتظار موافقة المدير", "info");
-    setCompany(""); setPaidAmt(""); setNote("");
+    setCompany(""); setCompanySupplierId(undefined); setPaidAmt(""); setNote("");
     setItems([{ id: 1, name: "", qty: "1", unit: "قطعة", price: "" }]);
     setTab("list");
   };
@@ -2448,7 +2450,7 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-[#555]">شركة المورد <span className="text-[#D32F2F]">*</span></label>
-              <select value={company} onChange={e => setCompany(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+              <select value={company} onChange={e => { setCompany(e.target.value); setCompanySupplierId(suppliers.find(s => s.name === e.target.value)?.id); }} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
                 <option value="">— اختر شركة المورد —</option>
                 {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
               </select>
@@ -3081,8 +3083,8 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       }
       if (insComp && insDiscAmt > 0 && setInvoices) {
         const insId = `ins-${Date.now()}`;
-        setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: effectiveId, patientName: form.name }]);
-        api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: effectiveId, patient_name: form.name });
+        setInvoices(p => [...p, { id: insId, company: insComp.name, companyId: insComp?.id, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: effectiveId, patientName: form.name }]);
+        api.finance.invoices.create({ id: insId, company: insComp.name, company_id: insComp?.id, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: effectiveId, patient_name: form.name });
       }
     }
     setTimeout(() => { setSaving(false); setSaved(true); toast(prefillPatient ? "تم تسجيل الزيارة في الملف الأصلي للمريض ✓" : "تم تسجيل المريض بنجاح ✓"); }, 800);
@@ -3724,7 +3726,7 @@ function PatientSearchScreen({ onNavigate, debts, customDepts = [] }: { onNaviga
 
 // ─── PATIENT FILE ──────────────────────────────────────────────────────────────
 
-function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, onSettleSessionsDebt, sessionFiles, setSessionFiles, setReceiptVouchers, receiptVouchers = [], perms, insurances = [], invoices = [] }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => { sessionId: number; amount: number }[]; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; receiptVouchers?: any[]; perms?: DeptPermissions; insurances?: InsuranceCo[]; invoices?: Invoice[] }) {
+function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, onSettleSessionsDebt, sessionFiles, setSessionFiles, setReceiptVouchers, receiptVouchers = [], perms, insurances = [], invoices = [], debtPaymentsLog = [], setDebtPayments }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => { sessionId: number; amount: number }[]; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; receiptVouchers?: any[]; perms?: DeptPermissions; insurances?: InsuranceCo[]; invoices?: Invoice[]; debtPaymentsLog?: any[]; setDebtPayments?: React.Dispatch<React.SetStateAction<any[]>> }) {
   const isAdmin = loggedUser?.type === "admin";
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
   const handleDeleteSession = async (id: number) => {
@@ -3860,28 +3862,17 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   const initials = (n: string) => n.split(" ").slice(0, 2).map(w => w[0]).join("");
   const totalAmt = finSess.reduce((s, x) => s + x.amount, 0);
   const totalPaid = finSess.reduce((s, x) => s + x.paid, 0);
-  // ── سجل دفعات تسديد الدين — كل سند قبض حقيقي صادر لهذا المريض بسبب "تسديد
-  //    دين مريض" (من ملف المريض أو من شاشة إدارة الديون، كلاهما يستخدمان نفس
-  //    النص). نحسب "الباقي بعد الدفعة" رجوعاً من الدين الحالي الفعلي (liveDebt)
-  //    بدل الاعتماد على أي رصيد تاريخي مخزَّن — كل دفعة أقدم كان الباقي بعدها
-  //    أكبر بمقدار كل الدفعات الأحدث منها، وهذا يبقى صحيحاً حتى لو تغيّر إجمالي
-  //    الفاتورة لاحقاً. ──
+  // ── سجل دفعات تسديد الدين — يُقرأ من جدول debt_payments المستقل تماماً عن
+  //    سندات القبض (بقرار صريح: تسديد الدين ما بينشئ سند قبض إطلاقاً، فيدخل
+  //    بالإيراد مباشرة عبر sessions.paid فقط). كل دفعة (من ملف المريض أو من
+  //    شاشة إدارة الديون) تُسجَّل هنا بـ"الباقي بعدها" المحسوب وقت الحفظ نفسه ──
   const debtPayments = React.useMemo(() => {
-    const list = (receiptVouchers || []).filter((v: any) =>
-      (v.received_from_id === p.id || v.received_from_name === p.name) &&
-      typeof v.reason === "string" && v.reason.startsWith(DEBT_SETTLEMENT_RV_MARKER) &&
-      canSeeFinance(v.dept)
+    const list = (debtPaymentsLog || []).filter((v: any) =>
+      v.patient_id === p.id && canSeeFinance(v.dept)
     );
     const sorted = [...list].sort((a: any, b: any) => (String(b.date || "")).localeCompare(String(a.date || "")) || ((b.id || 0) - (a.id || 0)));
-    let running = liveDebt;
-    const out: { date: string; amount: number; remainingAfter: number; dept?: string; notes?: string }[] = [];
-    for (const v of sorted) {
-      const amt = Number(v.amount) || 0;
-      out.push({ date: v.date, amount: amt, remainingAfter: running, dept: v.dept, notes: v.notes });
-      running += amt;
-    }
-    return out;
-  }, [receiptVouchers, p.id, p.name, liveDebt]);
+    return sorted.map((v: any) => ({ date: v.date, amount: Number(v.amount) || 0, remainingAfter: v.remaining_after != null ? Number(v.remaining_after) : 0, dept: v.dept, notes: v.notes }));
+  }, [debtPaymentsLog, p.id]);
   // ── فواتير شركة التأمين المرتبطة بهذا المريض (الجزء المخصوم من الكشفية
   //    ويُسجَّل كذمة/دَين منفصل على شركة التأمين، مش على المريض نفسه) — نفس
   //    قاعدة إظهار الأقسام المطبَّقة على باقي الملف المالي (canSeeFinance). ──
@@ -3932,6 +3923,12 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
     //    onSettleSessionsDebt بمستوى App) ──
     if (onSettleSessionsDebt) onSettleSessionsDebt(p.id, isAdmin ? null : dept, amt);
     if (doDeposit) doDeposit(dept, amt, `سداد دين — ${p.name}`, "سداد دين");
+    // ── نسجّل الدفعة بسجل debt_payments المستقل (للعرض التاريخي بملف المريض
+    //    فقط — لا علاقة له بسندات القبض ولا بأي معادلة مالية) ──
+    const remainingAfter = Math.max(0, liveDebt - amt);
+    api.finance.debtPayments.create({ patient_id: p.id, patient_name: p.name, dept, amount: amt, date: _localISO(), remaining_after: remainingAfter }).then(r => {
+      if (r && setDebtPayments) setDebtPayments(prev => [{ ...(r as any), amount: Number((r as any).amount) }, ...prev]);
+    }).catch(() => { });
     setDebtModal(false); setDebtAmt("");
   };
   const TABS_ALL = [
@@ -4810,8 +4807,8 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
     // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen/LabSessionScreen) ──
     if (insComp && insDiscAmt > 0 && setInvoices) {
       const insId = `ins-${Date.now()}`;
-      setInvoices(p2 => [...p2, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: p.id, patientName: p.name }]);
-      api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: p.id, patient_name: p.name });
+      setInvoices(p2 => [...p2, { id: insId, company: insComp.name, companyId: insComp?.id, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: p.id, patientName: p.name }]);
+      api.finance.invoices.create({ id: insId, company: insComp.name, company_id: insComp?.id, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: p.id, patient_name: p.name });
     }
     const ns: PatientSession = { id: Date.now(), patientId: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: today, diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, labRefs, radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt };
     setSessions(prev => [ns, ...prev]);
@@ -5172,8 +5169,8 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen) ──
     if (insComp && insDiscAmt > 0 && setInvoices) {
       const insId = `ins-${Date.now()}`;
-      setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "lab", claimNo: insClaimNo.trim() || undefined, patientId: effectivePatId, patientName: patName }]);
-      api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "lab", claim_no: insClaimNo.trim() || null, patient_id: effectivePatId, patient_name: patName });
+      setInvoices(p => [...p, { id: insId, company: insComp.name, companyId: insComp?.id, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "lab", claimNo: insClaimNo.trim() || undefined, patientId: effectivePatId, patientName: patName }]);
+      api.finance.invoices.create({ id: insId, company: insComp.name, company_id: insComp?.id, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "lab", claim_no: insClaimNo.trim() || null, patient_id: effectivePatId, patient_name: patName });
     }
 
     // ── ملاحظة: خصم مخزون الكيتات لا يحصل هنا عند حجز/تسجيل الفحص — يحصل فقط
@@ -5797,8 +5794,8 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen/LabSessionScreen) ──
     if (insComp && insDiscAmt > 0 && setInvoices) {
       const insId = `ins-${Date.now()}`;
-      setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "radiology", claimNo: insClaimNo.trim() || undefined, patientId: effectivePatId, patientName: patName }]);
-      api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "radiology", claim_no: insClaimNo.trim() || null, patient_id: effectivePatId, patient_name: patName });
+      setInvoices(p => [...p, { id: insId, company: insComp.name, companyId: insComp?.id, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "radiology", claimNo: insClaimNo.trim() || undefined, patientId: effectivePatId, patientName: patName }]);
+      api.finance.invoices.create({ id: insId, company: insComp.name, company_id: insComp?.id, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "radiology", claim_no: insClaimNo.trim() || null, patient_id: effectivePatId, patient_name: patName });
     }
     const radImgNames = selImgsData.map(t => t.name);
     const radLid = Date.now();
@@ -7007,8 +7004,8 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
       // ── تسجيل دين شركة التأمين (نفس منطق NewPatientScreen) — كان مفقوداً هنا تماماً ──
       if (insComp && insDiscAmt > 0 && setInvoices) {
         const insId = `ins-${Date.now()}`;
-        setInvoices(p => [...p, { id: insId, company: insComp.name, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "rehab", claimNo: insClaimNo.trim() || undefined, patientId: patientId, patientName: patient?.name || "" }]);
-        api.finance.invoices.create({ id: insId, company: insComp.name, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "rehab", claim_no: insClaimNo.trim() || null, patient_id: patientId, patient_name: patient?.name || "" });
+        setInvoices(p => [...p, { id: insId, company: insComp.name, companyId: insComp?.id, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept: "rehab", claimNo: insClaimNo.trim() || undefined, patientId: patientId, patientName: patient?.name || "" }]);
+        api.finance.invoices.create({ id: insId, company: insComp.name, company_id: insComp?.id, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept: "rehab", claim_no: insClaimNo.trim() || null, patient_id: patientId, patient_name: patient?.name || "" });
       }
       // ── تسجيل جلسة مالية (PatientSession) فعلية لهذه الخطة — بدونها يبقى
       //    "إجمالي الفواتير/المدفوع" بملف المريض صفراً رغم دفع حقيقي، ولا
@@ -7760,7 +7757,7 @@ function ImageCatalogScreen({ toast, perms }: { toast: (m: string, t?: any) => v
 // ─── FIN: ALL DRAWERS (overview + withdrawals) ────────────────────────────────
 
 
-function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, onEditPurchaseRequest, onSettlePayment, toast, customDepts = [], suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number, opts?: { discountAmount?: number; paidNow?: number }) => Promise<boolean>; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; onEditPurchaseRequest?: (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => void; onSettlePayment?: (id: number, amount: number) => Promise<boolean>; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; suppliers?: { id: number; name: string; type: string; phone: string }[] }) {
+function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, onEditPurchaseRequest, onSettlePayment, toast, customDepts = [], suppliers = [] }: { purchaseRequests: PurchaseRequest[]; onApprovePurchaseRequest: (id: number, opts?: { discountAmount?: number; paidNow?: number }) => Promise<boolean>; onRejectPurchaseRequest: (id: number, reason: string) => void; onDeletePurchaseRequest?: (id: number) => void; onEditPurchaseRequest?: (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; supplierId?: number; note: string; paidAmount: number; items: PurchaseItem[] }) => void; onSettlePayment?: (id: number, amount: number) => Promise<boolean>; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; suppliers?: Supplier[] }) {
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [deptFilter, setDeptFilter] = useState("all");
   const [searchQ, setSearchQ] = useState("");
@@ -7819,13 +7816,14 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
   const [editRequestedBy, setEditRequestedBy] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editSupplier, setEditSupplier] = useState("");
+  const [editSupplierId, setEditSupplierId] = useState<number | undefined>(undefined);
   const [editNote, setEditNote] = useState("");
   const [editPaid, setEditPaid] = useState("");
   const [editItems, setEditItems] = useState<PurchaseItem[]>([]);
   const openEdit = (req: PurchaseRequest) => {
     setEditReq(req);
     setEditDept(req.dept); setEditRequestedBy(req.requestedBy); setEditDate(req.date);
-    setEditSupplier(req.supplier || ""); setEditNote(req.note || ""); setEditPaid(String(req.paidAmount || 0));
+    setEditSupplier(req.supplier || ""); setEditSupplierId(req.supplierId ?? undefined); setEditNote(req.note || ""); setEditPaid(String(req.paidAmount || 0));
     setEditItems(req.items.map(it => ({ ...it })));
   };
   const closeEdit = () => setEditReq(null);
@@ -7851,7 +7849,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
     //    قيمة من الحقل — الحقل بات عرضاً فقط، وأي دفعة حقيقية لازم تمر عبر
     //    "تسديد" حتى يبقى مرتبطاً بسحب فعلي من الصندوق ──
     onEditPurchaseRequest?.(editReq.id, {
-      dept: editDept, requestedBy: editRequestedBy, date: editDate, supplier: editSupplier,
+      dept: editDept, requestedBy: editRequestedBy, date: editDate, supplier: editSupplier, supplierId: editSupplierId,
       note: editNote, paidAmount: editReq.paidAmount || 0, items: editItems,
     });
     toast(`✅ تم تحديث طلب الشراء #${editReq.id}`, "success");
@@ -8200,7 +8198,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
               <InputField label="التاريخ" value={editDate} onChange={setEditDate} />
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-[#555]">شركة المورد</label>
-                <select value={editSupplier} onChange={e => setEditSupplier(e.target.value)} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
+                <select value={editSupplier} onChange={e => { setEditSupplier(e.target.value); setEditSupplierId(suppliers.find(s => s.name === e.target.value)?.id); }} className="h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }}>
                   <option value="">— بدون شركة محددة —</option>
                   {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                 </select>
@@ -8604,7 +8602,7 @@ function FinChartsScreen({ drawers, debts, employees, invoices = [], sessions = 
 
 function numToAr(n: number): string { const ones = ["صفر", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"]; const tens = ["", "عشرة", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"]; if (n <= 0) return "صفر"; if (n < 20) return ones[n]; if (n < 100) { const t = Math.floor(n / 10), o = n % 10; return o === 0 ? tens[t] : `${ones[o]} و${tens[t]}`; } if (n < 1000) { const h = Math.floor(n / 100), r = n % 100; const hs = h === 1 ? "مئة" : h === 2 ? "مئتان" : `${ones[h]} مئة`; return r === 0 ? hs : `${hs} و${numToAr(r)}`; } if (n < 1000000) { const k = Math.floor(n / 1000), r = n % 1000; const ks = k === 1 ? "ألف" : k === 2 ? "ألفان" : k < 11 ? `${ones[k]} آلاف` : `${numToAr(k)} ألف`; return r === 0 ? ks : `${ks} و${numToAr(r)}`; } const m = Math.floor(n / 1000000), r = n % 1000000; const ms = m === 1 ? "مليون" : m === 2 ? "مليونان" : `${numToAr(m)} مليون`; return r === 0 ? ms : `${ms} و${numToAr(r)}`; }
 
-function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurances = [], customDepts = [], doDeposit, doWithdraw, suppliers = [], sessions = [], purchaseRequests = [], allPaymentVouchers = [], allReceiptVouchers = [], employeeAdvances = [], deptIdsFilter, onReverseDebtSettlementRv }: { drawers: Record<string, DrawerState>; loggedUser?: LoggedUser | null; employees?: Employee[]; insurances?: InsuranceCo[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; doDeposit?: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>; doWithdraw?: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>; suppliers?: { id: number; name: string; type: string; phone: string }[]; sessions?: PatientSession[]; purchaseRequests?: PurchaseRequest[]; allPaymentVouchers?: any[]; allReceiptVouchers?: any[]; employeeAdvances?: EmployeeAdvance[]; deptIdsFilter?: string[]; onReverseDebtSettlementRv?: (breakdown: SettlementBreakdown) => void }) {
+function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurances = [], customDepts = [], doDeposit, doWithdraw, suppliers = [], sessions = [], purchaseRequests = [], allPaymentVouchers = [], allReceiptVouchers = [], employeeAdvances = [], deptIdsFilter, onReverseDebtSettlementRv }: { drawers: Record<string, DrawerState>; loggedUser?: LoggedUser | null; employees?: Employee[]; insurances?: InsuranceCo[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; doDeposit?: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>; doWithdraw?: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>; suppliers?: Supplier[]; sessions?: PatientSession[]; purchaseRequests?: PurchaseRequest[]; allPaymentVouchers?: any[]; allReceiptVouchers?: any[]; employeeAdvances?: EmployeeAdvance[]; deptIdsFilter?: string[]; onReverseDebtSettlementRv?: (breakdown: SettlementBreakdown) => void }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [receiptVouchers, setReceiptVouchers] = useState<any[]>([]);
@@ -9084,15 +9082,17 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
 
 // ─── DEBTS ─────────────────────────────────────────────────────────────────────
 
-function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, customDepts = [], setReceiptVouchers, onSettleSessionsDebt }: { debts: DebtRow[]; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; drawers: Record<string, DrawerState>; doDeposit: (dept: string, amount: number, title: string, type: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>;
-  // ── ضروري لضمان أن تسديد الدين يُسجَّل كسند قبض حقيقي في جدول السندات، وليس
-  //    مجرد إيداع في الصندوق — بدونه لا يظهر التسديد بأي معادلة مالية موحّدة
-  //    بالنظام (لوحة التحكم، النظام المالي، إلخ) رغم أن رصيد الصندوق يتغيّر. ──
+function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, customDepts = [], setReceiptVouchers, onSettleSessionsDebt, setDebtPayments }: { debts: DebtRow[]; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>; drawers: Record<string, DrawerState>; doDeposit: (dept: string, amount: number, title: string, type: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>;
+  // ── لم تعد مستخدَمة هنا (تسديد الدين ما عاد يُنشئ سند قبض إطلاقاً بقرار
+  //    صريح) — أُبقيت اختيارية بالتوقيع تفادياً لكسر أي استدعاء قديم لهذا
+  //    المكوّن، بدون أي استخدام فعلي بالجسم. ──
   setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
   // ── بدونها يبقى "المدفوع" بملف المريض مجمَّداً رغم تسديد الدين من هنا —
   //    نفس خلل PatientFileScreen.handleDebtPayment المصلَّح سابقاً، موجود هنا
   //    أيضاً لأنها مسار تسديد مستقل تماماً (شاشة إدارة الديون العامة). ──
   onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => { sessionId: number; amount: number }[];
+  // ── لتسجيل الدفعة بسجل debt_payments المستقل (للعرض التاريخي بملف المريض) ──
+  setDebtPayments?: React.Dispatch<React.SetStateAction<any[]>>;
 }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [search, setSearch] = useState(""); const [deptFilter, setDeptFilter] = useState(""); const [ageFilter, setAgeFilter] = useState<"all" | "<30" | "30-90" | ">90">("all");
@@ -9148,6 +9148,14 @@ function DebtManagementScreen({ debts, setDebts, drawers, doDeposit, toast, cust
       if (onSettleSessionsDebt && settleModal.pid) onSettleSessionsDebt(settleModal.pid, deptId, paid);
       doDeposit(deptId, paid, `تسديد دين — ${settleModal.patient}`, "سداد دين");
       setDebts(p => p.map(d => { if (d.id !== settleModal.id) return d; const n = d.amount - paid; if (n <= 0) { api.finance.debts.delete(d.id); return null; } api.finance.debts.update(d.id, { amount: n }); return { ...d, amount: n }; }).filter(Boolean) as DebtRow[]);
+      // ── نسجّل الدفعة بسجل debt_payments المستقل (للعرض التاريخي بملف
+      //    المريض فقط — لا علاقة له بسندات القبض ولا بأي معادلة مالية) ──
+      if (settleModal.pid) {
+        const remainingAfter = Math.max(0, settleModal.amount - paid);
+        api.finance.debtPayments.create({ patient_id: settleModal.pid, patient_name: settleModal.patient, dept: deptId, amount: paid, date: _localISO(), remaining_after: remainingAfter, notes: "تسديد من شاشة إدارة الديون" }).then(r => {
+          if (r && setDebtPayments) setDebtPayments(prev => [{ ...(r as any), amount: Number((r as any).amount) }, ...prev]);
+        }).catch(() => { });
+      }
       toast(`تم تسجيل دفعة ${fmt(paid)} من ${settleModal.patient} ✓`);
     } catch {
       toast("تعذّر تسجيل السداد — حاول مجدداً", "error");
@@ -10882,7 +10890,7 @@ function PrintSettingsScreen({ toast }: { toast: (m: string, t?: any) => void })
 
 // ─── REPORTS ───────────────────────────────────────────────────────────────────
 
-function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [], insurances = [], purchaseRequests = [], suppliers = [], setInvoices, doDeposit, isAdmin = false, receiptVouchers: allReceiptVouchers = [], paymentVouchers: allPaymentVouchers = [], employeeAdvances = [] }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; insurances?: InsuranceCo[]; purchaseRequests?: PurchaseRequest[]; suppliers?: { id: number; name: string; type: string; phone: string }[];
+function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts = [], insurances = [], purchaseRequests = [], suppliers = [], setInvoices, doDeposit, isAdmin = false, receiptVouchers: allReceiptVouchers = [], paymentVouchers: allPaymentVouchers = [], employeeAdvances = [] }: { toast: (m: string, t?: any) => void; debts: DebtRow[]; sessions: PatientSession[]; drawers: Record<string, DrawerState>; invoices: Invoice[]; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; insurances?: InsuranceCo[]; purchaseRequests?: PurchaseRequest[]; suppliers?: Supplier[];
   // ── زر "سداد" جنب كل فاتورة تأمين — حصراً لحساب المدير (بطلب صريح)، لتسجيل
   //    دفعة (كاملة أو جزئية) تستلمها العيادة فعلياً من شركة التأمين. ──
   setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
@@ -10982,19 +10990,28 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   //    أبداً بشركات الموردين أو أي جهة أخرى؛ مع إبقاء أي اسم شركة قديم على فاتورة
   //    محذوفة من دليل التأمين (حالة نادرة) لعدم إخفاء بيانات تاريخية. ──
   const [p2Company, setP2Company] = useState(""); const [p2Status, setP2Status] = useState("all");
+  // ── مقارنة الأسماء بعد تطبيع المسافات، لأن اسم الشركة ممكن يُحفظ بمسافة
+  //    زائدة بالبداية/النهاية من شاشة الإعدادات، فيصير عندنا "توأم" غير
+  //    مرئي بالقائمة بيطابق صفر نتائج رغم إنه نفس الاسم بالشكل ──
+  const normName = (s: string) => (s || "").trim().replace(/\s+/g, " ");
+  // ── الآن نطابق أولاً عبر company_id/supplier_id الحقيقي (يحل مشكلة المطابقة
+  //    الصامتة نهائياً للبيانات الجديدة)، ونستخدم مطابقة الاسم المطبَّع كخيار
+  //    احتياطي فقط للسجلات القديمة السابقة لهذا الربط والتي لا تحمل معرّفاً ──
+  const p2CompanyId = insurances.find(c => c.name === p2Company)?.id;
   const insuranceCompanyNames = insurances.map(c => c.name);
-  const orphanInvoiceCompanies = [...new Set(invoices.map(i => i.company))].filter(c => !insuranceCompanyNames.includes(c));
+  const orphanInvoiceCompanies = [...new Set(invoices.map(i => i.company))].filter(c => !insuranceCompanyNames.some(n => normName(n) === normName(c)));
   const companies = [...insuranceCompanyNames, ...orphanInvoiceCompanies];
-  const compInvoices = invoices.filter(i => inRange(i.date) && (!p2Company || i.company === p2Company) && (p2Status === "all" || (p2Status === "paid" && i.status === "paid") || (p2Status === "unpaid" && i.status !== "paid")));
+  const compInvoices = invoices.filter(i => inRange(i.date) && (!p2Company || (p2CompanyId != null && i.companyId === p2CompanyId) || normName(i.company) === normName(p2Company)) && (p2Status === "all" || (p2Status === "paid" && i.status === "paid") || (p2Status === "unpaid" && i.status !== "paid")));
   const compTotal = compInvoices.reduce((s, i) => s + i.total, 0); const compPaid = compInvoices.reduce((s, i) => s + i.paid, 0);
   // ── Tab 6 — كشوفات شركات الموردين: قائمة الشركات تُبنى من دليل الموردين
   //    الحقيقي (suppliers) — منفصل تماماً عن شركات التأمين — وتفلتر طلبات
   //    الشراء المرتبطة بالشركة المحددة بغض النظر عن القسم أو الحالة. ──
   const [p6Supplier, setP6Supplier] = useState(""); const [p6Status, setP6Status] = useState("all");
+  const p6SupplierId = suppliers.find(s => s.name === p6Supplier)?.id;
   const supplierNames = suppliers.map(s => s.name);
-  const orphanSupplierNames = [...new Set(purchaseRequests.map(r => r.supplier).filter(Boolean))].filter((s): s is string => !supplierNames.includes(s as string));
+  const orphanSupplierNames = [...new Set(purchaseRequests.map(r => r.supplier).filter(Boolean))].filter((s): s is string => !supplierNames.some(n => normName(n) === normName(s as string)));
   const supplierOptions = [...supplierNames, ...orphanSupplierNames];
-  const supplierReqs = purchaseRequests.filter(r => inRange(r.date) && (!p6Supplier || r.supplier === p6Supplier) && (p6Status === "all" || r.status === p6Status));
+  const supplierReqs = purchaseRequests.filter(r => inRange(r.date) && (!p6Supplier || (p6SupplierId != null && r.supplierId === p6SupplierId) || normName(r.supplier) === normName(p6Supplier)) && (p6Status === "all" || r.status === p6Status));
   const supplierTotal = supplierReqs.reduce((s, r) => s + r.totalAmount, 0); const supplierPaid = supplierReqs.reduce((s, r) => s + (r.paidAmount || 0), 0);
   // ── Tab 4
   const [p4Dept, setP4Dept] = useState("all");
@@ -11096,7 +11113,7 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
   //    التأمين الفعلية (invoices) وليس فقط علم "مؤمَّن" العام على المريض — يُعاد
   //    استخدام فلتر الشركة (p2Company) نفسه من أعلى التبويب، مع فلتر قسم خاص به. ──
   const [p3Dept, setP3Dept] = useState("");
-  const p3Invoices = invoices.filter(i => inRange(i.date) && (!p2Company || i.company === p2Company) && (!p3Dept || i.dept === p3Dept));
+  const p3Invoices = invoices.filter(i => inRange(i.date) && (!p2Company || (p2CompanyId != null && i.companyId === p2CompanyId) || normName(i.company) === normName(p2Company)) && (!p3Dept || i.dept === p3Dept));
   const p3PatientIds = [...new Set(p3Invoices.map(i => i.patientId).filter(Boolean))] as string[];
   const p3PatientRows = p3PatientIds.map(pid => {
     const invs = p3Invoices.filter(i => i.patientId === pid);
@@ -11690,7 +11707,7 @@ function AdminProfileCard({ adminAccounts, setAdminAccounts, loggedUser, setLogg
   );
 }
 
-function GeneralSettingsScreen({ toast, insurances, setInsurances, adminAccounts = [], setAdminAccounts, sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, loggedUser, setLoggedUser, suppliers: suppliersP = [], setSuppliers: setSuppliersProp, restrictedMode = false }: { toast: (m: string, t?: any) => void; insurances: InsuranceCo[]; setInsurances: React.Dispatch<React.SetStateAction<InsuranceCo[]>>; adminAccounts?: AdminAccount[]; setAdminAccounts?: React.Dispatch<React.SetStateAction<AdminAccount[]>>; sidebarSettings?: SidebarSettings; setSidebarSettings?: React.Dispatch<React.SetStateAction<SidebarSettings>>; loggedUser?: LoggedUser | null; setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>; suppliers?: { id: number; name: string; type: string; phone: string }[]; setSuppliers?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>>;
+function GeneralSettingsScreen({ toast, insurances, setInsurances, adminAccounts = [], setAdminAccounts, sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, loggedUser, setLoggedUser, suppliers: suppliersP = [], setSuppliers: setSuppliersProp, restrictedMode = false }: { toast: (m: string, t?: any) => void; insurances: InsuranceCo[]; setInsurances: React.Dispatch<React.SetStateAction<InsuranceCo[]>>; adminAccounts?: AdminAccount[]; setAdminAccounts?: React.Dispatch<React.SetStateAction<AdminAccount[]>>; sidebarSettings?: SidebarSettings; setSidebarSettings?: React.Dispatch<React.SetStateAction<SidebarSettings>>; loggedUser?: LoggedUser | null; setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>; suppliers?: Supplier[]; setSuppliers?: React.Dispatch<React.SetStateAction<Supplier[]>>;
   // ── restrictedMode: staff member granted "الوصول للإعدادات" — never the real
   //    admin. Hides "حسابات المدراء" (admin login credentials for the whole
   //    system) since that must stay exclusive to actual system admins. ──
@@ -11707,15 +11724,15 @@ function GeneralSettingsScreen({ toast, insurances, setInsurances, adminAccounts
   const openInsEdit = (c: InsuranceCo) => { setInsName(c.name); setInsPhone(c.phone); setInsDiscClinic(String(c.discountClinic || 0)); setInsDiscLab(String(c.discountLab || 0)); setInsDiscRad(String(c.discountRad || 0)); setInsModal(c); };
   const saveIns = () => {
     if (!insName.trim()) { toast("أدخل اسم الشركة", "error"); return; }
+    const insNameT = insName.trim().replace(/\s+/g, " ");
     const dc = parseFloat(insDiscClinic) || 0; const dl = parseFloat(insDiscLab) || 0; const dr = parseFloat(insDiscRad) || 0;
-    if (insModal === "new") { const _insId = Date.now(); setInsurances(p => [...p, { id: _insId, name: insName, phone: insPhone, discountClinic: dc, discountLab: dl, discountRad: dr }]); api.settings.insurance.create({ name: insName, phone: insPhone, discount_clinic: dc, discount_lab: dl, discount_rad: dr }).then(r => { if (r && (r as any).id) setInsurances(p => p.map(a => a.id === _insId ? { ...a, id: (r as any).id } : a)); }).catch(() => { }); toast("تمت إضافة شركة التأمين", "success"); }
-    else if (insModal) { setInsurances(p => p.map(c => c.id === (insModal as InsuranceCo).id ? { ...c, name: insName, phone: insPhone, discountClinic: dc, discountLab: dl, discountRad: dr } : c)); api.settings.insurance.update((insModal as InsuranceCo).id, { name: insName, phone: insPhone, discount_clinic: dc, discount_lab: dl, discount_rad: dr }); toast("تم تعديل الشركة", "success"); }
+    if (insModal === "new") { const _insId = Date.now(); setInsurances(p => [...p, { id: _insId, name: insNameT, phone: insPhone, discountClinic: dc, discountLab: dl, discountRad: dr }]); api.settings.insurance.create({ name: insNameT, phone: insPhone, discount_clinic: dc, discount_lab: dl, discount_rad: dr }).then(r => { if (r && (r as any).id) setInsurances(p => p.map(a => a.id === _insId ? { ...a, id: (r as any).id } : a)); }).catch(() => { }); toast("تمت إضافة شركة التأمين", "success"); }
+    else if (insModal) { setInsurances(p => p.map(c => c.id === (insModal as InsuranceCo).id ? { ...c, name: insNameT, phone: insPhone, discountClinic: dc, discountLab: dl, discountRad: dr } : c)); api.settings.insurance.update((insModal as InsuranceCo).id, { name: insNameT, phone: insPhone, discount_clinic: dc, discount_lab: dl, discount_rad: dr }); toast("تم تعديل الشركة", "success"); }
     setInsModal(null);
   };
   const delIns = (id: number) => { setInsurances(p => p.filter(c => c.id !== id)); api.settings.insurance.delete(id); toast("تم حذف الشركة", "warning"); };
 
   // ── شركات الموردين ──
-  type Supplier = { id: number; name: string; type: string; phone: string };
   const [_localSuppliers, _setLocalSuppliers] = useState<Supplier[]>([]);
   const suppliers: Supplier[] = suppliersP.length > 0 ? suppliersP : _localSuppliers;
   const setSuppliers = (fn: React.SetStateAction<Supplier[]>) => { _setLocalSuppliers(fn); if (setSuppliersProp) setSuppliersProp(fn as any); };
@@ -11725,14 +11742,15 @@ function GeneralSettingsScreen({ toast, insurances, setInsurances, adminAccounts
   const openSupEdit = (s: Supplier) => { setSupName(s.name); setSupType(s.type); setSupPhone(s.phone); setSupModal(s); };
   const saveSup = () => {
     if (!supName.trim()) { toast("أدخل اسم المورد", "error"); return; }
+    const supNameT = supName.trim().replace(/\s+/g, " ");
     if (supModal === "new") {
       const _supId = Date.now();
-      setSuppliers(p => [...p, { id: _supId, name: supName, type: supType, phone: supPhone }]);
-      api.suppliers.create({ name: supName, type: supType, phone: supPhone }).then(r => { if (r && (r as any).id) setSuppliers(p => p.map(s => s.id === _supId ? { ...s, id: (r as any).id } : s)); }).catch(() => { });
+      setSuppliers(p => [...p, { id: _supId, name: supNameT, type: supType, phone: supPhone }]);
+      api.suppliers.create({ name: supNameT, type: supType, phone: supPhone }).then(r => { if (r && (r as any).id) setSuppliers(p => p.map(s => s.id === _supId ? { ...s, id: (r as any).id } : s)); }).catch(() => { });
       toast("تمت إضافة المورد", "success");
     } else if (supModal) {
-      api.suppliers.update((supModal as Supplier).id, { name: supName, type: supType, phone: supPhone }).catch(() => { });
-      setSuppliers(p => p.map(s => s.id === (supModal as Supplier).id ? { ...s, name: supName, type: supType, phone: supPhone } : s));
+      api.suppliers.update((supModal as Supplier).id, { name: supNameT, type: supType, phone: supPhone }).catch(() => { });
+      setSuppliers(p => p.map(s => s.id === (supModal as Supplier).id ? { ...s, name: supNameT, type: supType, phone: supPhone } : s));
       toast("تم تعديل المورد", "success");
     }
     setSupModal(null);
@@ -13619,7 +13637,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
 
 function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles,
   setStaffList, setCustomDepts, onAddDeptDrawer, setEmployees, setInsurances, adminAccounts = [], setAdminAccounts,
-  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers, setInventory, computeKitStatus, onEditSession, onSettleSessionsDebt, onReverseDebtSettlementRv }: {
+  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers, setInventory, computeKitStatus, onEditSession, onSettleSessionsDebt, onReverseDebtSettlementRv, debtPaymentsLog = [], setDebtPayments }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -13663,7 +13681,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   insurances?: InsuranceCo[];
   rehabServices?: RehabServiceItem[];
   setRehabServices?: React.Dispatch<React.SetStateAction<RehabServiceItem[]>>;
-  suppliersRoot?: { id: number; name: string; type: string; phone: string }[];
+  suppliersRoot?: Supplier[];
   hiddenSections?: string[];
   broadcastNotice?: string | null;
   labTests?: LabTest[];
@@ -13684,11 +13702,13 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   sidebarSettings?: SidebarSettings;
   setSidebarSettings?: React.Dispatch<React.SetStateAction<SidebarSettings>>;
   setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>;
-  setSuppliersRoot?: React.Dispatch<React.SetStateAction<{ id: number; name: string; type: string; phone: string }[]>>;
+  setSuppliersRoot?: React.Dispatch<React.SetStateAction<Supplier[]>>;
   setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>;
   onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void;
   onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => { sessionId: number; amount: number }[];
   onReverseDebtSettlementRv?: (breakdown: SettlementBreakdown) => void;
+  debtPaymentsLog?: any[];
+  setDebtPayments?: React.Dispatch<React.SetStateAction<any[]>>;
 }) {
 
   const customDeptsAsDepts = customDepts.map(d => ({ ...d, Icon: Building2 as React.ElementType }));
@@ -14235,7 +14255,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />
               )}
               {subScreen === "patient-file" && activeDept && (
-                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} receiptVouchers={allReceiptVouchers} perms={deptPerms ?? undefined} insurances={insurances} />
+                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} receiptVouchers={allReceiptVouchers} perms={deptPerms ?? undefined} insurances={insurances} debtPaymentsLog={debtPaymentsLog} setDebtPayments={setDebtPayments} />
               )}
 
               {subScreen === "purchase-reqs" && activeDept && (
@@ -14327,7 +14347,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 // تصحيح: debts.dept مربوط بقيد foreign key على departments.id
                 // (الرمز الإنجليزي) — نقارن بكلا الشكلين احتياطاً لأي سجل قديم
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
-                return <DebtManagementScreen debts={debts.filter(d => d.dept === activeDept || d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} setReceiptVouchers={setReceiptVouchers} onSettleSessionsDebt={onSettleSessionsDebt} />;
+                return <DebtManagementScreen debts={debts.filter(d => d.dept === activeDept || d.dept === deptShort)} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={staffToast} customDepts={customDepts as any} setReceiptVouchers={setReceiptVouchers} onSettleSessionsDebt={onSettleSessionsDebt} setDebtPayments={setDebtPayments} />;
               })()}
               {subScreen === "dept-revenue" && activeDept && (() => {
                 const deptShort = DEPARTMENTS.find(d => d.id === activeDept)?.short || customDepts.find(d => d.id === activeDept)?.short || activeDept;
@@ -14363,7 +14383,7 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
   dept: string; deptName: string; drawers: Record<string, DrawerState>;
   doDeposit: (dept: string, amt: number, title: string, cat: string) => Promise<number | null>;
   doWithdraw: (dept: string, amt: number, title: string, cat: string, ben?: string) => Promise<number | null>;
-  employees?: Employee[]; insurances?: InsuranceCo[]; suppliers?: { id: number; name: string; type: string; phone: string }[];
+  employees?: Employee[]; insurances?: InsuranceCo[]; suppliers?: Supplier[];
   toast: (m: string, t?: ToastItem["type"]) => void;
   loggedUser?: LoggedUser | null;
   perms?: DeptPermissions;
@@ -16510,7 +16530,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false); const [alertVisible, setAlertVisible] = useState(true); const [route, setRoute] = useState<Route>({ screen: "dashboard" });
   const [drawers, setDrawers] = useState(initialDrawers); const [invoices, setInvoices] = useState<Invoice[]>(initialInvoices); const [debts, setDebts] = useState<DebtRow[]>(initialDebts); const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
   const [insurances, setInsurances] = useState<InsuranceCo[]>([]);
-  const [suppliersRoot, setSuppliersRoot] = useState<{ id: number; name: string; type: string; phone: string }[]>([]);
+  const [suppliersRoot, setSuppliersRoot] = useState<Supplier[]>([]);
   const [sessions, setSessions] = useState<PatientSession[]>(initialSessions); const [diagnoses, setDiagnoses] = useState<DiagnosisEntry[]>(initialDiagnoses);
   const [drugs, setDrugs] = useState<string[]>(INITIAL_MEDICATIONS);
   const [rehabPlans, setRehabPlans] = useState<RehabPlan[]>([]);
@@ -16602,6 +16622,9 @@ export default function App() {
   const [externalDebts, setExternalDebts] = useState<ExternalDebt[]>([]);
   const [receiptVouchersGlobal, setReceiptVouchersGlobal] = useState<any[]>([]);
   const [paymentVouchersGlobal, setPaymentVouchersGlobal] = useState<any[]>([]);
+  // ── سجل دفعات تسديد الديون — مستقل عن سندات القبض (انظر تعليق debt_payments
+  //    بـ server.js). يُعرض فقط بملف المريض، ولا يدخل بأي معادلة مالية. ──
+  const [debtPaymentsGlobal, setDebtPaymentsGlobal] = useState<any[]>([]);
   const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([{ id: 1, username: "admin", password: "1234", displayName: "مدير النظام" }]);
   const [sidebarSettings, setSidebarSettings] = useState<SidebarSettings>({ hiddenSections: [], hideRevenueFromStaff: false, deptCapacity: {} });
   useEffect(() => {
@@ -16616,7 +16639,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     const _doLoad = async () => {
-      const [dbDrawers, dbPatients, dbStaff, dbEmployees, dbAdvances, dbExternalDebts, dbInsurances, dbCustomDepts, dbAdminAccounts, dbDebts, dbEmployeeAdvances, dbLabTests, dbInventory, dbRadImages, dbSessions, dbInvoices, dbAttendance, dbPurchaseRequests, dbDiagnoses, dbSurgeryInv, dbSuppliers, dbRehabServices, dbRehabPlans, dbRehabQueue, dbReminders, dbBroadcast, dbReceiptVouchers, dbPaymentVouchers, dbDeleteRequests] = await Promise.all([
+      const [dbDrawers, dbPatients, dbStaff, dbEmployees, dbAdvances, dbExternalDebts, dbInsurances, dbCustomDepts, dbAdminAccounts, dbDebts, dbEmployeeAdvances, dbLabTests, dbInventory, dbRadImages, dbSessions, dbInvoices, dbAttendance, dbPurchaseRequests, dbDiagnoses, dbSurgeryInv, dbSuppliers, dbRehabServices, dbRehabPlans, dbRehabQueue, dbReminders, dbBroadcast, dbReceiptVouchers, dbPaymentVouchers, dbDeleteRequests, dbDebtPayments] = await Promise.all([
         api.drawers.getAll(),
         api.patients.getAll(),
         api.staff.getAll(),
@@ -16646,6 +16669,7 @@ export default function App() {
         api.finance.receiptVouchers.getAll(),
         api.finance.paymentVouchers.getAll(),
         api.patients.deleteRequests.getAll(),
+        api.finance.debtPayments.getAll(),
       ]);
       console.log('[DB LOAD] Raw API results:', {
         drawers: (dbDrawers as any[])?.length, patients: (dbPatients as any[])?.length,
@@ -16792,13 +16816,13 @@ export default function App() {
         setSessions((dbSessions as any[]).map((s: any) => ({ id: s.id, patientId: s.patient_id || "", dept: s.dept || "lab", doctor: s.doctor || "", date: isoToDisplay(s.date ? String(s.date).slice(0, 10) : ""), diagnoses: Array.isArray(s.diagnoses) ? s.diagnoses.filter(Boolean) : [], medications: Array.isArray(s.medications) ? s.medications.filter((m: any) => m && m.name) : [], notes: s.notes || "", labRefs: Array.isArray(s.lab_refs) ? s.lab_refs.filter(Boolean) : [], radRefs: Array.isArray(s.rad_refs) ? s.rad_refs.filter(Boolean) : [], amount: Number(s.amount) || 0, paid: Number(s.paid) || 0, debt: Number(s.debt) || 0 })));
       }
       if (dbInvoices && (dbInvoices as any[]).length > 0) {
-        setInvoices((dbInvoices as any[]).map((inv: any) => ({ id: inv.id, company: inv.company || "", date: isoToDisplay(inv.date ? String(inv.date).slice(0, 10) : ""), total: Number(inv.total) || 0, paid: Number(inv.paid) || 0, remaining: Number(inv.remaining) || 0, status: (inv.status || "unpaid") as "paid" | "partial" | "unpaid", dept: inv.dept || "lab", claimNo: inv.claim_no || undefined, patientId: inv.patient_id || undefined, patientName: inv.patient_name || undefined })));
+        setInvoices((dbInvoices as any[]).map((inv: any) => ({ id: inv.id, company: inv.company || "", companyId: inv.company_id ?? undefined, date: isoToDisplay(inv.date ? String(inv.date).slice(0, 10) : ""), total: Number(inv.total) || 0, paid: Number(inv.paid) || 0, remaining: Number(inv.remaining) || 0, status: (inv.status || "unpaid") as "paid" | "partial" | "unpaid", dept: inv.dept || "lab", claimNo: inv.claim_no || undefined, patientId: inv.patient_id || undefined, patientName: inv.patient_name || undefined })));
       }
       if (dbAttendance && (dbAttendance as any[]).length > 0) {
         setAttendance((dbAttendance as any[]).map((r: any) => ({ id: r.id, empId: r.emp_id || "", empName: r.emp_name || "", dept: r.dept || "", date: r.date ? String(r.date).slice(0, 10) : "", dayName: r.day_name || "", checkIn: r.check_in ? String(r.check_in).slice(0, 5) : "", checkOut: r.check_out ? String(r.check_out).slice(0, 5) : "", totalHours: r.total_hours != null ? Number(r.total_hours) : undefined })));
       }
       if (dbPurchaseRequests && (dbPurchaseRequests as any[]).length > 0) {
-        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [], discountAmount: Number(r.discount_amount) || 0 })));
+        setPurchaseRequests((dbPurchaseRequests as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, supplierId: r.supplier_id ?? undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [], discountAmount: Number(r.discount_amount) || 0 })));
       }
       if (dbDiagnoses && (dbDiagnoses as any[]).length > 0) {
         setDiagnoses((dbDiagnoses as any[]).map((d: any) => ({ id: d.id, code: d.code || "", name: d.name || "", category: d.category || "أخرى", dept: d.dept || "surgery" })));
@@ -16824,6 +16848,7 @@ export default function App() {
       if (dbBroadcast !== null) { setBroadcastNotice((dbBroadcast as any).message ? String((dbBroadcast as any).message) : null); }
       if (dbReceiptVouchers && Array.isArray(dbReceiptVouchers)) { setReceiptVouchersGlobal((dbReceiptVouchers as any[]).map((v: any) => ({ ...v, amount: Number(v.amount) }))); }
       if (dbPaymentVouchers && Array.isArray(dbPaymentVouchers)) { setPaymentVouchersGlobal((dbPaymentVouchers as any[]).map((v: any) => ({ ...v, amount: Number(v.amount) }))); }
+      if (dbDebtPayments && Array.isArray(dbDebtPayments)) { setDebtPaymentsGlobal((dbDebtPayments as any[]).map((v: any) => ({ ...v, amount: Number(v.amount), remaining_after: v.remaining_after != null ? Number(v.remaining_after) : null }))); }
       console.log('[DB LOAD] All state updates applied. Setting dbLoaded=true');
       setDbLoaded(true);
     };
@@ -16967,7 +16992,7 @@ export default function App() {
     //    الباك إند بيقرأها هيك — إرسالها بـ camelCase (estimatedPrice) كان
     //    بيخلي كل صنف يُحفَظ بسعر تقديري = صفر رغم إدخال المستخدم لسعر حقيقي ──
     const itemsForDb = (req.items || []).map(it => ({ name: it.name, qty: it.qty, unit: it.unit, estimated_price: it.estimatedPrice, note: it.note }));
-    api.finance.purchaseRequests.create({ dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), items: itemsForDb, total_amount: req.totalAmount, paid_amount: req.paidAmount || 0, note: req.note, supplier: req.supplier || null }).then(r => { if (r && (r as any).id) setPurchaseRequests(p => p.map(x => x.id === _prId ? { ...x, id: (r as any).id } : x)); }).catch(() => { });
+    api.finance.purchaseRequests.create({ dept: req.dept, requested_by: req.requestedBy, date: _prDateISO(req.date), items: itemsForDb, total_amount: req.totalAmount, paid_amount: req.paidAmount || 0, note: req.note, supplier: req.supplier || null, supplier_id: req.supplierId ?? null }).then(r => { if (r && (r as any).id) setPurchaseRequests(p => p.map(x => x.id === _prId ? { ...x, id: (r as any).id } : x)); }).catch(() => { });
   };
   // ── لحظة الموافقة، المدير بيقدر يحدد: (1) خصم تحفيزي حصل عليه من الشركة
   //    المورّدة فينخصم من الإجمالي الكلي للطلب، و(2) قديه بده يسدد الآن فعلياً
@@ -16997,7 +17022,7 @@ export default function App() {
         }
         let voucherId: number | null = null;
         try {
-          const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: paidNow, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "مشتريات مُعتمدة", notes: note, drawer_tx_id: txId || null, settlement_breakdown: { purchaseRequest: { requestId: id, amount: paidNow } } as SettlementBreakdown });
+          const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: paidNow, paid_to_type: "supplier", paid_to_id: req.supplierId ?? null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "مشتريات مُعتمدة", notes: note, drawer_tx_id: txId || null, settlement_breakdown: { purchaseRequest: { requestId: id, amount: paidNow } } as SettlementBreakdown });
           if (rv && (rv as any).id) { voucherId = (rv as any).id; setPaymentVouchersGlobal(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]); }
         } catch { /* نكمل حتى لو فشل إنشاء سند الصرف */ }
         const r = await api.finance.purchaseRequests.payments.create(id, { amount: paidNow, note, drawer_tx_id: txId || null, payment_voucher_id: voucherId });
@@ -17027,7 +17052,7 @@ export default function App() {
   // ── تعديل كامل لطلب شراء (المدير فقط) — يشمل الأصناف؛ يُقارن مع النسخة
   //    الأصلية لتحديد أي صنف يُحذف/يُحدَّث/يُضاف عبر الـ API بدل حذف وإعادة
   //    إنشاء الطلب كله ──
-  const onEditPurchaseRequest = (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; note: string; paidAmount: number; items: PurchaseItem[] }) => {
+  const onEditPurchaseRequest = (id: number, updated: { dept: string; requestedBy: string; date: string; supplier: string; supplierId?: number; note: string; paidAmount: number; items: PurchaseItem[] }) => {
     const orig = purchaseRequests.find(r => r.id === id); if (!orig) return;
     const totalAmount = updated.items.reduce((s, it) => s + (it.qty || 0) * (it.estimatedPrice || 0), 0);
     // ── حماية إضافية: هذا المسار (تعديل عام لطلب شراء) ما لازم يُستخدم أبداً
@@ -17037,8 +17062,8 @@ export default function App() {
     //    (من أي مصدر مستقبلي)، نتجاهله ونُبقي المبلغ الأصلي — لمنع تضخّم
     //    "المصروفات" بمعادلة الربح الموحّدة دون أي نقص حقيقي مقابل من الصندوق. ──
     const safePaidAmount = orig.paidAmount || 0;
-    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, dept: updated.dept, requestedBy: updated.requestedBy, date: updated.date, supplier: updated.supplier, note: updated.note, paidAmount: safePaidAmount, totalAmount, items: updated.items } : r));
-    api.finance.purchaseRequests.update(id, { dept: updated.dept, requested_by: updated.requestedBy, date: _prDateISO(updated.date), total_amount: totalAmount, paid_amount: safePaidAmount, note: updated.note, supplier: updated.supplier || null }).catch(() => { });
+    setPurchaseRequests(p => p.map(r => r.id === id ? { ...r, dept: updated.dept, requestedBy: updated.requestedBy, date: updated.date, supplier: updated.supplier, supplierId: updated.supplierId, note: updated.note, paidAmount: safePaidAmount, totalAmount, items: updated.items } : r));
+    api.finance.purchaseRequests.update(id, { dept: updated.dept, requested_by: updated.requestedBy, date: _prDateISO(updated.date), total_amount: totalAmount, paid_amount: safePaidAmount, note: updated.note, supplier: updated.supplier || null, supplier_id: updated.supplierId ?? null }).catch(() => { });
     const origIds = new Set(orig.items.map(it => it.id));
     const keptIds = new Set(updated.items.map(it => it.id));
     orig.items.forEach(it => { if (!keptIds.has(it.id)) api.finance.purchaseRequests.items.delete(it.id).catch(() => { }); });
@@ -17072,7 +17097,7 @@ export default function App() {
       const txId = await doWithdraw(req.dept, amt, note, "دفعة مورد");
       let voucherId: number | null = null;
       try {
-        const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: amt, paid_to_type: "supplier", paid_to_id: null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "دفعة مورد", notes: note, drawer_tx_id: txId || null, settlement_breakdown: { purchaseRequest: { requestId: id, amount: amt } } as SettlementBreakdown });
+        const rv = await api.finance.paymentVouchers.create({ date: _localISO(), amount: amt, paid_to_type: "supplier", paid_to_id: req.supplierId ?? null, paid_to_name: req.supplier || "مورد", reason: note, dept: req.dept, category: "دفعة مورد", notes: note, drawer_tx_id: txId || null, settlement_breakdown: { purchaseRequest: { requestId: id, amount: amt } } as SettlementBreakdown });
         if (rv && (rv as any).id) { voucherId = (rv as any).id; setPaymentVouchersGlobal(p => [{ ...(rv as any), amount: Number((rv as any).amount) }, ...p]); }
       } catch { /* نكمل حتى لو فشل إنشاء سند الصرف */ }
       const r = await api.finance.purchaseRequests.payments.create(id, { amount: amt, note, drawer_tx_id: txId || null, payment_voucher_id: voucherId });
@@ -17233,7 +17258,7 @@ export default function App() {
     if (route.screen === "fin-purchase-reqs" && loggedUser?.type === "admin") {
       api.finance.purchaseRequests.getAll().then(data => {
         if (data && Array.isArray(data)) {
-          setPurchaseRequests((data as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [], discountAmount: Number(r.discount_amount) || 0 })));
+          setPurchaseRequests((data as any[]).map((r: any) => ({ id: r.id, dept: r.dept || "", requestedBy: r.requested_by || "", date: r.date ? String(r.date).slice(0, 10) : "", items: Array.isArray(r.items) ? r.items.map((it: any, idx: number) => ({ id: it.id ?? idx + 1, name: it.name || "", qty: Number(it.qty) || 1, unit: it.unit || "", estimatedPrice: Number(it.estimated_price) || 0, note: it.note || "" })) : [], totalAmount: Number(r.total_amount) || 0, paidAmount: Number(r.paid_amount) || 0, status: (r.status || "pending") as "pending" | "approved" | "rejected", note: r.note || "", approvedBy: r.approved_by || "", approvedDate: r.approved_date ? String(r.approved_date).slice(0, 10) : "", rejectionReason: r.rejection_reason || "", supplier: r.supplier || undefined, supplierId: r.supplier_id ?? undefined, drawerTxId: r.drawer_tx_id != null ? Number(r.drawer_tx_id) : undefined, payments: Array.isArray(r.payments) ? r.payments.map((p: any) => ({ id: p.id, requestId: p.request_id, amount: Number(p.amount) || 0, note: p.note || "", date: p.created_at || "" })) : [], discountAmount: Number(r.discount_amount) || 0 })));
         }
       }).catch(() => { });
     }
@@ -17300,6 +17325,8 @@ export default function App() {
       onEditSession={onEditSession}
       onSettleSessionsDebt={onSettleSessionsDebt}
       onReverseDebtSettlementRv={reverseSettlementBreakdown}
+      debtPaymentsLog={debtPaymentsGlobal}
+      setDebtPayments={setDebtPaymentsGlobal}
       purchaseRequests={purchaseRequests}
       onSubmitPurchaseRequest={onSubmitPurchaseRequest}
       onApprovePurchaseRequest={onApprovePurchaseRequest}
@@ -17358,7 +17385,7 @@ export default function App() {
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} insurances={insurances} />;
       case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} setRehabPlans={setRehabPlans} setRehabQueueEntries={setRehabQueueEntries} />;
       case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />;
-      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} receiptVouchers={receiptVouchersGlobal} insurances={insurances} invoices={invoices} />;
+      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} receiptVouchers={receiptVouchersGlobal} insurances={insurances} invoices={invoices} debtPaymentsLog={debtPaymentsGlobal} setDebtPayments={setDebtPaymentsGlobal} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" suppliers={suppliersRoot} />;
       case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} sessions={sessions} setSessions={setSessions} />;
@@ -17386,7 +17413,7 @@ export default function App() {
       case "dept-vouchers": return route.dept ? <DeptVouchersScreen dept={route.dept} deptName={[...DEPARTMENTS, ...customDepts].find((d: any) => d.id === route.dept)?.name || route.dept} drawers={drawers} doDeposit={doDeposit} doWithdraw={doWithdraw} employees={employees} insurances={insurances} suppliers={suppliersRoot} toast={toast} loggedUser={loggedUser} onReverseDebtSettlementRv={reverseSettlementBreakdown} /> : null;
       case "dept-profit": return <FinProfitScreen drawers={drawers} employees={employees} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={sessions} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} invoices={invoices} externalDebts={externalDebts} debts={debts} />;
       {/* تصحيح: debts.dept مربوط بقيد foreign key على departments.id (الرمز الإنجليزي) — نقارن بكلا الشكلين (route.dept الخام + dsh الاسم العربي) احتياطاً لأي سجل قديم */}
-      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={route.dept ? debts.filter(d => d.dept === route.dept || d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />; }
+      case "dept-debts": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; return <DebtManagementScreen debts={route.dept ? debts.filter(d => d.dept === route.dept || d.dept === dsh) : debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} setDebtPayments={setDebtPaymentsGlobal} />; }
       case "dept-revenue": { const dsh = route.dept ? (DEPARTMENTS.find(d => d.id === route.dept)?.short || customDepts.find(d => d.id === route.dept)?.short || route.dept) : null; const rdw = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const rdb = route.dept ? debts.filter(d => d.dept === route.dept || d.dept === dsh) : debts; const deptSessions = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRV = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; return <FinRevenueScreen drawers={rdw} debts={rdb} customDepts={customDepts} toast={toast} sessions={deptSessions} receiptVouchers={deptRV} />; }
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
@@ -17394,7 +17421,7 @@ export default function App() {
       case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} setPaymentVouchers={setPaymentVouchersGlobal} attendance={attendance} />; }
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
-      case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} />;
+      case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} setDebtPayments={setDebtPaymentsGlobal} />;
       case "fin-statements": return <ReportsScreen toast={toast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} setInvoices={setInvoices} doDeposit={doDeposit} setReceiptVouchers={setReceiptVouchersGlobal} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} isAdmin />;
       case "attendance": return <AttendanceScreen key={dept || "surgery"} dept={dept || "lab"} attendance={attendance} setAttendance={setAttendance} loggedUser={loggedUser} staffList={staffList} toast={toast} customDepts={customDepts} />;
       case "backup": return <BackupScreen toast={toast} />;

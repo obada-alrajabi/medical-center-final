@@ -264,6 +264,11 @@ export const api = {
       update: (id: number, v: unknown) => put<unknown>(`/finance/payment-vouchers/${id}`, v),
       delete: (id: number) => del<unknown>(`/finance/payment-vouchers/${id}`),
     },
+    debtPayments: {
+      getAll: (patientId?: string) => get<unknown[]>(`/finance/debt-payments${patientId ? `?patient_id=${encodeURIComponent(patientId)}` : ""}`),
+      create: (v: unknown) => post<unknown>("/finance/debt-payments", v),
+      delete: (id: number) => del<unknown>(`/finance/debt-payments/${id}`),
+    },
   },
 
   staff: {
