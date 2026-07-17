@@ -8717,8 +8717,18 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
   const savePv = async () => {
     if (!pvModal.f.amount || !pvModal.f.reason.trim()) { fireToast("أكمل الحقول الإلزامية: المبلغ، السبب", "error"); return; }
     const empName = (loggedUser?.type === "staff" ? loggedUser.staff.name || loggedUser.staff.username : loggedUser?.adminName) || "الموظف";
+    // ── كان هذا يفرض paid_to_type:"staff" + paid_to_name:الشخص الحالي دائماً،
+    //    حتى بوضع "تعديل" — فأي محاولة تعديل بسيطة (تاريخ/ملاحظة) على سند كان
+    //    أصلاً دفعة مورد (paid_to_type:"supplier") كانت تحوّله فعلياً لمصروف
+    //    شخصي باسم الشخص اللي فتح التعديل، وتُضاعف احتسابه بالمصروفات (مرة عبر
+    //    paid_amount لطلب الشراء ومرة عبر السند نفسه)، وتُفقد نسبته الحقيقية
+    //    للموظف الأصلي إن كان سند مصروف شخصي فعلاً. بوضع "إضافة" فقط نفرض
+    //    القيم الثابتة (هذه الشاشة مخصصة لتسجيل مصروف شخصي جديد للشخص الحالي)
+    //    — بوضع "تعديل" نُبقي على النوع/الاسم/التصنيف الأصليين كما هم ──
     try {
-      const body = { ...pvModal.f, amount: parseFloat(pvModal.f.amount) || 0, paid_to_type: "staff", paid_to_name: empName, category: "مصروفات شخصية" };
+      const body = pvModal.mode === "add"
+        ? { ...pvModal.f, amount: parseFloat(pvModal.f.amount) || 0, paid_to_type: "staff", paid_to_name: empName, category: "مصروفات شخصية" }
+        : { ...pvModal.f, amount: parseFloat(pvModal.f.amount) || 0 };
       if (pvModal.mode === "add") {
         const r = await api.finance.paymentVouchers.create(body);
         if (r) setPaymentVouchers(p => [{ ...(r as any), amount: Number((r as any).amount) }, ...p]);
@@ -8880,14 +8890,20 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
         )}
       </Card>
 
-      {/* ── جدول سندات الصرف ── */}
-      <Card title="سندات الصرف" action={isAdmin && <Btn small variant="secondary" onClick={openPvNew}><Plus size={13} />جديد</Btn>}>
-        {!vouchersLoaded ? <p className="text-center text-sm text-[#999] py-6">جاري التحميل...</p> : paymentVouchers.length === 0 ? <EmptyState msg="لا توجد سندات صرف" /> : (
+      {/* ── جدول سندات الصرف ──
+          نعرض هنا حصراً سندات الصرف الشخصية (paid_to_type === "staff") — سندات
+          دفعات الموردين/طلبات الشراء (paid_to_type === "supplier") مستثناة
+          عمداً لأنها ليست مصروفات شخصية لموظف، وقيمتها محسوبة أصلاً ضمن
+          "المصروفات" عبر paid_amount لطلب الشراء نفسه، فعرضها هنا كان يخلطها
+          بمصروفات الموظفين الشخصية بجدول واحد بعمود اسمه "الموظف" ── */}
+      {(() => { const personalPv = paymentVouchers.filter(v => v.paid_to_type === "staff"); return (
+      <Card title="سندات الصرف (مصروفات شخصية للموظفين)" action={isAdmin && <Btn small variant="secondary" onClick={openPvNew}><Plus size={13} />جديد</Btn>}>
+        {!vouchersLoaded ? <p className="text-center text-sm text-[#999] py-6">جاري التحميل...</p> : personalPv.length === 0 ? <EmptyState msg="لا توجد سندات صرف" /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm"><thead><tr className="text-right" style={{ backgroundColor: "#F5F5F5", borderBottom: "1px solid #E0E0E0" }}>
               {["رقم السند", "التاريخ", "الموظف", "السبب", "القسم", "المبلغ", "إجراءات"].map(h => <th key={h} className="px-3 py-2.5 text-xs font-semibold text-[#555] whitespace-nowrap">{h}</th>)}
             </tr></thead><tbody>
-                {paymentVouchers.map((v, i) => (
+                {personalPv.map((v, i) => (
                   <tr key={v.id} style={{ backgroundColor: i % 2 === 0 ? "#FFFFFF" : "#FAFAFA", borderBottom: "1px solid #F0F0F0" }}>
                     <td className="px-3 py-2.5 font-mono text-xs font-bold text-[#D32F2F]">{v.voucher_no}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-[#555]">{v.date}</td>
@@ -8903,13 +8919,14 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
                   </tr>
                 ))}
               </tbody><tfoot><tr style={{ backgroundColor: "#F5F5F5", borderTop: "2px solid #E0E0E0" }}>
-                <td colSpan={6} className="px-3 py-2.5 text-xs font-bold text-[#555]">الإجمالي ({paymentVouchers.length} سند)</td>
-                <td className="px-3 py-2.5 font-bold text-[#D32F2F]">{fmt(paymentVouchers.reduce((s, v) => s + v.amount, 0))}</td>
+                <td colSpan={6} className="px-3 py-2.5 text-xs font-bold text-[#555]">الإجمالي ({personalPv.length} سند)</td>
+                <td className="px-3 py-2.5 font-bold text-[#D32F2F]">{fmt(personalPv.reduce((s, v) => s + v.amount, 0))}</td>
                 <td colSpan={2} />
               </tr></tfoot></table>
           </div>
         )}
       </Card>
+      ); })()}
 
       {/* ── Modal سند القبض ── */}
       {rvModal.open && (
@@ -14241,7 +14258,12 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
   useEffect(() => {
     Promise.all([api.finance.receiptVouchers.getAll(), api.finance.paymentVouchers.getAll()]).then(([rv, pv]) => {
       if (rv) setRvList((rv as any[]).map(v => ({ ...v, amount: Number(v.amount) })).filter((v: any) => v.dept === dept));
-      if (pv) setPvList((pv as any[]).map(v => ({ ...v, amount: Number(v.amount) })).filter((v: any) => v.dept === dept));
+      // ── نستثني سندات الصرف الصادرة كدفعة مورد/طلب شراء (paid_to_type
+      //    "supplier") من هذه القائمة عمداً: هذه ليست مصروفات شخصية لموظف —
+      //    قيمتها محسوبة أصلاً ضمن "المصروفات" عبر purchase_requests.paid_amount،
+      //    وعرضها هنا كان يخلط دفعات الموردين مع مصروفات الموظفين الشخصية في
+      //    نفس الجدول ("سندات الصرف" مخصصة حصراً لمصروفات الموظف الشخصية) ──
+      if (pv) setPvList((pv as any[]).map(v => ({ ...v, amount: Number(v.amount) })).filter((v: any) => v.dept === dept && v.paid_to_type !== "supplier"));
       setLoaded(true);
     }).catch(() => { setLoaded(true); });
   }, [dept]);
