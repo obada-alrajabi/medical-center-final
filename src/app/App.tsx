@@ -15451,7 +15451,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     { key: "name", label: "الاسم_الكامل", required: true, sample: "محمد أحمد علي" },
     { key: "age", label: "العمر", required: true, sample: "35" },
     { key: "phone", label: "رقم_الهاتف", required: true, sample: "0599123456" },
-    { key: "gender", label: "الجنس", required: false, sample: "ذكر" },
+    { key: "gender", label: "الجنس", required: true, sample: "ذكر" },
     { key: "blood", label: "فصيلة_الدم", required: false, sample: "A+" },
     { key: "address", label: "العنوان", required: false, sample: "رام الله — المركز" },
     { key: "hasIns", label: "تامين_صحي_نعم_لا", required: false, sample: "نعم" },
@@ -15482,6 +15482,17 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
   const col = (row: string[], hIdx: Record<string, number>, key: string): string => {
     const i = hIdx[key];
     return i == null || i < 0 ? "" : String(row[i] ?? "").trim();
+  };
+  // ── إكسل بيحوّل خانة رقم الهاتف تلقائياً لرقم عادي لو ما كانت منسَّقة كـ"نص"
+  //    مسبقاً، فبيحذف الصفر الأول (0599123456 بتصير 599123456 — 9 خانات بدل
+  //    10) — وهاد بيصير حتى لو المستخدم كتب الصفر يدوياً بالخلية، لأنه إكسل
+  //    بيخزّن القيمة كرقم مش كنص. بما إنه كل أرقام الهواتف المحلية بتبلش بـ0
+  //    وبتكون بالضبط 9 خانات بعده، نعيد الصفر تلقائياً لو وصلنا رقم من 9 خانات
+  //    بالضبط بدل ما نرفض الملف بسبب مشكلة تنسيق إكسل مش غلطة المستخدم فعلياً ──
+  const normalizePhone = (raw: string): string => {
+    const digits = raw.trim();
+    if (/^\d{9}$/.test(digits) && !digits.startsWith("0")) return "0" + digits;
+    return digits;
   };
   const DEPT_CONFIGS: { id: string; label: string; emoji: string; color: string }[] = [
     { id: "surgery", label: "العيادة والطوارئ", emoji: "🏥", color: "#1B3A6B" },
@@ -15561,12 +15572,16 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
       if (!ageRaw) problems.push(`صف ${rowNum} (${name}): العمر فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
       else if (isNaN(Number(ageRaw)) || Number(ageRaw) <= 0) problems.push(`صف ${rowNum} (${name}): العمر "${ageRaw}" يجب أن يكون رقماً موجباً`);
       // ── رقم الهاتف: 10 أرقام بالضبط، بدون رمز دولة (+970...) أو مسافات أو
-      //    أي رمز آخر — الـ regex بيرفض أي شي غير 10 خانات رقمية متتالية تماماً ──
-      const phoneRaw = col(row, hIdx, "phone");
+      //    أي رمز آخر — الـ regex بيرفض أي شي غير 10 خانات رقمية متتالية تماماً.
+      //    نمرره أولاً عبر normalizePhone لأنه إكسل بيحذف الصفر الأول تلقائياً
+      //    من خانات الأرقام غير المنسَّقة كنص (0599123456 ← 599123456) ──
+      const phoneRaw = normalizePhone(col(row, hIdx, "phone"));
       if (!phoneRaw) problems.push(`صف ${rowNum} (${name}): رقم الهاتف فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
       else if (!/^[0-9]{10}$/.test(phoneRaw)) problems.push(`صف ${rowNum} (${name}): رقم الهاتف "${phoneRaw}" يجب أن يتكوّن من 10 أرقام بالضبط، بدون رمز دولة (+970) أو مسافات أو أي رمز آخر`);
+      // ── الجنس أصبح إلزامياً بطلب صريح — لازم يُكتب "ذكر" أو "أنثى" بالضبط لكل صف ──
       const gender = col(row, hIdx, "gender");
-      if (gender && !GENDER_VALUES.includes(gender)) problems.push(`صف ${rowNum} (${name}): الجنس "${gender}" غير صحيح — لازم يكون "ذكر" أو "أنثى" بالضبط`);
+      if (!gender) problems.push(`صف ${rowNum} (${name}): الجنس فارغ — إلزامي، اكتب "ذكر" أو "أنثى"`);
+      else if (!GENDER_VALUES.includes(gender)) problems.push(`صف ${rowNum} (${name}): الجنس "${gender}" غير صحيح — لازم يكون "ذكر" أو "أنثى" بالضبط`);
       const blood = col(row, hIdx, "blood");
       if (blood && !BLOOD_VALUES.includes(blood)) problems.push(`صف ${rowNum} (${name}): فصيلة الدم "${blood}" غير صحيحة — لازم تكون واحدة من: ${BLOOD_VALUES.join(" / ")}`);
       const insRaw = col(row, hIdx, "hasIns").toLowerCase();
@@ -15623,7 +15638,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
       const rawId = col(row, hIdx, "id");
       const name = col(row, hIdx, "name");
       const age = parseInt(col(row, hIdx, "age") || "0") || 0;
-      const phone = col(row, hIdx, "phone") || "—";
+      const phone = normalizePhone(col(row, hIdx, "phone")) || "—";
       const gender = col(row, hIdx, "gender") || "ذكر";
       const blood = col(row, hIdx, "blood") || "غير معروف";
       const address = col(row, hIdx, "address");
@@ -15823,12 +15838,13 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
           ))}
         </div>
         <div className="mt-3 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
-          <p className="font-bold text-[#1B5E20]">✅ هذه فقط الحقول التي لا يمكن تركها فارغة (بطلب صريح — أقل حتى من شاشة التسجيل اليدوي):</p>
-          <p><strong>الاسم_الكامل</strong>، <strong>العمر</strong> (رقم موجب)، و<strong>رقم_الهاتف</strong> (10 أرقام بالضبط، بدون رمز دولة).</p>
+          <p className="font-bold text-[#1B5E20]">✅ هذه فقط الحقول التي لا يمكن تركها فارغة (بطلب صريح):</p>
+          <p><strong>الاسم_الكامل</strong>، <strong>العمر</strong> (رقم موجب)، <strong>رقم_الهاتف</strong> (10 أرقام بالضبط، بدون رمز دولة)، و<strong>الجنس</strong> ("ذكر" أو "أنثى" بالضبط).</p>
+          <p className="text-[10px] text-[#388E3C]">💡 إكسل بيحذف الصفر الأول من رقم الهاتف تلقائياً لو الخلية مش منسَّقة كـ"نص" (بيصير 9 خانات بدل 10) — النظام بيتعرف على هالحالة ويرجّع الصفر تلقائياً، فما تحتاج تغيّر شي. لو استمرت المشكلة، نسّق عمود رقم الهاتف بإكسل كـ"نص" (Text) قبل التعبئة.</p>
         </div>
         <div className="mt-2 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFEBEE", border: "1px solid #FFCDD2" }}>
-          <p className="font-bold text-[#C62828]">🔒 النموذج مقفول على هاي الأعمدة الثلاثة فقط — ممنوع إضافة أي عمود آخر.</p>
-          <p>أي عمود إضافي بالملف (فصيلة دم، تأمين، مبلغ...) بيتم <u>رفض الملف بالكامل فوراً</u> ولا يُستورد ولا صف واحد، حتى لو كانت باقي البيانات سليمة. لازم يكون بالسطر الأول من الملف <strong>بالضبط</strong> 3 أعمدة: {REQUIRED_FIELD_DEFS.map(f => f.label).join("، ")}.</p>
+          <p className="font-bold text-[#C62828]">🔒 النموذج مقفول على هاي الأعمدة فقط — ممنوع إضافة أي عمود آخر.</p>
+          <p>أي عمود إضافي بالملف (فصيلة دم، تأمين، مبلغ...) بيتم <u>رفض الملف بالكامل فوراً</u> ولا يُستورد ولا صف واحد، حتى لو كانت باقي البيانات سليمة. لازم يكون بالسطر الأول من الملف <strong>بالضبط</strong> {REQUIRED_FIELD_DEFS.length} أعمدة: {REQUIRED_FIELD_DEFS.map(f => f.label).join("، ")}.</p>
           <p><strong>الصيغة:</strong> Excel (XLSX) مباشرةً، أو CSV (UTF-8) — كلاهما مقبول عند الرفع</p>
           <p className="text-[#B71C1C] font-semibold">⚠️ يتم فحص كل صفوف الملف أولاً قبل أي حفظ فعلي — لو في أي صف فيه مشكلة (حقل فارغ، قيمة غير صحيحة، أو عمود غير مسموح)، يُرفض الملف <u>بالكامل</u> ولا يُستورد ولا صف واحد، مع بيان سبب المشكلة بالتحديد.</p>
         </div>
