@@ -199,7 +199,7 @@ export function calculateFinancials(
   // Net Profit = Revenue - (Expenses + Salaries)
   const profit = revenue - (expenses + salaryCost);
 
-  const filteredDebts = departmentId ? debts.filter(d => d.dept === departmentId) : debts;
+  const filteredDebts = debts.filter(d => (departmentId ? d.dept === departmentId : true) && ir(d.date));
   const patientDebts = filteredDebts.reduce((s, d) => s + (Number(d.amount) || 0), 0);
 
   const filteredInvoices = invoices.filter(i =>
