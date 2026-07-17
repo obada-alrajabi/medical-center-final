@@ -15,6 +15,7 @@ export interface PrintSettingsRow {
   font_family: string | null;
   show_signature: boolean;
   with_header: boolean;
+  patient_fields?: Record<string, unknown> | null;
 }
 
 // Admin session token — set after admin login, sent with admin-only endpoints

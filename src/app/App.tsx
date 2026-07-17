@@ -897,6 +897,10 @@ let gAllPrintSettings: Record<string, PrintSettingsRow> = {
 };
 const _resolvePrintScope = (dept?: string | null): string =>
   dept && (PRINT_SCOPE_IDS as readonly string[]).includes(dept) ? dept : "general";
+let gPatientPrintSettings: {
+  showName: boolean; showAge: boolean; showPhone: boolean; showNationalId: boolean; showBlood: boolean; showInsurance: boolean; showDiagnoses: boolean; showMedications: boolean; showReferrals: boolean; showDebt: boolean; showNotes: boolean;
+  sessionsMode: "all" | "last" | "range"; sessionsCount: number; sessionsFrom: string; sessionsTo: string;
+} = { showName: true, showAge: true, showPhone: true, showNationalId: true, showBlood: true, showInsurance: true, showDiagnoses: true, showMedications: true, showReferrals: true, showDebt: true, showNotes: true, sessionsMode: "all", sessionsCount: 5, sessionsFrom: "", sessionsTo: "" };
 const loadAllPrintSettings = async () => {
   try {
     const rows = await api.settings.print.getAll();
@@ -904,13 +908,15 @@ const loadAllPrintSettings = async () => {
       const next = { ...gAllPrintSettings };
       rows.forEach(r => { next[r.scope] = r; });
       gAllPrintSettings = next;
+      // تفضيلات "أي حقول تظهر بطباعة ملف المريض" محفوظة ضمن صف 'general' —
+      // نحمّلها هنا لتُطبَّق فوراً بعد كل تحديث/إعادة دخول بدل أن تعود للافتراضي
+      const savedPatientFields = next.general?.patient_fields;
+      if (savedPatientFields && typeof savedPatientFields === "object") {
+        gPatientPrintSettings = { ...gPatientPrintSettings, ...savedPatientFields };
+      }
     }
   } catch (_) { /* keep defaults on failure */ }
 };
-let gPatientPrintSettings: {
-  showName: boolean; showAge: boolean; showPhone: boolean; showNationalId: boolean; showBlood: boolean; showInsurance: boolean; showDiagnoses: boolean; showMedications: boolean; showReferrals: boolean; showDebt: boolean; showNotes: boolean;
-  sessionsMode: "all" | "last" | "range"; sessionsCount: number; sessionsFrom: string; sessionsTo: string;
-} = { showName: true, showAge: true, showPhone: true, showNationalId: true, showBlood: true, showInsurance: true, showDiagnoses: true, showMedications: true, showReferrals: true, showDebt: true, showNotes: true, sessionsMode: "all", sessionsCount: 5, sessionsFrom: "", sessionsTo: "" };
 
 const _buildPrintDoc = (html: string, title: string, pdfMode: boolean, from?: string, to?: string, withHeader = true, dept?: string | null) => {
   const { date, time } = _nowDT();
@@ -4076,10 +4082,29 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
             const printSessions = isAdmin ? pSess : (dept === "surgery" || customDepts.some(cd => cd.id === dept) ? clinicSessions : []);
             const printMeds = isAdmin ? allMeds : filteredMeds;
             const printRefs = isAdmin ? allRefs : filteredRefs;
-            if (printOpts.info) html += `<h2>بيانات المريض</h2><div class="pt-info"><div class="pt-field"><b>الاسم الكامل:</b> ${p.name}</div><div class="pt-field"><b>رقم الملف:</b> ${p.id}</div><div class="pt-field"><b>العمر:</b> ${p.age} سنة</div><div class="pt-field"><b>فصيلة الدم:</b> ${p.blood}</div><div class="pt-field"><b>الجوال:</b> ${p.phone}</div><div class="pt-field"><b>تاريخ التسجيل:</b> ${p.date}</div>${p.insurance ? `<div class="pt-field"><b>التأمين:</b> يمتلك تأمين</div>` : ""}${p.chronic ? `<div class="pt-field"><b>أمراض مزمنة:</b> ${p.chronic}</div>` : ""}${p.allergy ? `<div class="pt-field out"><b>حساسية:</b> ${p.allergy}</div>` : ""}</div>`;
-            if (printOpts.sessions) html += `<h2>الجلسات (${printSessions.length})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>الطبيب</th><th>الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${printSessions.map(s => canSeeFinance(s.dept) ? `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${s.doctor || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>` : `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${s.doctor || "—"}</td><td colspan="3">بيانات مالية غير متاحة لهذا القسم</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="4">الإجمالي (قسمك فقط)</td><td>${fmt(totalAmt)}</td><td class="in">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}">${liveDebt > 0 ? fmt(liveDebt) : "مسدد ✓"}</td></tr></tfoot></table>`;
-            if (printOpts.meds && printMeds.length > 0) html += `<h2>الوصفات الطبية (${printMeds.length})</h2><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printMeds.map(m => `<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td><td>${m.date}</td><td>${m.dept}</td></tr>`).join("")}</tbody></table>`;
-            if (printOpts.refs && printRefs.length > 0) html += `<h2>الإحالات (${printRefs.length})</h2><table><thead><tr><th>النوع</th><th>الطلب</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printRefs.map(r => `<tr><td>${r.type === "lab" ? "مختبر" : "أشعة"}</td><td>${r.name}</td><td>${r.date}</td><td>${r.dept}</td></tr>`).join("")}</tbody></table>`;
+            if (printOpts.info) {
+              const pf = gPatientPrintSettings;
+              const infoFields: string[] = [];
+              if (pf.showName) infoFields.push(`<div class="pt-field"><b>الاسم الكامل:</b> ${p.name}</div>`);
+              infoFields.push(`<div class="pt-field"><b>رقم الملف:</b> ${p.id}</div>`);
+              if (pf.showAge) infoFields.push(`<div class="pt-field"><b>العمر:</b> ${p.age} سنة</div>`);
+              if (pf.showBlood) infoFields.push(`<div class="pt-field"><b>فصيلة الدم:</b> ${p.blood}</div>`);
+              if (pf.showPhone) infoFields.push(`<div class="pt-field"><b>الجوال:</b> ${p.phone}</div>`);
+              if (pf.showNationalId && p.nationalId) infoFields.push(`<div class="pt-field"><b>رقم الهوية:</b> ${p.nationalId}</div>`);
+              infoFields.push(`<div class="pt-field"><b>تاريخ التسجيل:</b> ${p.date}</div>`);
+              if (pf.showInsurance && p.insurance) infoFields.push(`<div class="pt-field"><b>التأمين:</b> يمتلك تأمين${p.insuranceCompany ? ` — ${p.insuranceCompany}` : ""}</div>`);
+              if (pf.showDebt && liveDebt > 0) infoFields.push(`<div class="pt-field out"><b>الدين المتبقي:</b> ${fmt(liveDebt)}</div>`);
+              if (p.chronic) infoFields.push(`<div class="pt-field"><b>أمراض مزمنة:</b> ${p.chronic}</div>`);
+              if (p.allergy) infoFields.push(`<div class="pt-field out"><b>حساسية:</b> ${p.allergy}</div>`);
+              if (pf.showNotes && p.notes) infoFields.push(`<div class="pt-field"><b>ملاحظات:</b> ${p.notes}</div>`);
+              html += `<h2>بيانات المريض</h2><div class="pt-info">${infoFields.join("")}</div>`;
+            }
+            if (printOpts.sessions) {
+              const showDx = gPatientPrintSettings.showDiagnoses;
+              html += `<h2>الجلسات (${printSessions.length})</h2><table><thead><tr><th>التاريخ</th><th>القسم</th>${showDx ? "<th>التشخيص</th>" : ""}<th>الطبيب</th><th>الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${printSessions.map(s => canSeeFinance(s.dept) ? `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td>${showDx ? `<td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td>` : ""}<td>${s.doctor || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>` : `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td>${showDx ? `<td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td>` : ""}<td>${s.doctor || "—"}</td><td colspan="3">بيانات مالية غير متاحة لهذا القسم</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="${showDx ? 4 : 3}">الإجمالي (قسمك فقط)</td><td>${fmt(totalAmt)}</td><td class="in">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}">${liveDebt > 0 ? fmt(liveDebt) : "مسدد ✓"}</td></tr></tfoot></table>`;
+            }
+            if (printOpts.meds && gPatientPrintSettings.showMedications && printMeds.length > 0) html += `<h2>الوصفات الطبية (${printMeds.length})</h2><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printMeds.map(m => `<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td><td>${m.date}</td><td>${m.dept}</td></tr>`).join("")}</tbody></table>`;
+            if (printOpts.refs && gPatientPrintSettings.showReferrals && printRefs.length > 0) html += `<h2>الإحالات (${printRefs.length})</h2><table><thead><tr><th>النوع</th><th>الطلب</th><th>التاريخ</th><th>القسم</th></tr></thead><tbody>${printRefs.map(r => `<tr><td>${r.type === "lab" ? "مختبر" : "أشعة"}</td><td>${r.name}</td><td>${r.date}</td><td>${r.dept}</td></tr>`).join("")}</tbody></table>`;
             printHtml(html, `ملف المريض — ${p.name}`, undefined, undefined, true, dept);
             setPrintModal(false);
           }}><Printer size={14} />طباعة</Btn>
@@ -5179,10 +5204,10 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     // آخر يحمل نفس الاسم (رقم ملف/عمر/فصيلة دم خاطئة على تقرير رسمي).
     const pt = patId ? mockPatients.find(p => p.id === patId) : mockPatients.find(p => p.name === patientName);
     const infoItems: string[] = [];
-    infoItems.push(`<div class="pt-field"><b>المريض:</b> ${patientName}</div>`);
+    if (gPatientPrintSettings.showName) infoItems.push(`<div class="pt-field"><b>المريض:</b> ${patientName}</div>`);
     if (pt) infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
-    if (pt) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
-    if (pt) infoItems.push(`<div class="pt-field"><b>فصيلة الدم:</b> ${pt.blood}</div>`);
+    if (pt && gPatientPrintSettings.showAge) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
+    if (pt && gPatientPrintSettings.showBlood) infoItems.push(`<div class="pt-field"><b>فصيلة الدم:</b> ${pt.blood}</div>`);
     infoItems.push(`<div class="pt-field"><b>تاريخ التقرير:</b> ${today}</div>`);
     let body = `<div class="pt-info">${infoItems.join("")}</div>`;
     const tests = results ? Object.keys(results) : [];
@@ -5787,9 +5812,9 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const buildRadReportHtml = (s: RadBoardItem, reports: Record<string, { text: string; doctor: string; verdict: string }>) => {
     const pt = (s.patientId && mockPatients.find(p => p.id === s.patientId)) || mockPatients.find(p => p.name === s.patient);
     const infoItems: string[] = [];
-    infoItems.push(`<div class="pt-field"><b>المريض:</b> ${s.patient}</div>`);
+    if (gPatientPrintSettings.showName) infoItems.push(`<div class="pt-field"><b>المريض:</b> ${s.patient}</div>`);
     if (pt) infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
-    if (pt) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
+    if (pt && gPatientPrintSettings.showAge) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
     infoItems.push(`<div class="pt-field"><b>تاريخ الفحص:</b> ${today}</div>`);
     let body = `<div class="pt-info">${infoItems.join("")}</div>`;
     s.images.forEach(img => {
@@ -6542,8 +6567,8 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
   const openModal = (entry: RehabQueueEntry) => { setResultsModal(entry); setModalNotes(entry.therapistNotes || ""); setModalResult(entry.sessionResult || ""); setModalPain(entry.painScale ?? 5); setModalMovement(entry.movementAssessment || ""); setModalGrossMotor(entry.grossMotorSkills || ""); setModalFineMotor(entry.fineMotorSkills || ""); setModalSensory(entry.sensoryCondition || ""); setModalAdl(entry.adlActivities || ""); };
   const buildRehabReportHtml = (entry: RehabQueueEntry, plan?: RehabPlan) => {
     const infoItems = [
-      `<div class="pt-field"><b>المريض:</b> ${entry.patientName}</div>`,
-      `<div class="pt-field"><b>التشخيص:</b> ${entry.diagnosis}</div>`,
+      ...(gPatientPrintSettings.showName ? [`<div class="pt-field"><b>المريض:</b> ${entry.patientName}</div>`] : []),
+      ...(gPatientPrintSettings.showDiagnoses ? [`<div class="pt-field"><b>التشخيص:</b> ${entry.diagnosis}</div>`] : []),
       `<div class="pt-field"><b>الأخصائي المعالج:</b> ${entry.specialist}</div>`,
       `<div class="pt-field"><b>رقم الجلسة:</b> ${entry.sessionNumber}${plan ? ` من ${plan.totalSessions}` : ""}</div>`,
       `<div class="pt-field"><b>التاريخ:</b> ${entry.date || ""} ${entry.time || ""}</div>`,
@@ -10802,7 +10827,16 @@ function PrintSettingsScreen({ toast }: { toast: (m: string, t?: any) => void })
       </Card>
       {/* Save button (patient-file print field toggles only — letterhead/margins save inside the panel above) */}
       <div className="sticky bottom-0 bg-[#F5F5F5] pt-3 pb-4">
-        <Btn variant="primary" full onClick={() => { gPatientPrintSettings = { ...pps }; toast("تم حفظ إعدادات طباعة ملف المريض ✓", "success"); }}><Save size={16} />حفظ إعدادات طباعة ملف المريض</Btn>
+        <Btn variant="primary" full onClick={async () => {
+          gPatientPrintSettings = { ...pps };
+          try {
+            const row = await api.settings.print.update("general", { patient_fields: pps } as any);
+            if (row) gAllPrintSettings = { ...gAllPrintSettings, general: row };
+            toast("تم حفظ إعدادات طباعة ملف المريض ✓", "success");
+          } catch (_) {
+            toast("تم الحفظ محلياً فقط — تعذّر حفظه على السيرفر، سيعود للافتراضي بعد تحديث الصفحة", "warning");
+          }
+        }}><Save size={16} />حفظ إعدادات طباعة ملف المريض</Btn>
       </div>
     </div>
   );
@@ -15451,7 +15485,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     { key: "name", label: "الاسم_الكامل", required: true, sample: "محمد أحمد علي" },
     { key: "age", label: "العمر", required: true, sample: "35" },
     { key: "phone", label: "رقم_الهاتف", required: true, sample: "0599123456" },
-    { key: "gender", label: "الجنس", required: true, sample: "ذكر" },
+    { key: "gender", label: "الجنس", required: false, sample: "ذكر" },
     { key: "blood", label: "فصيلة_الدم", required: false, sample: "A+" },
     { key: "address", label: "العنوان", required: false, sample: "رام الله — المركز" },
     { key: "hasIns", label: "تامين_صحي_نعم_لا", required: false, sample: "نعم" },
@@ -15571,17 +15605,16 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
       const ageRaw = col(row, hIdx, "age");
       if (!ageRaw) problems.push(`صف ${rowNum} (${name}): العمر فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
       else if (isNaN(Number(ageRaw)) || Number(ageRaw) <= 0) problems.push(`صف ${rowNum} (${name}): العمر "${ageRaw}" يجب أن يكون رقماً موجباً`);
-      // ── رقم الهاتف: 10 أرقام بالضبط، بدون رمز دولة (+970...) أو مسافات أو
-      //    أي رمز آخر — الـ regex بيرفض أي شي غير 10 خانات رقمية متتالية تماماً.
-      //    نمرره أولاً عبر normalizePhone لأنه إكسل بيحذف الصفر الأول تلقائياً
-      //    من خانات الأرقام غير المنسَّقة كنص (0599123456 ← 599123456) ──
+      // ── رقم الهاتف: 9 أو 10 أرقام، بدون رمز دولة (+970...) أو مسافات أو أي
+      //    رمز آخر. نمرره أولاً عبر normalizePhone (يعيد الصفر الأول لو إكسل
+      //    حذفه من رقم كان أصلاً 10 خانات)، وبعدين نقبل 9 أو 10 خانات — لأنه
+      //    بعض الأرقام فعلياً 9 خانات بدون صفر بادئ وهذا شكل صحيح مقبول ──
       const phoneRaw = normalizePhone(col(row, hIdx, "phone"));
       if (!phoneRaw) problems.push(`صف ${rowNum} (${name}): رقم الهاتف فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
-      else if (!/^[0-9]{10}$/.test(phoneRaw)) problems.push(`صف ${rowNum} (${name}): رقم الهاتف "${phoneRaw}" يجب أن يتكوّن من 10 أرقام بالضبط، بدون رمز دولة (+970) أو مسافات أو أي رمز آخر`);
-      // ── الجنس أصبح إلزامياً بطلب صريح — لازم يُكتب "ذكر" أو "أنثى" بالضبط لكل صف ──
+      else if (!/^[0-9]{9,10}$/.test(phoneRaw)) problems.push(`صف ${rowNum} (${name}): رقم الهاتف "${phoneRaw}" يجب أن يتكوّن من 9 أو 10 أرقام، بدون رمز دولة (+970) أو مسافات أو أي رمز آخر`);
+      // ── الجنس أصبح اختيارياً — يُتحقق من صحة القيمة فقط لو انكتب ──
       const gender = col(row, hIdx, "gender");
-      if (!gender) problems.push(`صف ${rowNum} (${name}): الجنس فارغ — إلزامي، اكتب "ذكر" أو "أنثى"`);
-      else if (!GENDER_VALUES.includes(gender)) problems.push(`صف ${rowNum} (${name}): الجنس "${gender}" غير صحيح — لازم يكون "ذكر" أو "أنثى" بالضبط`);
+      if (gender && !GENDER_VALUES.includes(gender)) problems.push(`صف ${rowNum} (${name}): الجنس "${gender}" غير صحيح — لازم يكون "ذكر" أو "أنثى" بالضبط`);
       const blood = col(row, hIdx, "blood");
       if (blood && !BLOOD_VALUES.includes(blood)) problems.push(`صف ${rowNum} (${name}): فصيلة الدم "${blood}" غير صحيحة — لازم تكون واحدة من: ${BLOOD_VALUES.join(" / ")}`);
       const insRaw = col(row, hIdx, "hasIns").toLowerCase();
@@ -15725,7 +15758,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     const allowedLabels = new Set(REQUIRED_FIELD_DEFS.map(f => f.label));
     const extraCols = headers.map(normHeader).filter(h => h && !allowedLabels.has(h));
     if (extraCols.length > 0) {
-      const msg = `الملف يحتوي أعمدة غير مسموحة: ${extraCols.join("، ")} — النموذج مقفول على 3 أعمدة فقط: ${REQUIRED_FIELD_DEFS.map(f => f.label).join("، ")}. احذف أي عمود إضافي وأعد المحاولة`;
+      const msg = `الملف يحتوي أعمدة غير مسموحة: ${extraCols.join("، ")} — النموذج مقفول على ${REQUIRED_FIELD_DEFS.length} أعمدة فقط: ${REQUIRED_FIELD_DEFS.map(f => f.label).join("، ")}. احذف أي عمود إضافي وأعد المحاولة`;
       setResults(r => ({ ...r, [deptId]: { patients: 0, sessions: 0, errors: 1, warnings: [msg], rejected: true } }));
       toast(msg, "error");
       return;
@@ -15839,8 +15872,8 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
         </div>
         <div className="mt-3 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
           <p className="font-bold text-[#1B5E20]">✅ هذه فقط الحقول التي لا يمكن تركها فارغة (بطلب صريح):</p>
-          <p><strong>الاسم_الكامل</strong>، <strong>العمر</strong> (رقم موجب)، <strong>رقم_الهاتف</strong> (10 أرقام بالضبط، بدون رمز دولة)، و<strong>الجنس</strong> ("ذكر" أو "أنثى" بالضبط).</p>
-          <p className="text-[10px] text-[#388E3C]">💡 إكسل بيحذف الصفر الأول من رقم الهاتف تلقائياً لو الخلية مش منسَّقة كـ"نص" (بيصير 9 خانات بدل 10) — النظام بيتعرف على هالحالة ويرجّع الصفر تلقائياً، فما تحتاج تغيّر شي. لو استمرت المشكلة، نسّق عمود رقم الهاتف بإكسل كـ"نص" (Text) قبل التعبئة.</p>
+          <p><strong>الاسم_الكامل</strong>، <strong>العمر</strong> (رقم موجب)، و<strong>رقم_الهاتف</strong> (9 أو 10 أرقام، بدون رمز دولة).</p>
+          <p className="text-[10px] text-[#388E3C]">💡 إكسل بيحذف الصفر الأول من رقم الهاتف تلقائياً لو الخلية مش منسَّقة كـ"نص" (بيصير 9 خانات بدل 10) — النظام بيقبل الرقم بالحالتين (9 أو 10 خانات) فما تحتاج تغيّر شي.</p>
         </div>
         <div className="mt-2 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFEBEE", border: "1px solid #FFCDD2" }}>
           <p className="font-bold text-[#C62828]">🔒 النموذج مقفول على هاي الأعمدة فقط — ممنوع إضافة أي عمود آخر.</p>

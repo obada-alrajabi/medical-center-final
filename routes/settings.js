@@ -193,7 +193,7 @@ router.get('/print', async (req, res) => {
       scope: sc, letterhead_image: null,
       margin_top: 25, margin_right: 15, margin_bottom: 20, margin_left: 15,
       paper_size: 'A4', orientation: 'portrait', font_size: 13, font_family: null,
-      show_signature: true, with_header: true,
+      show_signature: true, with_header: true, patient_fields: null,
     });
     res.json(full);
   } catch (err) {
@@ -218,17 +218,18 @@ router.put('/print/:scope', requireAdmin, async (req, res) => {
   const {
     letterhead_image, margin_top, margin_right, margin_bottom, margin_left,
     paper_size, orientation, font_size, font_family, show_signature, with_header,
+    patient_fields,
   } = req.body;
   try {
     const { rows: existingRows } = await pool.query('SELECT * FROM print_settings WHERE scope=$1', [scope]);
     const existing = existingRows[0] ?? {};
     const { rows } = await pool.query(
       `INSERT INTO print_settings (scope, letterhead_image, margin_top, margin_right, margin_bottom, margin_left,
-                                    paper_size, orientation, font_size, font_family, show_signature, with_header, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+                                    paper_size, orientation, font_size, font_family, show_signature, with_header, patient_fields, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
        ON CONFLICT (scope) DO UPDATE SET
          letterhead_image=$2, margin_top=$3, margin_right=$4, margin_bottom=$5, margin_left=$6,
-         paper_size=$7, orientation=$8, font_size=$9, font_family=$10, show_signature=$11, with_header=$12, updated_at=NOW()
+         paper_size=$7, orientation=$8, font_size=$9, font_family=$10, show_signature=$11, with_header=$12, patient_fields=$13, updated_at=NOW()
        RETURNING *`,
       [
         scope,
@@ -243,6 +244,7 @@ router.put('/print/:scope', requireAdmin, async (req, res) => {
         font_family !== undefined ? font_family : (existing.font_family ?? null),
         show_signature ?? existing.show_signature ?? true,
         with_header ?? existing.with_header ?? true,
+        patient_fields !== undefined ? JSON.stringify(patient_fields) : (existing.patient_fields ?? null),
       ]
     );
     res.json(rows[0]);

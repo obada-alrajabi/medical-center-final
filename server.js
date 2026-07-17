@@ -582,6 +582,12 @@ pool
        ON CONFLICT (scope) DO NOTHING`,
     ),
   )
+  .then(() =>
+    // ── حقل إضافي لتخزين تفضيلات "أي حقول تظهر بطباعة ملف المريض" (فصيلة
+    //    الدم، العنوان، التشخيصات...) بشكل دائم — كانت هذه التفضيلات تُحفظ
+    //    بالذاكرة فقط (متغير JS محلي)، فتفقد فور تحديث الصفحة/إعادة الدخول ──
+    pool.query(`ALTER TABLE print_settings ADD COLUMN IF NOT EXISTS patient_fields JSONB`),
+  )
   .catch((e) => console.error("[migration] print_settings:", e.message));
 
 // ── Employees ↔ staff_members link (fixes duplicate payroll rows) ───────────
