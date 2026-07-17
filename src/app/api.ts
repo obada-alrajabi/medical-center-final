@@ -314,6 +314,10 @@ export const api = {
       review: (id: number, r: unknown) => patch<unknown>(`/staff/advance-requests/${id}`, r),
       delete: (id: number) => del<unknown>(`/staff/advance-requests/${id}`),
     },
+    salaryPeriods: {
+      getAll: (employeeId?: number) => get<unknown[]>(`/staff/salary-periods${employeeId ? `?employee_id=${employeeId}` : ""}`),
+      create: (p: unknown) => post<unknown>("/staff/salary-periods", p),
+    },
   },
 
   lab: {

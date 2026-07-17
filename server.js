@@ -609,6 +609,12 @@ pool
     await pool.query(
       `ALTER TABLE employees ADD COLUMN IF NOT EXISTS staff_id INT REFERENCES staff_members(id) ON DELETE SET NULL`
     );
+    // ── staff_members.id هو BIGINT (وسّعناه بـ migration سابقة)، فـ node-postgres
+    //    بيرجّعه كنص (string) بالواجهة، بينما employees.staff_id ضل INT عادي
+    //    فبيرجع رقم (number) — أي مقارنة === بين القيمتين بالواجهة (يلي هي
+    //    الطريقة الوحيدة لربط سلفة الموظف براتبه) كانت تفشل دايماً بصمت رغم
+    //    تطابق القيمة فعلياً. نوسّع العمود لنفس نوع staff_members.id تماماً. ──
+    await pool.query(`ALTER TABLE employees ALTER COLUMN staff_id TYPE BIGINT`);
     // Backfill: only when the name maps to exactly one staff member, to avoid
     // mis-linking two different people who happen to share a name.
     await pool.query(`
@@ -698,6 +704,10 @@ pool
     await pool.query(
       `ALTER TABLE employee_advances ADD COLUMN IF NOT EXISTS staff_id INT REFERENCES staff_members(id) ON DELETE SET NULL`
     );
+    // ── نفس سبب توسيع employees.staff_id أعلاه بالضبط: staff_members.id
+    //    BIGINT، فلازم يتطابق نوع هذا العمود معه حتى تنجح مقارنات === بالواجهة
+    //    (هذا بالضبط سبب عدم خصم السلفة المقبولة من راتب الموظف). ──
+    await pool.query(`ALTER TABLE employee_advances ALTER COLUMN staff_id TYPE BIGINT`);
     await pool.query(`
       UPDATE employee_advances ea SET staff_id = sm.id
       FROM staff_members sm
@@ -853,6 +863,32 @@ pool
   `)
   .then(() => console.log("[migration] debt_payments table applied"))
   .catch((e) => console.error("[migration] debt_payments:", e.message));
+
+// ── جدول "إغلاق الفترات الشهرية" لكل موظف — تسجيل دائم لكل شهر تقويمي تم
+//    البت فيه فعلياً (إما صرفه "paid"، أو إقرار دين على الموظف
+//    "debt_acknowledged" بدون تحريك أي أموال). قبل هذا الجدول، كان النظام
+//    يحسب راتب "الشهر الحالي" فقط بشكل حي بلا أي تجميد تاريخي — أي شهر
+//    سابق لم يُصرف كان يختفي أثره كلياً (لا يظهر كمستحق ولا يُحاسَب عليه
+//    الموظف لاحقاً)، وأي شهر سالب (الموظف مدين) لم يكن له أي أثر على
+//    حساب الشهر التالي. القيد الفريد (employee_id, year_month) يضمن عدم
+//    إغلاق نفس الشهر مرتين لنفس الموظف. ──
+pool
+  .query(`
+    CREATE TABLE IF NOT EXISTS salary_periods (
+      id SERIAL PRIMARY KEY,
+      employee_id INT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+      staff_id BIGINT REFERENCES staff_members(id) ON DELETE SET NULL,
+      year_month VARCHAR(7) NOT NULL,
+      net_amount NUMERIC(12,2) NOT NULL,
+      status VARCHAR(20) NOT NULL,
+      closed_date DATE NOT NULL,
+      carried_in NUMERIC(12,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(employee_id, year_month)
+    )
+  `)
+  .then(() => console.log("[migration] salary_periods table applied"))
+  .catch((e) => console.error("[migration] salary_periods:", e.message));
 
 // ── Base path (set APP_BASE_PATH env var on Hostinger, e.g. /45.159.160.11) ──
 const BASE = process.env.APP_BASE_PATH || "";

@@ -110,6 +110,46 @@ router.delete('/advance-requests/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Salary Periods (monthly payroll closures) — must come BEFORE /:id to
+//     avoid it being swallowed by the single-segment /:id route below ────────
+router.get('/salary-periods', async (req, res) => {
+  try {
+    const { employee_id } = req.query;
+    let sql = 'SELECT * FROM salary_periods WHERE 1=1';
+    const params = [];
+    if (employee_id) { params.push(employee_id); sql += ` AND employee_id=$${params.length}`; }
+    sql += ' ORDER BY year_month DESC';
+    const { rows } = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/salary-periods', requireAdmin, async (req, res) => {
+  const { employee_id, staff_id, year_month, net_amount, status, closed_date, carried_in } = req.body;
+  try {
+    // القيد الفريد (employee_id, year_month) يمنع إغلاق نفس الشهر مرتين — لو
+    // انضغط الزر مرتين بالخطأ (اتصال بطيء مثلاً)، لا نُرجع خطأ بل نُرجع السجل
+    // المُغلَق أصلاً بهدوء، حتى لا يظهر خطأ للمستخدم على عملية نجحت فعلياً.
+    const { rows } = await pool.query(
+      `INSERT INTO salary_periods (employee_id, staff_id, year_month, net_amount, status, closed_date, carried_in)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (employee_id, year_month) DO NOTHING
+       RETURNING *`,
+      [employee_id, staff_id ?? null, year_month, net_amount, status, closed_date, carried_in ?? 0]
+    );
+    if (rows.length) return res.status(201).json(rows[0]);
+    const existing = await pool.query(
+      'SELECT * FROM salary_periods WHERE employee_id=$1 AND year_month=$2',
+      [employee_id, year_month]
+    );
+    res.status(200).json(existing.rows[0] || null);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.patch('/:id/credentials', requireAdmin, async (req, res) => {
   const { username, new_password } = req.body;
   try {

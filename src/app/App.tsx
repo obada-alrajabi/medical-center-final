@@ -38,7 +38,7 @@ import type {
   StaffAdvanceRequest, ExternalDebt, AdminAccount, SidebarSettings, SalaryType,
   DeptPermissions, StaffMember, LoggedUser, TestParam, KitParam, SurgeryClinicItem,
   PatientDeleteRequest, RehabPlan, RehabQueueEntry, RehabServiceItem,
-  PrintExportSaved, DeptPrintAdv, Supplier,
+  PrintExportSaved, DeptPrintAdv, Supplier, SalaryPeriod,
 } from "./types";
 import {
   C, PIE_COLORS, DEPARTMENTS, WITHDRAW_CATS, DEPOSIT_TYPES, LAB_CATS, RAD_DEVICES,
@@ -9231,7 +9231,6 @@ function EmployeeAdvancesScreen({ employeeAdvances, setEmployeeAdvances, drawers
   const [addModal, setAddModal] = useState(false);
   const [form, setForm] = useState(() => ({ empName: "", dept: "lab", amount: "", date: _today(), note: "" }));
   const [search, setSearch] = useState("");
-  const [repaidModal, setRepaidModal] = useState<EmployeeAdvance | null>(null);
   const setF = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }));
   const pendingAdv = employeeAdvances.filter(a => !a.repaid);
   const repaidAdv = employeeAdvances.filter(a => a.repaid);
@@ -9257,12 +9256,11 @@ function EmployeeAdvancesScreen({ employeeAdvances, setEmployeeAdvances, drawers
     setAddModal(false); setForm({ empName: "", dept: "lab", amount: "", date: _today(), note: "" });
     toast(`تم تسجيل سلفة ${fmt(amt)} لـ ${form.empName.trim()} وخصمها من الصندوق ✓`);
   };
-  const handleRepaid = (adv: EmployeeAdvance) => {
-    const rDate = _today();
-    setEmployeeAdvances(p => p.map(a => a.id === adv.id ? { ...a, repaid: true, repaidDate: rDate } : a));
-    api.staff.advances.update(adv.id, { repaid: true, repaid_date: rDate }).catch(() => { });
-    setRepaidModal(null); toast(`تم تسجيل سداد سلفة ${adv.empName} ✓`);
-  };
+  // ── ملاحظة: زر "سدَّد" اليدوي أُزيل — تسديد السلف صار تلقائياً حصراً عند
+  //    صرف/إغلاق الشهر الذي دخلت فيه السلفة ضمن احتساب الراتب (انظر
+  //    PayrollScreen.handlePay و PayrollScreen.handleClosePeriod)، بنفس مبدأ
+  //    applied_to_payroll لسندات الصرف — تفادياً لأي تسديد يدوي منفصل عن
+  //    الاحتساب الفعلي يُنتج تعارضاً بين الحسابين. ──
   const empGroups = pendingAdv.reduce<Record<string, number>>((acc, a) => { acc[a.empName] = (acc[a.empName] || 0) + a.amount; return acc; }, {});
   return (
     <div className="space-y-5">
@@ -9313,8 +9311,6 @@ function EmployeeAdvancesScreen({ employeeAdvances, setEmployeeAdvances, drawers
           <InputField label="ملاحظة" placeholder="اختياري — سبب السلفة أو تفاصيل..." value={form.note} onChange={v => setF("note", v)} />
         </div>
       </Modal>
-      <ConfirmModal open={!!repaidModal} onClose={() => setRepaidModal(null)} onConfirm={() => repaidModal && handleRepaid(repaidModal)}
-        title="تأكيد سداد السلفة" message={`هل تأكيد أن ${repaidModal?.empName} سدَّد سلفة ${fmt(repaidModal?.amount || 0)}؟`} />
       <Card title="سجل السلف" action={<div className="flex gap-2"><Btn small variant="secondary" onClick={() => setAddModal(true)}><Plus size={13} />سلفة جديدة</Btn><Btn small variant="ghost" onClick={() => { const rows = filtered.map(a => [a.empName, allDepts.find(d => d.id === a.dept)?.short || a.dept, a.amount, a.date, a.repaid ? "مسدَّد" : "معلق", a.note || ""]); const ws = XLSX.utils.aoa_to_sheet([["الموظف", "القسم", "المبلغ (₪)", "التاريخ", "الحالة", "ملاحظة"], ...rows, [], ["الإجمالي", "", filtered.reduce((s, a) => s + a.amount, 0)]]); ws["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 24 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "سلف الموظفين"); XLSX.writeFile(wb, `سلف_الموظفين_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<h2>سجل سلف الموظفين</h2><table><thead><tr><th>الموظف</th><th>القسم</th><th>المبلغ (₪)</th><th>التاريخ</th><th>الحالة</th><th>ملاحظة</th></tr></thead><tbody>${filtered.map(a => `<tr><td>${a.empName}</td><td>${allDepts.find(d => d.id === a.dept)?.short || a.dept}</td><td class="${a.repaid ? "in" : "out"}">${fmt(a.amount)}</td><td>${a.date}</td><td>${a.repaid ? "مسدَّد" : "معلق"}</td><td>${a.note || "—"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2"><strong>الإجمالي</strong></td><td class="out"><strong>${fmt(filtered.reduce((s, a) => s + a.amount, 0))}</strong></td><td colspan="3"></td></tr></tfoot></table>`; printHtml(html, "سلف الموظفين"); }}><Printer size={14} />طباعة</Btn></div>}>
         <div className="relative mb-3">
           <Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]" />
@@ -9322,7 +9318,7 @@ function EmployeeAdvancesScreen({ employeeAdvances, setEmployeeAdvances, drawers
         </div>
         {filtered.length === 0 ? <EmptyState msg="لا توجد سلف مسجلة" /> : (
           <table className="w-full text-sm">
-            <THead cols={["الموظف", "القسم", "المبلغ", "التاريخ", "الحالة", "ملاحظة", ""]} />
+            <THead cols={["الموظف", "القسم", "المبلغ", "التاريخ", "الحالة", "ملاحظة"]} />
             <tbody>{filtered.map((a, i) => {
               const ds = allDepts.find(d => d.id === a.dept)?.short || a.dept;
               return <TRow key={a.id} i={i}>
@@ -9332,7 +9328,6 @@ function EmployeeAdvancesScreen({ employeeAdvances, setEmployeeAdvances, drawers
                 <TD className="text-xs text-[#555]">{a.date}</TD>
                 <TD>{a.repaid ? <><Badge color="success">مسدود</Badge>{a.repaidDate && <span className="text-xs text-[#999] mr-1">{a.repaidDate}</span>}</> : <Badge color="warning">قائمة</Badge>}</TD>
                 <TD className="text-xs text-[#777]">{a.note || "—"}</TD>
-                <TD>{!a.repaid && <Btn small variant="outline" onClick={() => setRepaidModal(a)}><Check size={12} />سدَّد</Btn>}</TD>
               </TRow>;
             })}</tbody>
           </table>
@@ -9482,10 +9477,73 @@ function ExternalDebtsScreen({ externalDebts, setExternalDebts, drawers, doWithd
 
 // ─── PAYROLL ───────────────────────────────────────────────────────────────────
 
-function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], staffList = [], sessions = [], paymentVouchers = [], setPaymentVouchers, attendance = [] }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[]; setPaymentVouchers?: React.Dispatch<React.SetStateAction<any[]>>; attendance?: AttendanceRecord[] }) {
+// ── مكوّن "تفاصيل الاحتساب" القابل لإعادة الاستخدام — يعرض تفصيلاً بندياً
+//    (show-your-work) لكيفية الوصول لرقم "الصافي المستحق" النهائي لموظف
+//    بشهر معيّن (حالي أو ماضٍ). لا يحسب شيئاً بنفسه — كل الأرقام تُمرَّر له
+//    جاهزة من الشاشة المستدعية (PayrollScreen أو MyFinancialAccountScreen)
+//    بنفس الدوال الموحَّدة (getCommission/getShiftPay/...) فلا يوجد أي احتمال
+//    لانحراف الرقم التفصيلي عن الرقم الإجمالي المعروض بالجدول الرئيسي. ──
+type BreakdownDeptRow = { deptName: string; revenue: number; pct: number; commission: number };
+type BreakdownShiftRow = { date: string; hours: number; amount: number };
+type BreakdownShiftInfo = { rate: number; nominalHours: number; shiftAmount: number; rows: BreakdownShiftRow[]; total: number };
+type BreakdownVoucherRow = { id: string | number; title: string; date: string; amount: number };
+type BreakdownAdvanceRow = { id: string | number; date: string; note: string; amount: number };
+function SalaryBreakdownDetail({ isFixed, fixedSalary, deptRows, commissionTotal, shift, vouchers, advances, carriedIn, net }: {
+  isFixed: boolean; fixedSalary: number; deptRows: BreakdownDeptRow[]; commissionTotal: number;
+  shift: BreakdownShiftInfo | null; vouchers: BreakdownVoucherRow[]; advances: BreakdownAdvanceRow[]; carriedIn: number; net: number;
+}) {
+  return (
+    <div className="rounded-xl overflow-hidden text-sm" style={{ border: "1px solid #E0E0E0" }}>
+      <div className="p-2.5 font-semibold text-xs" style={{ backgroundColor: "#F5F5F5", borderBottom: "1px solid #E0E0E0" }}>تفاصيل الاحتساب</div>
+      <div className="divide-y">
+        {isFixed && <div className="flex justify-between items-center p-2.5"><span className="text-[#555] text-xs">الراتب الثابت الشهري</span><strong>{fmt(fixedSalary)}₪</strong></div>}
+        {deptRows.length > 0 && <div className="p-2.5 space-y-1">
+          {deptRows.map((d, i) => (
+            <div key={i} className="flex justify-between items-center text-xs text-[#388E3C]">
+              <span>{d.deptName}: إيراد الجلسات {fmt(d.revenue)}₪ × {d.pct}%</span>
+              <strong>= {fmt(d.commission)}₪</strong>
+            </div>
+          ))}
+          <div className="flex justify-between items-center pt-1 mt-1 border-t border-dashed font-semibold text-xs text-[#388E3C]"><span>الإجمالي</span><strong>{fmt(commissionTotal)}₪</strong></div>
+        </div>}
+        {shift && <div className="p-2.5 space-y-1">
+          <div className="text-xs text-[#555]">سعر الساعة: {fmt(shift.shiftAmount)}₪ ÷ {shift.nominalHours} ساعة = <strong>{fmt(shift.rate)}₪/ساعة</strong></div>
+          {shift.rows.map((r, i) => (
+            <div key={i} className="flex justify-between items-center text-xs text-[#388E3C]">
+              <span>{r.date}: {r.hours} ساعة × {fmt(shift.rate)}₪</span><strong>= {fmt(r.amount)}₪</strong>
+            </div>
+          ))}
+          <div className="flex justify-between items-center pt-1 mt-1 border-t border-dashed font-semibold text-xs text-[#388E3C]"><span>الإجمالي</span><strong>{fmt(shift.total)}₪</strong></div>
+        </div>}
+        {vouchers.length > 0 && <div className="p-2.5 space-y-1">
+          <div className="text-xs font-semibold text-[#FF8F00] mb-0.5">الخصومات</div>
+          {vouchers.map(v => <div key={v.id} className="flex justify-between items-center text-xs text-[#FF8F00]"><span>{v.title} ({v.date})</span><strong>−{fmt(v.amount)}₪</strong></div>)}
+        </div>}
+        {advances.length > 0 && <div className="p-2.5 space-y-1">
+          <div className="text-xs font-semibold text-[#D32F2F] mb-0.5">السلف</div>
+          {advances.map(a => <div key={a.id} className="flex justify-between items-center text-xs text-[#D32F2F]"><span>{a.date} — {a.note}</span><strong>−{fmt(a.amount)}₪</strong></div>)}
+        </div>}
+        {carriedIn !== 0 && <div className="flex justify-between items-center p-2.5 text-xs text-[#D32F2F]"><span>دين مرحّل من الشهر السابق</span><strong>{fmt(carriedIn)}₪</strong></div>}
+        <div className="flex justify-between items-center p-2.5 font-bold text-base" style={{ backgroundColor: net < 0 ? "#FFEBEE" : "#E8F5E9" }}>
+          <span style={{ color: net < 0 ? "#C62828" : "#388E3C" }}>= الصافي المستحق</span>
+          <strong style={{ color: net < 0 ? "#C62828" : "#388E3C" }}>{fmt(net)}₪</strong>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], setEmployeeAdvances, staffList = [], sessions = [], paymentVouchers = [], setPaymentVouchers, attendance = [], salaryPeriods = [], setSalaryPeriods }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; setEmployeeAdvances?: React.Dispatch<React.SetStateAction<EmployeeAdvance[]>>; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[]; setPaymentVouchers?: React.Dispatch<React.SetStateAction<any[]>>; attendance?: AttendanceRecord[]; salaryPeriods?: SalaryPeriod[]; setSalaryPeriods?: React.Dispatch<React.SetStateAction<SalaryPeriod[]>> }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [confirmModal, setConfirmModal] = useState<Employee | null>(null); const [paying, setPaying] = useState(false);
   const [payFrom, setPayFrom] = useState(""); const [payTo, setPayTo] = useState("");
+  const [payrollTab, setPayrollTab] = useState<"current" | "dues">("current");
+  // ── معرِّف الموظف اللي "تفاصيل الاحتساب" الخاصة فيه مفتوحة حالياً (صف موسَّع
+  //    أسفل صفه بالجدول) — مفتاح واحد فقط بنفس الوقت، تبديل بالنقر مرة ثانية ──
+  const [expandedEmployeeId, setExpandedEmployeeId] = useState<number | null>(null);
+  // ── تفاصيل الاحتساب المفتوحة بتبويب "مستحقات" لشهر ماضٍ محدَّد (مفتاح مركَّب
+  //    employeeId-yearMonth لأن نفس الموظف قد يكون له أكثر من شهر معلَّق) ──
+  const [expandedDueKey, setExpandedDueKey] = useState<string | null>(null);
   const todayISO = _localISO();
   const curMonthStart = (() => { const d = _jlmNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; })();
   // ── نهاية الشهر الحالي التقويمية — تُستخدم لتحديد فترة "نسبة الإيرادات"
@@ -9570,7 +9628,10 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
   const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).reduce((s, a) => s + a.amount, 0);
-  const calcNet = (e: Employee) => e.salary + getCommission(e) + getShiftPay(e, curMonthStart, curMonthEnd) - getExpenses(e) - getTotalAdvances(e);
+  // ── الصافي الحي للشهر الحالي يجب أن يشمل أيضاً أي "دين مرحّل" من شهر سابق
+  //    أُغلق بحالة "إقرار دين" (net سالب) — تماماً كما يُحتسب بـ computePeriodNet
+  //    للأشهر الماضية، وإلا كان الشهر الحالي يتجاهل ديناً معترفاً به رسمياً ──
+  const calcNet = (e: Employee) => e.salary + getCommission(e) + getShiftPay(e, curMonthStart, curMonthEnd) - getExpenses(e) - getTotalAdvances(e) + getCarriedIn(e, curMonthStart.slice(0, 7));
   // If the employee's payroll config lists more than one drawer to deduct from, split the net
   // salary proportionally to how much revenue he actually generated in each of those departments.
   // Falls back to a single-department withdrawal (unchanged legacy behavior) otherwise.
@@ -9579,7 +9640,12 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const sm = getStaffMember(e);
     const payDepts = (sm?.payFromDepts || []).filter(Boolean);
     if (payDepts.length <= 1) return [{ dept: payDepts[0] || e.dept, amount: net }];
-    const revenueByDept = payDepts.map(d => sessions.filter(s => s.doctor === e.name && s.dept === d).reduce((s, x) => s + x.paid, 0));
+    // ── لازم نستخدم نفس فترة الشهر الحالي المستخدمة بحساب "الصافي" (calcNet
+    //    → getCommission) بالضبط عند حساب نسبة كل قسم من الإيراد، وإلا نسب
+    //    التوزيع بين الصناديق بتنبني على إيرادات كل الأرشيف بينما المبلغ
+    //    المُوزَّع نفسه هو مبلغ الشهر الحالي بس — فيختل توزيع الصندوق بين
+    //    الأقسام (قسم ممكن ياخد أكثر أو أقل من نسبته الحقيقية هالشهر بالضبط). ──
+    const revenueByDept = payDepts.map(d => sessions.filter(s => s.doctor === e.name && s.dept === d && inRangeDDMMYYYY(s.date, curMonthStart, curMonthEnd)).reduce((s, x) => s + x.paid, 0));
     const totalRevenue = revenueByDept.reduce((s, r) => s + r, 0);
     const shares = totalRevenue > 0 ? revenueByDept.map(r => r / totalRevenue) : payDepts.map(() => 1 / payDepts.length);
     const amounts = shares.map(s => Math.round(net * s));
@@ -9588,6 +9654,200 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     return payDepts.map((d, i) => ({ dept: d, amount: amounts[i] }));
   };
   const getPaySplitTotalAvailable = (split: { dept: string; amount: number }[]) => split.reduce((s, p) => s + (drawers[p.dept]?.balance || 0), 0);
+  const curYearMonth = curMonthStart.slice(0, 7);
+  const monthLabel = (ym: string) => { const [y, m] = ym.split("-").map(Number); return new Date(Date.UTC(y, (m || 1) - 1, 1)).toLocaleDateString("ar-EG", { month: "long", year: "numeric" }); };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ── محرك "الفترات الشهرية المُغلَقة" — مستحقات الأشهر السابقة (مستقلة عن
+  //    "الشهر الحالي" أعلاه الذي يبقى دائماً حياً/متحرّكاً بلا تجميد). كل
+  //    دالة هنا نسخة "بفترة زمنية عامة" من نظيرتها أعلاه (calcNet/getPaySplit
+  //    ...إلخ) لكن مُقيَّدة بشهر تقويمي محدَّد بدل الشهر الحالي دائماً. ──
+  // ═══════════════════════════════════════════════════════════════════════
+  const monthBounds = (ym: string) => {
+    const [y, m] = ym.split("-").map(Number);
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return { start: `${ym}-01`, end: `${ym}-${String(lastDay).padStart(2, "0")}` };
+  };
+  const prevYearMonth = (ym: string) => { const [y, m] = ym.split("-").map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; };
+
+  // مطابقة سجل إغلاق محفوظ لموظف معيّن بشهر معيّن — المفتاح الأساسي هو
+  // employee_id (NOT NULL بجدول salary_periods، ومضمون بالتفرّد لكل موظف).
+  const getClosedPeriod = (e: Employee, ym: string): SalaryPeriod | undefined =>
+    salaryPeriods.find(p => p.employeeId === e.id && p.yearMonth === ym);
+
+  // المبلغ السالب "المرحَّل" من الشهر الفائت *فقط* لو ذاك الشهر أُغلق صراحةً
+  // بحالة "إقرار دين" (net سالب) — شهر فائت لم يُغلق إطلاقاً لا يُرحِّل شيئاً،
+  // وينعزل بمكانه بقائمة المستحقات لحاله (انظر تعليق البند 6 بالمواصفة) ──
+  const getCarriedIn = (e: Employee, ym: string): number => {
+    const prevPeriod = getClosedPeriod(e, prevYearMonth(ym));
+    return prevPeriod && prevPeriod.status === "debt_acknowledged" ? prevPeriod.netAmount : 0;
+  };
+
+  const getVouchersForRange = (e: Employee, from: string, to: string) =>
+    paymentVouchers.filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name && !v.applied_to_payroll && inRangeDDMMYYYY(v.date, from, to));
+  const getExpensesForRange = (e: Employee, from: string, to: string) =>
+    getVouchersForRange(e, from, to).reduce((s, v: any) => s + (Number(v.amount) || 0), 0);
+  const getCommissionForRange = (e: Employee, from: string, to: string) => {
+    const sm = getStaffMember(e);
+    if (!sm || sm.salaryType === "fixed") return 0;
+    const pDepts = effectivePercentageDepts(sm);
+    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, from, to)).reduce((sum, s) => sum + s.paid, 0);
+    return Math.round(empRevenue * (sm.percentageValue / 100));
+  };
+  const getAdvancesForRange = (e: Employee, from: string, to: string) =>
+    employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid && inRangeDDMMYYYY(a.date, from, to));
+  const getTotalAdvancesForRange = (e: Employee, from: string, to: string) =>
+    getAdvancesForRange(e, from, to).reduce((s, a) => s + a.amount, 0);
+
+  // صافي شهر معيّن: لو الشهر مُغلَق مسبقاً نُرجع رقمه المُجمَّد كما هو (تاريخي،
+  // يشمل أي ترحيل كان محتسَباً وقت إغلاقه) — وإلا نحسبه حياً بنفس معادلة
+  // calcNet بالضبط لكن بفترة الشهر المطلوب + أي ترحيل من الشهر السابق له.
+  const computePeriodNet = (e: Employee, ym: string): number => {
+    const closed = getClosedPeriod(e, ym);
+    if (closed) return closed.netAmount;
+    const { start, end } = monthBounds(ym);
+    const base = e.salary + getCommissionForRange(e, start, end) + getShiftPay(e, start, end) - getExpensesForRange(e, start, end) - getTotalAdvancesForRange(e, start, end);
+    return base + getCarriedIn(e, ym);
+  };
+
+  // توزيع صافي شهر معيّن على صناديق أقسامه — نفس منطق getPaySplit بالضبط لكن
+  // بنسب إيراد ذاك الشهر تحديداً (وليس الشهر الحالي دائماً).
+  const getPaySplitForRange = (e: Employee, ym: string, net: number): { dept: string; amount: number }[] => {
+    const sm = getStaffMember(e);
+    const payDepts = (sm?.payFromDepts || []).filter(Boolean);
+    if (payDepts.length <= 1) return [{ dept: payDepts[0] || e.dept, amount: net }];
+    const { start, end } = monthBounds(ym);
+    const revenueByDept = payDepts.map(d => sessions.filter(s => s.doctor === e.name && s.dept === d && inRangeDDMMYYYY(s.date, start, end)).reduce((s, x) => s + x.paid, 0));
+    const totalRevenue = revenueByDept.reduce((s, r) => s + r, 0);
+    const shares = totalRevenue > 0 ? revenueByDept.map(r => r / totalRevenue) : payDepts.map(() => 1 / payDepts.length);
+    const amounts = shares.map(s => Math.round(net * s));
+    const diff = net - amounts.reduce((s, a) => s + a, 0);
+    if (amounts.length) amounts[amounts.length - 1] += diff;
+    return payDepts.map((d, i) => ({ dept: d, amount: amounts[i] }));
+  };
+
+  // كل الأشهر السابقة (من تاريخ الالتحاق حتى ما قبل الشهر الحالي) التي لم
+  // تُغلَق بعد لموظف معيّن — كل شهر يظهر كسطر مستقل (وليس مجموعاً واحداً).
+  const getPendingDuesForEmployee = (e: Employee): { yearMonth: string; net: number }[] => {
+    const sm = getStaffMember(e);
+    const joinRaw = sm?.joinDate;
+    if (!joinRaw) return [];
+    let jy = 0, jm = 0;
+    if (joinRaw.includes("/")) { const p = joinRaw.split("/").map(Number); jm = p[1]; jy = p[2]; }
+    else { const p = joinRaw.split("-").map(Number); jy = p[0]; jm = p[1]; }
+    if (!jy || !jm || isNaN(jy) || isNaN(jm)) return [];
+    const [curY, curM] = curYearMonth.split("-").map(Number);
+    const result: { yearMonth: string; net: number }[] = [];
+    let cy = jy, cm = jm;
+    let guard = 0;
+    while ((cy < curY || (cy === curY && cm < curM)) && guard < 600) {
+      guard++;
+      const ym = `${cy}-${String(cm).padStart(2, "0")}`;
+      if (!getClosedPeriod(e, ym)) result.push({ yearMonth: ym, net: computePeriodNet(e, ym) });
+      cm++; if (cm > 12) { cm = 1; cy++; }
+    }
+    return result;
+  };
+
+  const allPendingDues = employees.flatMap(e => getPendingDuesForEmployee(e).map(d => ({ emp: e, ...d })));
+  const totalPendingDues = allPendingDues.reduce((s, d) => s + d.net, 0);
+
+  // اسم القسم المعروض (وليس مجرد عدد) — انظر البند 2 بالمواصفة: يُشتق من نطاق
+  // احتساب النسبة الفعلي لأنواع نسبة/يومي/مختلط، أو من صناديق الصرف لنوع
+  // الوردية، أو قسم الموظف المرتبط مباشرة لنوع الراتب الثابت البحت.
+  const deptShortName = (id: string) => allDepts.find(d => d.id === id)?.short || id;
+  const getDeptNamesForRow = (e: Employee, sm?: StaffMember): string => {
+    if (!sm) return deptShortName(e.dept);
+    if (sm.salaryType === "shift") {
+      const depts = (sm.payFromDepts || []).filter(Boolean);
+      return depts.length ? depts.map(deptShortName).join("، ") : deptShortName(e.dept);
+    }
+    if (sm.salaryType === "fixed") return deptShortName(e.dept);
+    const pDepts = effectivePercentageDepts(sm);
+    return pDepts.length ? pDepts.map(deptShortName).join("، ") : deptShortName(e.dept);
+  };
+
+  // ── يبني كل بيانات "تفاصيل الاحتساب" (SalaryBreakdownDetail) لموظف بشهر
+  //    معيّن — بندياً حسب كل قسم/يوم وردية/سند/سلفة على حدة، بنفس فترة ومنطق
+  //    getCommission/getShiftPay/getUnappliedVouchers/getTotalAdvances تماماً
+  //    (وليس نسخة موازية قد تنحرف عن الرقم الإجمالي المعروض بالجدول) ──
+  const buildBreakdown = (e: Employee, ym: string) => {
+    const sm = getStaffMember(e);
+    const { start, end } = ym === curYearMonth ? { start: curMonthStart, end: curMonthEnd } : monthBounds(ym);
+    const isFixed = !sm || sm.salaryType === "fixed" || sm.salaryType === "both";
+    const fixedSalary = sm ? (sm.fixedSalary || 0) : e.salary;
+    const deptRows: BreakdownDeptRow[] = [];
+    if (sm && (sm.salaryType === "percentage" || sm.salaryType === "daily" || sm.salaryType === "both")) {
+      const pDepts = effectivePercentageDepts(sm);
+      pDepts.forEach(d => {
+        const revenue = sessions.filter(s => s.doctor === e.name && s.dept === d && inRangeDDMMYYYY(s.date, start, end)).reduce((sum, s) => sum + s.paid, 0);
+        const commission = Math.round(revenue * ((sm.percentageValue || 0) / 100));
+        deptRows.push({ deptName: deptShortName(d), revenue, pct: sm.percentageValue || 0, commission });
+      });
+    }
+    const commissionTotal = deptRows.reduce((s, d) => s + d.commission, 0);
+    let shift: BreakdownShiftInfo | null = null;
+    if (sm && sm.salaryType === "shift") {
+      const rate = staffHourlyRate(sm);
+      const nominalHours = hoursBetweenTimes(sm.shiftStart, sm.shiftEnd) || 0;
+      const empId = sm.nationalId || String(sm.id);
+      const recs = attendance.filter(r => r.empId === empId && inRangeDDMMYYYY(r.date, start, end));
+      const rows: BreakdownShiftRow[] = recs.map(r => { const hours = r.totalHours ?? hoursBetweenTimes(r.checkIn, r.checkOut) ?? 0; return { date: r.date, hours, amount: Math.round(hours * rate * 100) / 100 }; });
+      shift = { rate, nominalHours, shiftAmount: sm.shiftAmount || 0, rows, total: getShiftPay(e, start, end) };
+    }
+    const vouchers: BreakdownVoucherRow[] = getUnappliedVouchers(e).map((v: any) => ({ id: v.id, title: v.reason || v.category || "مصروف شخصي", date: v.date, amount: Number(v.amount) || 0 }));
+    const advances: BreakdownAdvanceRow[] = employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }));
+    const carriedIn = getCarriedIn(e, ym);
+    const net = ym === curYearMonth ? calcNet(e) : computePeriodNet(e, ym);
+    return { isFixed, fixedSalary, deptRows, commissionTotal, shift, vouchers, advances, carriedIn, net };
+  };
+
+  // إغلاق شهر معيّن (صرف إن كان موجباً، أو إقرار دين إن كان سالباً/صفراً) —
+  // انظر البنود 4-6 بالمواصفة لتفاصيل الفرق بين الحالتين.
+  const handleClosePeriod = (e: Employee, ym: string) => {
+    const net = computePeriodNet(e, ym);
+    const { start, end } = monthBounds(ym);
+    const closedDate = _localISO();
+    const consumedVoucherIds = getVouchersForRange(e, start, end).map((v: any) => v.id);
+    const consumedAdvanceIds = getAdvancesForRange(e, start, end).map(a => a.id);
+    const applyConsumption = () => {
+      if (consumedVoucherIds.length) {
+        setPaymentVouchers?.(p => p.map((v: any) => consumedVoucherIds.includes(v.id) ? { ...v, applied_to_payroll: true } : v));
+        consumedVoucherIds.forEach(vid => api.finance.paymentVouchers.update(vid, { applied_to_payroll: true }).catch(() => { }));
+      }
+      if (consumedAdvanceIds.length) {
+        const rDate = _today();
+        setEmployeeAdvances?.(p => p.map(a => consumedAdvanceIds.includes(a.id) ? { ...a, repaid: true, repaidDate: rDate } : a));
+        consumedAdvanceIds.forEach(aid => api.staff.advances.update(aid, { repaid: true, repaid_date: rDate }).catch(() => { }));
+      }
+    };
+    const persistPeriod = (status: "paid" | "debt_acknowledged") => {
+      api.staff.salaryPeriods.create({ employee_id: e.id, staff_id: e.staffId ?? null, year_month: ym, net_amount: net, status, closed_date: closedDate, carried_in: getCarriedIn(e, ym) })
+        .then((r: any) => {
+          if (!r) return;
+          setSalaryPeriods?.(p => p.some(x => x.id === Number(r.id)) ? p : [...p, {
+            id: Number(r.id), employeeId: Number(r.employee_id), staffId: r.staff_id != null ? Number(r.staff_id) : null,
+            yearMonth: r.year_month, netAmount: Number(r.net_amount) || 0, status: r.status, closedDate: r.closed_date || closedDate, carriedIn: Number(r.carried_in) || 0,
+          }]);
+        }).catch(() => { });
+    };
+    if (net > 0) {
+      const split = getPaySplitForRange(e, ym, net);
+      if (getPaySplitTotalAvailable(split) < net) { toast("⚠️ رصيد الصندوق غير كافٍ", "warning"); return; }
+      split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${e.name} — ${monthLabel(ym)}`, "راتب موظف", e.name));
+      applyConsumption();
+      persistPeriod("paid");
+      toast(`تم صرف راتب ${e.name} عن ${monthLabel(ym)} ✓`);
+    } else {
+      // ── لا حركة صندوق إطلاقاً هون — لكن السندات/السلف اللي دخلت فعلياً بهذا
+      //    الاحتساب السالب لازم تُعلَّم "مُستهلَكة" أيضاً، وإلا كانت ستُخصم مرة
+      //    ثانية من حساب الشهر القادم رغم إنها أصلاً محسوبة ضمن carried_in ──
+      applyConsumption();
+      persistPeriod("debt_acknowledged");
+      toast("تم تسجيل إقرار الدين — سيُخصم من راتب الشهر القادم", "warning");
+    }
+  };
+
   const totalSalaries = employees.reduce((s, e) => s + e.salary, 0);
   const totalAdvancesAll = employees.reduce((s, e) => s + getTotalAdvances(e), 0);
   const inPayRange = (e: Employee) => { if (!payFrom && !payTo) return true; if (e.status === "pending") return true; if (!e.paidDate) return (!payFrom && !payTo); const parts = e.paidDate.split("/"); const iso = `${parts[2]}-${parts[1]}-${parts[0]}`; if (payFrom && iso < payFrom) return false; if (payTo && iso > payTo) return false; return true; };
@@ -9600,15 +9860,26 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     // ── نلتقط سندات الصرف اللي دخلت فعلياً بحساب هذا الراتب *قبل* الصرف، لنعلّمها
     //    "مُستهلَكة" بعده مباشرة — فما تنخصم مرة ثانية من رواتب الأشهر الجاية ──
     const consumedVoucherIds = getUnappliedVouchers(confirmModal).map((v: any) => v.id);
+    // ── جديد: نلتقط أيضاً السلف القائمة اللي دخلت فعلياً بحساب هذا الراتب،
+    //    لتُعلَّم "مُسدَّدة" تلقائياً بعد الصرف مباشرة — بدل الاعتماد على زر
+    //    "سدَّد" يدوي منفصل بشاشة السلف (أُزيل، انظر EmployeeAdvancesScreen) ──
+    const consumedAdvanceIds = getTotalAdvances(confirmModal) > 0
+      ? employeeAdvances.filter(a => (a.staffId != null && confirmModal.staffId != null ? a.staffId === confirmModal.staffId : a.empName === confirmModal.name) && !a.repaid).map(a => a.id)
+      : [];
     setPaying(true);
     setTimeout(() => {
-      const paidDate = "29/06/2026";
-      split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${confirmModal.name} — يونيو 2026`, "راتب موظف", confirmModal.name));
+      const paidDate = _today();
+      split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${confirmModal.name} — ${monthLabel(curYearMonth)}`, "راتب موظف", confirmModal.name));
       setEmployees(p => p.map(e => e.id === confirmModal.id ? { ...e, status: "paid" as const, paidDate } : e));
       api.staff.employees.update(confirmModal.id, { status: "paid", paid_date: _localISO(), commission: getCommission(confirmModal), net_salary: calcNet(confirmModal) });
       if (consumedVoucherIds.length) {
         setPaymentVouchers?.(p => p.map((v: any) => consumedVoucherIds.includes(v.id) ? { ...v, applied_to_payroll: true } : v));
         consumedVoucherIds.forEach(vid => api.finance.paymentVouchers.update(vid, { applied_to_payroll: true }).catch(() => { }));
+      }
+      if (consumedAdvanceIds.length) {
+        const rDate = _today();
+        setEmployeeAdvances?.(p => p.map(a => consumedAdvanceIds.includes(a.id) ? { ...a, repaid: true, repaidDate: rDate } : a));
+        consumedAdvanceIds.forEach(aid => api.staff.advances.update(aid, { repaid: true, repaid_date: rDate }).catch(() => { }));
       }
       setPaying(false); setConfirmModal(null);
       toast(split.length > 1 ? `تم صرف راتب ${confirmModal.name} ✓ — مقسّم على ${split.length} صناديق أقسام` : `تم صرف راتب ${confirmModal.name} ✓ — خُصم من صندوق القسم`);
@@ -9617,6 +9888,41 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const statusBadge = (s: string) => s === "paid" ? <Badge color="success">مصروف</Badge> : s === "calculated" ? <Badge color="warning">مُحتسب</Badge> : <Badge color="neutral">لم يُحتسب</Badge>;
   return (
     <div className="space-y-5">
+      <div className="flex gap-2">
+        {[{ k: "current", l: "الرواتب الحالية" }, { k: "dues", l: `مستحقات${allPendingDues.length ? ` (${allPendingDues.length})` : ""}` }].map(t => (
+          <button key={t.k} onClick={() => setPayrollTab(t.k as "current" | "dues")} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${payrollTab === t.k ? "bg-[#1B3A6B] text-white" : "bg-white text-[#555] hover:bg-[#EBF3FB]"}`} style={{ border: "1px solid #E0E0E0" }}>{t.l}</button>
+        ))}
+      </div>
+      {payrollTab === "dues" && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <KPICard title="الرواتب المستحقة" value={fmt(totalPendingDues)} Icon={Wallet} color={totalPendingDues < 0 ? "danger" : "primary"} />
+            <KPICard title="عدد الأشهر المعلّقة" value={String(allPendingDues.length)} Icon={Calendar} color="secondary" />
+          </div>
+          <Card title="مستحقات الأشهر السابقة (غير مصروفة بعد)">
+            {allPendingDues.length === 0 ? <EmptyState msg="لا يوجد رواتب مستحقة حالياً 🎉" /> : (
+              <table className="w-full text-sm">
+                <THead cols={["الموظف", "القسم", "الشهر", "المبلغ", ""]} />
+                <tbody>{allPendingDues.map((d, i) => {
+                  const dueKey = `${d.emp.id}-${d.yearMonth}`;
+                  const isOpen = expandedDueKey === dueKey;
+                  return <React.Fragment key={dueKey}>
+                    <TRow i={i}>
+                      <TD className="font-medium">{d.emp.name}</TD>
+                      <TD><Badge color="info">{allDepts.find(ad => ad.id === d.emp.dept)?.short || d.emp.dept}</Badge></TD>
+                      <TD className="text-xs text-[#555]">{monthLabel(d.yearMonth)}</TD>
+                      <TD className={d.net < 0 ? "font-bold text-[#D32F2F]" : "font-bold text-[#0D7377]"}>{d.net < 0 ? <span title="الموظف مدين للمركز">{fmt(d.net)} (مدين)</span> : fmt(d.net)}</TD>
+                      <TD><div className="flex items-center gap-1 flex-wrap"><Btn small variant="ghost" onClick={() => setExpandedDueKey(isOpen ? null : dueKey)}>🔍 تفاصيل</Btn><Btn small variant={d.net > 0 ? "success" : "danger"} onClick={() => handleClosePeriod(d.emp, d.yearMonth)}>صرف</Btn></div></TD>
+                    </TRow>
+                    {isOpen && <tr><td colSpan={5} className="p-3" style={{ backgroundColor: "#FAFAFA" }}><SalaryBreakdownDetail {...buildBreakdown(d.emp, d.yearMonth)} /></td></tr>}
+                  </React.Fragment>;
+                })}</tbody>
+              </table>
+            )}
+          </Card>
+        </div>
+      )}
+      {payrollTab === "current" && <>
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <KPICard title="إجمالي الرواتب الأساسية" value={fmt(totalSalaries)} Icon={Users} color="secondary" />
         <KPICard title="إجمالي الخصومات" value={fmt(employees.reduce((s, e) => s + getExpenses(e), 0))} Icon={Receipt} color="warning" />
@@ -9628,7 +9934,37 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
         <Info size={14} className="text-[#1B3A6B] flex-shrink-0" />
         <p className="text-xs text-[#1B3A6B]">معادلة الراتب الفعلي: <strong>الراتب الأساسي + نسبة الإيرادات الفردية − الخصومات − السلف القائمة = الصافي المستحق</strong></p>
       </div>
-      <Card title="رواتب موظفي يونيو 2026" action={<div className="flex gap-2"><Btn small variant="ghost" onClick={() => { const rows = filteredEmps.map(e => { const comm = getCommission(e); const adv = getTotalAdvances(e); const ps = getPaySplit(e); return [e.name, ps.length > 1 ? ps.length + " أقسام" : (allDepts.find(d => d.id === ps[0]?.dept)?.short || e.dept), e.salary, comm, getExpenses(e), adv, e.status !== "pending" ? calcNet(e) : 0, e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"]; }); const ws = XLSX.utils.aoa_to_sheet([["الموظف", "القسم", "الأساسي (₪)", "نسبة الإيراد", "الخصومات", "السلف", "الصافي المستحق", "الحالة"], ...rows, [], ["الإجمالي", "", totalSalaries, "", "", "", filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0), ""]]); ws["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }]; const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "رواتب الموظفين"); XLSX.writeFile(wb, `رواتب_الموظفين_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success"); }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => { const html = `<h2>رواتب موظفي يونيو 2026</h2><table><thead><tr><th>الموظف</th><th>القسم</th><th>الأساسي (₪)</th><th>نسبة الإيراد</th><th>الخصومات</th><th>السلف</th><th>الصافي المستحق</th><th>الحالة</th></tr></thead><tbody>${filteredEmps.map(e => { const comm = getCommission(e); const adv = getTotalAdvances(e); const ps = getPaySplit(e); return `<tr><td>${e.name}</td><td>${ps.length > 1 ? ps.length + " أقسام" : (allDepts.find(d => d.id === ps[0]?.dept)?.short || e.dept)}</td><td>${fmt(e.salary)}</td><td>${comm > 0 ? "+" + fmt(comm) : "—"}</td><td>${getExpenses(e) > 0 ? "−" + fmt(getExpenses(e)) : "—"}</td><td>${adv > 0 ? "−" + fmt(adv) : "—"}</td><td>${e.status !== "pending" ? fmt(calcNet(e)) : "—"}</td><td>${e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"}${e.paidDate ? " — " + e.paidDate : ""}</td></tr>`; }).join("")}</tbody><tfoot><tr><td colspan="2"><strong>الإجمالي</strong></td><td><strong>${fmt(totalSalaries)}</strong></td><td colspan="3"></td><td><strong>${fmt(filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0))}</strong></td><td></td></tr></tfoot></table>`; printHtml(html, "رواتب الموظفين"); }}><Printer size={14} />طباعة</Btn></div>}>
+      <Card title="رواتب موظفي يونيو 2026" action={<div className="flex gap-2"><Btn small variant="ghost" onClick={() => {
+        const rows = filteredEmps.map(e => {
+          const sm = getStaffMember(e);
+          const isFixed = !sm || sm.salaryType === "fixed" || sm.salaryType === "both";
+          const isPct = sm && (sm.salaryType === "percentage" || sm.salaryType === "both");
+          const isDaily = sm && sm.salaryType === "daily";
+          const isShift = sm && sm.salaryType === "shift";
+          const comm = getCommission(e);
+          const shiftPay = getShiftPay(e, curMonthStart, curMonthEnd);
+          const adv = getTotalAdvances(e);
+          const carried = getCarriedIn(e, curYearMonth);
+          return [e.name, getDeptNamesForRow(e, sm), isFixed ? (sm ? sm.fixedSalary : e.salary) : "", isPct ? comm : "", isDaily ? comm : "", isShift ? shiftPay : "", getExpenses(e), adv, carried, e.status !== "pending" ? calcNet(e) : 0, e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"];
+        });
+        const ws = XLSX.utils.aoa_to_sheet([["الموظف", "القسم", "راتب ثابت شهري", "نسبة من الإيرادات", "الإيرادات اليومية", "الورديات/الشيفتات", "الخصومات", "السلف", "دين مرحّل", "الصافي المستحق", "الحالة"], ...rows, [], ["الإجمالي", "", totalSalaries, "", "", "", "", "", "", filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0), ""]]);
+        ws["!cols"] = [{ wch: 20 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }];
+        const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "رواتب الموظفين"); XLSX.writeFile(wb, `رواتب_الموظفين_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`); toast("✅ تم تصدير Excel", "success");
+      }}><Download size={14} />Excel</Btn><Btn small variant="ghost" onClick={() => {
+        const html = `<h2>رواتب موظفي يونيو 2026</h2><table><thead><tr><th>الموظف</th><th>القسم</th><th>راتب ثابت شهري</th><th>نسبة من الإيرادات</th><th>الإيرادات اليومية</th><th>الورديات/الشيفتات</th><th>الخصومات</th><th>السلف</th><th>دين مرحّل</th><th>الصافي المستحق</th><th>الحالة</th></tr></thead><tbody>${filteredEmps.map(e => {
+          const sm = getStaffMember(e);
+          const isFixed = !sm || sm.salaryType === "fixed" || sm.salaryType === "both";
+          const isPct = sm && (sm.salaryType === "percentage" || sm.salaryType === "both");
+          const isDaily = sm && sm.salaryType === "daily";
+          const isShift = sm && sm.salaryType === "shift";
+          const comm = getCommission(e);
+          const shiftPay = getShiftPay(e, curMonthStart, curMonthEnd);
+          const adv = getTotalAdvances(e);
+          const carried = getCarriedIn(e, curYearMonth);
+          return `<tr><td>${e.name}</td><td>${getDeptNamesForRow(e, sm)}</td><td>${isFixed ? fmt(sm ? sm.fixedSalary : e.salary) : "—"}</td><td>${isPct ? (comm > 0 ? "+" + fmt(comm) : "—") : "—"}</td><td>${isDaily ? (comm > 0 ? "+" + fmt(comm) : "—") : "—"}</td><td>${isShift ? fmt(shiftPay) : "—"}</td><td>${getExpenses(e) > 0 ? "−" + fmt(getExpenses(e)) : "—"}</td><td>${adv > 0 ? "−" + fmt(adv) : "—"}</td><td>${carried !== 0 ? fmt(carried) : "—"}</td><td>${e.status !== "pending" ? fmt(calcNet(e)) : "—"}</td><td>${e.status === "paid" ? "مصروف" : e.status === "calculated" ? "مُحتسب" : "لم يُحتسب"}${e.paidDate ? " — " + e.paidDate : ""}</td></tr>`;
+        }).join("")}</tbody><tfoot><tr><td colspan="2"><strong>الإجمالي</strong></td><td><strong>${fmt(totalSalaries)}</strong></td><td colspan="6"></td><td><strong>${fmt(filteredEmps.reduce((s, e) => s + (e.status !== "pending" ? calcNet(e) : 0), 0))}</strong></td><td></td></tr></tfoot></table>`;
+        printHtml(html, "رواتب الموظفين");
+      }}><Printer size={14} />طباعة</Btn></div>}>
         <div className="flex items-center gap-3 p-2.5 rounded-xl mb-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BEDCF5" }}>
           <Calendar size={14} className="text-[#1B3A6B] flex-shrink-0" />
           <span className="text-xs font-semibold text-[#1B3A6B]">تصفية بتاريخ الصرف:</span>
@@ -9638,29 +9974,46 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
           {(payFrom || payTo) && <button onClick={() => { setPayFrom(""); setPayTo("") }} className="text-xs text-[#D32F2F] hover:underline flex items-center gap-1"><X size={11} />مسح</button>}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[700px]">
-            <THead cols={["الموظف", "القسم", "الأساسي", "نسبة الإيراد", "الخصومات", "السلف", "الصافي المستحق", "الحالة", ""]} />
+          <table className="w-full text-sm min-w-[1400px]">
+            <THead cols={["الموظف", "القسم", "راتب ثابت شهري", "نسبة من الإيرادات", "الإيرادات اليومية", "الورديات/الشيفتات", "الخصومات", "السلف", "دين مرحّل", "الصافي المستحق", "الحالة", ""]} />
             <tbody>{filteredEmps.map((e, i) => {
               const split = getPaySplit(e);
               const insuf = getPaySplitTotalAvailable(split) < calcNet(e);
-              const deptShort = split.length > 1 ? `${split.length} أقسام` : (allDepts.find(d => d.id === split[0]?.dept)?.short || e.dept);
+              const sm = getStaffMember(e);
+              const deptNames = getDeptNamesForRow(e, sm);
+              const isFixed = !sm || sm.salaryType === "fixed" || sm.salaryType === "both";
+              const isPct = sm && (sm.salaryType === "percentage" || sm.salaryType === "both");
+              const isDaily = sm && sm.salaryType === "daily";
+              const isShift = sm && sm.salaryType === "shift";
               const commission = getCommission(e);
+              const shiftRate = isShift ? staffHourlyRate(sm) : 0;
+              const shiftPayVal = isShift ? getShiftPay(e, curMonthStart, curMonthEnd) : 0;
               const advances = getTotalAdvances(e);
-              return <TRow key={e.id} i={i}>
-                <TD className="font-medium">{e.name}</TD>
-                <TD><Badge color="info">{deptShort}</Badge></TD>
-                <TD className="font-semibold">{fmt(e.salary)}</TD>
-                <TD className={commission > 0 ? "text-[#388E3C] font-medium" : "text-[#999]"}>{commission > 0 ? `+${fmt(commission)}` : "—"}</TD>
-                <TD className="text-[#FF8F00] font-medium">{getExpenses(e) > 0 ? `−${fmt(getExpenses(e))}` : "—"}</TD>
-                <TD className={advances > 0 ? "text-[#D32F2F] font-medium" : "text-[#999]"}>{advances > 0 ? `−${fmt(advances)}` : "—"}</TD>
-                <TD className={calcNet(e) < 0 ? "font-bold text-[#D32F2F]" : "font-bold text-[#0D7377]"}>{e.status !== "pending" ? (calcNet(e) < 0 ? <span title="الموظف مدين للمركز">{fmt(calcNet(e))} (مدين)</span> : fmt(calcNet(e))) : <span className="text-[#999]">—</span>}</TD>
-                <TD>{statusBadge(e.status)}{e.paidDate && <span className="text-xs text-[#999] mr-1">{e.paidDate}</span>}</TD>
-                <TD><div className="flex items-center gap-1 flex-wrap">{e.status === "pending" && <Btn small variant="outline" onClick={() => { const comm = getCommission(e); const net = calcNet(e); setEmployees(p => p.map(x => x.id === e.id ? { ...x, status: "calculated" as const, commission: comm, netSalary: net } : x)); api.staff.employees.update(e.id, { status: "calculated", commission: comm, net_salary: net }); }}>احتساب</Btn>}{e.status === "calculated" && <Btn small variant="success" onClick={() => setConfirmModal(e)}>{insuf ? "⚠️ رصيد ناقص" : "صرف الراتب"}</Btn>}<Btn small variant="ghost" onClick={() => setPayslipModal({ emp: e, from: curMonthStart, to: curMonthEnd })}><Printer size={12} />قسيمة</Btn></div></TD>
-              </TRow>;
+              const carried = getCarriedIn(e, curYearMonth);
+              const dueCount = getPendingDuesForEmployee(e).length;
+              const isExpanded = expandedEmployeeId === e.id;
+              return <React.Fragment key={e.id}>
+                <TRow i={i}>
+                  <TD className="font-medium">{e.name}</TD>
+                  <TD><Badge color="info">{deptNames}</Badge></TD>
+                  <TD className="font-semibold">{isFixed ? fmt(sm ? sm.fixedSalary : e.salary) : <span className="text-[#999]">—</span>}</TD>
+                  <TD className={isPct ? (commission > 0 ? "text-[#388E3C] font-medium" : "text-[#999]") : "text-[#999]"}>{isPct ? (commission > 0 ? `+${fmt(commission)}` : "—") : "—"}</TD>
+                  <TD className={isDaily ? (commission > 0 ? "text-[#388E3C] font-medium" : "text-[#999]") : "text-[#999]"}>{isDaily ? (commission > 0 ? `+${fmt(commission)}` : "—") : "—"}</TD>
+                  <TD className={isShift ? "text-[#388E3C] font-medium" : "text-[#999]"}>{isShift ? <span title={`${fmt(shiftRate)}₪/ساعة`}>{fmt(shiftPayVal)}<br /><span className="text-[10px] text-[#999] font-normal">{fmt(shiftRate)}₪/ساعة</span></span> : "—"}</TD>
+                  <TD className="text-[#FF8F00] font-medium">{getExpenses(e) > 0 ? `−${fmt(getExpenses(e))}` : "—"}</TD>
+                  <TD className={advances > 0 ? "text-[#D32F2F] font-medium" : "text-[#999]"}>{advances > 0 ? `−${fmt(advances)}` : "—"}</TD>
+                  <TD className={carried !== 0 ? "text-[#D32F2F] font-medium" : "text-[#999]"}>{carried !== 0 ? fmt(carried) : "—"}</TD>
+                  <TD className={calcNet(e) < 0 ? "font-bold text-[#D32F2F]" : "font-bold text-[#0D7377]"}>{e.status !== "pending" ? (calcNet(e) < 0 ? <span title="الموظف مدين للمركز">{fmt(calcNet(e))} (مدين)</span> : fmt(calcNet(e))) : <span className="text-[#999]">—</span>}</TD>
+                  <TD><div className="flex items-center gap-1 flex-wrap">{statusBadge(e.status)}{e.paidDate && <span className="text-xs text-[#999] mr-1">{e.paidDate}</span>}{dueCount > 0 && <button onClick={() => setPayrollTab("dues")} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "#FFF3E0", color: "#E65100", border: "1px solid #FFCC80" }}>⚠️ {dueCount} شهر مستحق</button>}</div></TD>
+                  <TD><div className="flex items-center gap-1 flex-wrap">{e.status === "pending" && <Btn small variant="outline" onClick={() => { const comm = getCommission(e); const net = calcNet(e); setEmployees(p => p.map(x => x.id === e.id ? { ...x, status: "calculated" as const, commission: comm, netSalary: net } : x)); api.staff.employees.update(e.id, { status: "calculated", commission: comm, net_salary: net }); setExpandedEmployeeId(e.id); }}>احتساب</Btn>}{e.status === "calculated" && <Btn small variant="success" onClick={() => setConfirmModal(e)}>{insuf ? "⚠️ رصيد ناقص" : "صرف الراتب"}</Btn>}<Btn small variant="ghost" onClick={() => setExpandedEmployeeId(isExpanded ? null : e.id)}><span title="تفاصيل الاحتساب">🔍</span></Btn><Btn small variant="ghost" onClick={() => setPayslipModal({ emp: e, from: curMonthStart, to: curMonthEnd })}><Printer size={12} />قسيمة</Btn></div></TD>
+                </TRow>
+                {isExpanded && <tr><td colSpan={12} className="p-3" style={{ backgroundColor: "#FAFAFA" }}><SalaryBreakdownDetail {...buildBreakdown(e, curYearMonth)} /></td></tr>}
+              </React.Fragment>;
             })}</tbody>
           </table>
         </div>
       </Card>
+      </>}
       <Modal open={!!confirmModal} onClose={() => setConfirmModal(null)} title="تأكيد صرف الراتب"
         footer={<><Btn variant="success" loading={paying} disabled={!!confirmModal && calcNet(confirmModal) <= 0} onClick={handlePay}><Check size={16} />تأكيد الصرف</Btn><Btn variant="outline" onClick={() => setConfirmModal(null)}>إلغاء</Btn></>}>
         {confirmModal && (() => {
@@ -12793,29 +13146,26 @@ function StaffManagementScreen({
           )}
           {(form.salaryType === "percentage" || form.salaryType === "both" || form.salaryType === "daily") && (<>
             <InputField label="نسبة من الإيرادات (%)" type="number" value={String(form.percentageValue)} onChange={v => setF("percentageValue", Number(v))} placeholder="مثال: 5" />
-            {form.salaryType !== "daily" && (
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-semibold text-[#555]">الأقسام التي تُحتسب منها نسبة الإيرادات <span className="text-[#999] font-normal">(اتركها فارغة لاحتساب جميع جلسات الموظف)</span></label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {[...DEPARTMENTS, ...customDepts].map(d => {
-                    const checked = (form.percentageDepts || []).includes(d.id);
-                    return (
-                      <label key={d.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs select-none transition-colors ${checked ? "border-[#1B3A6B] bg-[#EBF3FB] text-[#1B3A6B] font-medium" : "border-[#E0E0E0] text-[#555] hover:bg-[#F5F5F5]"}`}>
-                        <input type="checkbox" checked={checked} onChange={e => { const cur = form.percentageDepts || []; setF("percentageDepts", e.target.checked ? [...cur, d.id] : cur.filter((x: string) => x !== d.id)); }} className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span className="truncate">{d.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
+            {/* ── "الإيرادات اليومية" (daily) نوع رواتب مطابق تماماً لـ"نسبة
+                من الإيرادات" بمنطق الحساب (بقرار صريح: كل موظف نسبته من
+                جلساته هو بالأقسام المحددة إله، مش من إجمالي إيراد القسم كله)
+                — فبالتالي واجهة الإعداد لازم تكون نفسها بالضبط، بدون فرع
+                خاص كان يُخفي اختيار الأقسام ويعرض نص "0%" مضلِّل. ──*/}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold text-[#555]">الأقسام التي تُحتسب منها نسبة الإيرادات <span className="text-[#999] font-normal">(اتركها فارغة لاحتساب جميع جلسات الموظف)</span></label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {[...DEPARTMENTS, ...customDepts].map(d => {
+                  const checked = (form.percentageDepts || []).includes(d.id);
+                  return (
+                    <label key={d.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs select-none transition-colors ${checked ? "border-[#1B3A6B] bg-[#EBF3FB] text-[#1B3A6B] font-medium" : "border-[#E0E0E0] text-[#555] hover:bg-[#F5F5F5]"}`}>
+                      <input type="checkbox" checked={checked} onChange={e => { const cur = form.percentageDepts || []; setF("percentageDepts", e.target.checked ? [...cur, d.id] : cur.filter((x: string) => x !== d.id)); }} className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate">{d.name}</span>
+                    </label>
+                  );
+                })}
               </div>
-            )}
-            {form.salaryType === "daily" ? (
-              <div className="p-3 rounded-xl text-xs" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
-                <p className="font-semibold text-[#FF8F00] mb-1">📊 الإيرادات اليومية</p>
-                <p className="text-[#555]">يُحتسب راتب الموظف بناءً على إيرادات القسم اليومية بنسبة <strong>{form.percentageValue || 0}%</strong>.</p>
-              </div>
-            ) : (
-              <div className="p-3 rounded-xl bg-[#EBF3FB] text-xs text-[#1B3A6B]" style={{ border: "1px solid #BBDEFB" }}>
+            </div>
+            <div className="p-3 rounded-xl bg-[#EBF3FB] text-xs text-[#1B3A6B]" style={{ border: "1px solid #BBDEFB" }}>
                 <p className="font-semibold mb-1">📌 النسبة تُحتسب على جلسات الموظف الخاصة فقط</p>
                 <p className="text-[#555]">
                   {(form.percentageDepts || []).length > 0
@@ -12840,7 +13190,6 @@ function StaffManagementScreen({
                   </div> : <p className="mt-1 text-[#999]">لا توجد جلسات مسجَّلة بهذا الاسم بعد.</p>;
                 })()}
               </div>
-            )}
           </>)}
           {form.salaryType === "shift" && (
             <div className="space-y-3 p-4 rounded-xl" style={{ backgroundColor: "#F3E5F5", border: "1px solid #CE93D8" }}>
@@ -13343,10 +13692,11 @@ function DeptManagementScreen({ customDepts, setCustomDepts, onAddDeptDrawer, to
 
 // ─── MY FINANCIAL ACCOUNT SCREEN (شاشة الحساب المالي الشخصي للموظف) ──────────
 
-function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employees, staffAdvanceRequests, onSubmitStaffAdvanceRequest, toast, drawers = {}, sessions = [], paymentVouchers = [] }: {
+function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employees, staffAdvanceRequests, onSubmitStaffAdvanceRequest, toast, drawers = {}, sessions = [], paymentVouchers = [], salaryPeriods = [], customDepts = [] }: {
   staff: StaffMember; employeeAdvances: EmployeeAdvance[]; attendance: AttendanceRecord[]; employees: Employee[];
   staffAdvanceRequests: StaffAdvanceRequest[]; onSubmitStaffAdvanceRequest: (r: Omit<StaffAdvanceRequest, "id" | "status">) => void; toast: (m: string, t?: any) => void;
-  drawers?: Record<string, DrawerState>; sessions?: PatientSession[]; paymentVouchers?: any[];
+  drawers?: Record<string, DrawerState>; sessions?: PatientSession[]; paymentVouchers?: any[]; salaryPeriods?: SalaryPeriod[];
+  customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>;
 }) {
   const salaryLabel: Record<SalaryType, string> = { fixed: "راتب ثابت", percentage: "نسبة من الإيرادات", both: "راتب ثابت + نسبة", daily: "الإيرادات اليومية", shift: "الورديات / الشيفتات" };
   const myAdvances = employeeAdvances.filter(a => a.staffId != null ? a.staffId === staff.id : a.empName === staff.name);
@@ -13396,7 +13746,72 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   const rangeShiftAttendance = isShiftSalary ? myAttendance.filter(a => inRangeDDMMYYYY(a.date, payFrom, payTo)) : [];
   const shiftHours = rangeShiftAttendance.reduce((s, a) => s + (a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0), 0);
   const shiftPay = Math.round(shiftHours * shiftRate * 100) / 100;
-  const netPayslip = (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay - rangePersonalExp - totalPending;
+  // ── دين مرحّل من شهر سابق أُغلق بحالة "إقرار دين" — نفس منطق getCarriedIn
+  //    بشاشة الرواتب الإدارية، لكن مبني هنا محلياً لأن هذه الشاشة لا تشارك
+  //    نفس closures ("MyFinancialAccountScreen" مكوّن مستقل تماماً). يُضاف
+  //    فقط عندما تكون الفترة المختارة هي الشهر التقويمي الحالي بالضبط —
+  //    فالترحيل مفهوم خاص بـ"الشهر الحالي الحي"، لا بفترة قسيمة تاريخية حرة. ──
+  const deptShortName = (id: string) => DEPARTMENTS.find(d => d.id === id)?.short || customDepts.find(d => d.id === id)?.short || id;
+  const myYearMonth = curMonthStartISO.slice(0, 7);
+  const monthBoundsOf = (ym: string) => { const [y, m] = ym.split("-").map(Number); const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate(); return { start: `${ym}-01`, end: `${ym}-${String(lastDay).padStart(2, "0")}` }; };
+  const prevYearMonthOf = (ym: string) => { const [y, m] = ym.split("-").map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; };
+  const myClosedPeriod = (ym: string): SalaryPeriod | undefined => myEmployee ? salaryPeriods.find(p => p.employeeId === myEmployee.id && p.yearMonth === ym) : undefined;
+  const myCarriedIn = (ym: string): number => { const prev = myClosedPeriod(prevYearMonthOf(ym)); return prev && prev.status === "debt_acknowledged" ? prev.netAmount : 0; };
+  const isCurrentMonthRange = payFrom === curMonthStartISO && payTo === curMonthEndISO;
+  const carriedIn = isCurrentMonthRange ? myCarriedIn(myYearMonth) : 0;
+  const netPayslip = (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay - rangePersonalExp - totalPending + carriedIn;
+  // صافي شهر ماضٍ غير مُغلَق — نفس منطق computePeriodNet بشاشة الرواتب الإدارية.
+  const myComputePeriodNet = (ym: string): number => {
+    const closed = myClosedPeriod(ym);
+    if (closed) return closed.netAmount;
+    const { start, end } = monthBoundsOf(ym);
+    const rSessions = sessions.filter(s => s.doctor === staff.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, start, end));
+    const rRevenue = rSessions.reduce((sum, s) => sum + s.paid, 0);
+    const comm = isPctSalary ? Math.round(rRevenue * ((staff.percentageValue || 0) / 100)) : 0;
+    const expV = myExpenseVouchers.filter(t => !t.applied && inRangeDDMMYYYY(t.date, start, end));
+    const exp = expV.reduce((s, t) => s + t.amount, 0);
+    const advR = myAdvances.filter(a => !a.repaid && inRangeDDMMYYYY(a.date, start, end));
+    const advAmt = advR.reduce((s, a) => s + a.amount, 0);
+    const shR = isShiftSalary ? myAttendance.filter(a => inRangeDDMMYYYY(a.date, start, end)) : [];
+    const shHrs = shR.reduce((s, a) => s + (a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0), 0);
+    const shPay = Math.round(shHrs * shiftRate * 100) / 100;
+    const base = (isFixSalary ? (staff.fixedSalary || 0) : 0) + comm + shPay - exp - advAmt;
+    return base + myCarriedIn(ym);
+  };
+  // كل الأشهر السابقة غير المُغلَقة بعد لحسابي (قراءة فقط — لا صرف من هنا).
+  const myPendingDues: { yearMonth: string; net: number }[] = (() => {
+    if (!myEmployee) return [];
+    const joinRaw = staff.joinDate;
+    if (!joinRaw) return [];
+    let jy = 0, jm = 0;
+    if (joinRaw.includes("/")) { const p = joinRaw.split("/").map(Number); jm = p[1]; jy = p[2]; }
+    else { const p = joinRaw.split("-").map(Number); jy = p[0]; jm = p[1]; }
+    if (!jy || !jm || isNaN(jy) || isNaN(jm)) return [];
+    const [curY, curM] = myYearMonth.split("-").map(Number);
+    const result: { yearMonth: string; net: number }[] = [];
+    let cy = jy, cm = jm, guard = 0;
+    while ((cy < curY || (cy === curY && cm < curM)) && guard < 600) {
+      guard++;
+      const ym = `${cy}-${String(cm).padStart(2, "0")}`;
+      if (!myClosedPeriod(ym)) result.push({ yearMonth: ym, net: myComputePeriodNet(ym) });
+      cm++; if (cm > 12) { cm = 1; cy++; }
+    }
+    return result;
+  })();
+  const monthLabelOf = (ym: string) => { const [y, m] = ym.split("-").map(Number); return new Date(Date.UTC(y, (m || 1) - 1, 1)).toLocaleDateString("ar-EG", { month: "long", year: "numeric" }); };
+  // ── بيانات "تفاصيل الاحتساب" (SalaryBreakdownDetail) لفترة القسيمة المختارة
+  //    حالياً (افتراضياً الشهر الحالي) — بنفس أرقام البطاقات أعلاه بالضبط ──
+  const [showMyBreakdown, setShowMyBreakdown] = useState(false);
+  const myBreakdownDeptRows: BreakdownDeptRow[] = isPctSalary ? pDepts.map(d => {
+    const revenue = sessions.filter(s => s.doctor === staff.name && s.dept === d && inRangeDDMMYYYY(s.date, payFrom, payTo)).reduce((sum, s) => sum + s.paid, 0);
+    const comm = Math.round(revenue * ((staff.percentageValue || 0) / 100));
+    return { deptName: deptShortName(d), revenue, pct: staff.percentageValue || 0, commission: comm };
+  }) : [];
+  const myBreakdownShift: BreakdownShiftInfo | null = isShiftSalary ? {
+    rate: shiftRate, nominalHours: hoursBetweenTimes(staff.shiftStart, staff.shiftEnd) || 0, shiftAmount: staff.shiftAmount || 0,
+    rows: rangeShiftAttendance.map(a => { const hours = a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0; return { date: a.date, hours, amount: Math.round(hours * shiftRate * 100) / 100 }; }),
+    total: shiftPay,
+  } : null;
   const printMyPayslip = () => {
     const periodLabel = `${payFrom.split("-").reverse().join("/")} → ${payTo.split("-").reverse().join("/")}`;
     const salaryTypeLabel = isShiftSalary ? "أجر بالوردية (بالساعة)" : isFixSalary && isPctSalary ? "راتب ثابت + نسبة" : isFixSalary ? "راتب ثابت شهري" : isPctSalary ? `نسبة ${staff.percentageValue}% من الإيرادات` : "—";
@@ -13470,12 +13885,32 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
           {commission > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">نسبة الإيرادات ({rangeSessions.length} جلسة × {staff.percentageValue}%)</span><span className="text-sm font-bold text-[#388E3C]">+{fmt(commission)}</span></div>}
           {rangePersonalExp > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">مصروفات شخصية بالفترة ({rangeExpenseVouchers.length})</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(rangePersonalExp)}</span></div>}
           {totalPending > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">سلف معلقة</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(totalPending)}</span></div>}
+          {carriedIn !== 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">دين مرحّل من الشهر السابق</span><span className="text-sm font-bold text-[#D32F2F]">{fmt(carriedIn)}</span></div>}
           <div className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: netPayslip < 0 ? "#FFEBEE" : "#E8F5E9", border: `1px solid ${netPayslip < 0 ? "#EF9A9A" : "#A5D6A7"}` }}>
             <span className="text-sm font-bold" style={{ color: netPayslip < 0 ? "#C62828" : "#2E7D32" }}>{netPayslip < 0 ? "الموظف مدين للمركز" : "الصافي المستحق"}</span>
             <span className="text-lg font-bold" style={{ color: netPayslip < 0 ? "#C62828" : "#2E7D32" }}>{fmt(netPayslip)}</span>
           </div>
+          <button onClick={() => setShowMyBreakdown(v => !v)} className="text-xs font-semibold text-[#1B3A6B] hover:underline">{showMyBreakdown ? "إخفاء تفاصيل الاحتساب ▲" : "عرض تفاصيل الاحتساب ▼"}</button>
+          {showMyBreakdown && <SalaryBreakdownDetail isFixed={isFixSalary} fixedSalary={staff.fixedSalary || 0} deptRows={myBreakdownDeptRows} commissionTotal={commission} shift={myBreakdownShift} vouchers={rangeExpenseVouchers.map(t => ({ id: t.id, title: t.title || "مصروف شخصي", date: t.date, amount: t.amount }))} advances={pendingAdv.map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }))} carriedIn={carriedIn} net={netPayslip} />}
         </div>
       </Card>
+
+      {myPendingDues.length > 0 && (
+        <Card title={`مستحقاتي من أشهر سابقة (${myPendingDues.length})`}>
+          <div className="p-2.5 mb-2 rounded-lg text-xs text-[#E65100]" style={{ backgroundColor: "#FFF3E0", border: "1px solid #FFCC80" }}>
+            لديك أشهر سابقة لم تُصرَف/تُغلَق بعد — للاطلاع فقط، صرفها يتم من قِبل الإدارة.
+          </div>
+          <table className="w-full text-sm">
+            <THead cols={["الشهر", "المبلغ"]} />
+            <tbody>{myPendingDues.map((d, i) => (
+              <TRow key={d.yearMonth} i={i}>
+                <TD className="text-xs text-[#555]">{monthLabelOf(d.yearMonth)}</TD>
+                <TD className={d.net < 0 ? "font-bold text-[#D32F2F]" : "font-bold text-[#0D7377]"}>{d.net < 0 ? <span title="مدين للمركز">{fmt(d.net)} (مدين)</span> : fmt(d.net)}</TD>
+              </TRow>
+            ))}</tbody>
+          </table>
+        </Card>
+      )}
 
       <Card title={`سندات الصرف الشخصية (${myExpenseVouchers.length})`}>
         {myExpenseVouchers.length === 0 ? <EmptyState msg="لا توجد سندات صرف شخصية مسجَّلة" /> : (
@@ -13695,7 +14130,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
 
 function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, doDeposit, doWithdraw, toast, onLogout, diagnoses, setDiagnoses, setSessions, setDebts, purchaseRequests, onSubmitPurchaseRequest, onApprovePurchaseRequest, onRejectPurchaseRequest, onDeletePurchaseRequest, inventory = [], hideRevenue = false, employeeAdvances = [], attendance = [], setAttendance, employees = [], staffAdvanceRequests = [], onSubmitStaffAdvanceRequest, rehabPlans = [], setRehabPlans, rehabQueueEntries = [], setRehabQueueEntries, notifications = [], drugs = [], setDrugs, staffList = [], customDepts = [], insurances = [], rehabServices = [], setRehabServices, suppliersRoot = [], hiddenSections = [], broadcastNotice = null, labTests = initialLabTests, setLabTests, radImages = initialRadImages, surgeryClinicItems = [], setSurgeryClinicItems, checkAndNotify, allPaymentVouchers = [], allReceiptVouchers = [], sessionFiles = {}, setSessionFiles,
   setStaffList, setCustomDepts, onAddDeptDrawer, setEmployees, setInsurances, adminAccounts = [], setAdminAccounts,
-  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers, setInventory, computeKitStatus, onEditSession, onSettleSessionsDebt, onReverseDebtSettlementRv, debtPaymentsLog = [], setDebtPayments }: {
+  sidebarSettings = { hiddenSections: [], hideRevenueFromStaff: false }, setSidebarSettings, setLoggedUser, setSuppliersRoot, setReceiptVouchers, setInventory, computeKitStatus, onEditSession, onSettleSessionsDebt, onReverseDebtSettlementRv, debtPaymentsLog = [], setDebtPayments, salaryPeriods = [] }: {
   staff: StaffMember;
   drawers: Record<string, DrawerState>;
   sessions: PatientSession[];
@@ -13767,6 +14202,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
   onReverseDebtSettlementRv?: (breakdown: SettlementBreakdown) => void;
   debtPaymentsLog?: any[];
   setDebtPayments?: React.Dispatch<React.SetStateAction<any[]>>;
+  salaryPeriods?: SalaryPeriod[];
 }) {
 
   const customDeptsAsDepts = customDepts.map(d => ({ ...d, Icon: Building2 as React.ElementType }));
@@ -14342,7 +14778,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
               )}
               {/* "dept-drawer" (صندوق القسم المالي الكامل) أُلغي نهائياً من جهة الموظف */}
               {subScreen === "my-account" && (
-                <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} paymentVouchers={allPaymentVouchers} />
+                <MyFinancialAccountScreen staff={staff} employeeAdvances={employeeAdvances} attendance={attendance} employees={employees} staffAdvanceRequests={staffAdvanceRequests} onSubmitStaffAdvanceRequest={onSubmitStaffAdvanceRequest || (() => { })} toast={staffToast} drawers={drawers} sessions={sessions} paymentVouchers={allPaymentVouchers} salaryPeriods={salaryPeriods} customDepts={customDepts} />
               )}
               {subScreen === "reports" && staff.canAccessReports && (
                 <ReportsScreen toast={staffToast} debts={debts} sessions={sessions} drawers={drawers} invoices={invoices} customDepts={customDepts} insurances={insurances} purchaseRequests={purchaseRequests} suppliers={suppliersRoot} />
@@ -16704,6 +17140,9 @@ export default function App() {
   // ── سجل دفعات تسديد الديون — مستقل عن سندات القبض (انظر تعليق debt_payments
   //    بـ server.js). يُعرض فقط بملف المريض، ولا يدخل بأي معادلة مالية. ──
   const [debtPaymentsGlobal, setDebtPaymentsGlobal] = useState<any[]>([]);
+  // ── سجل إغلاق الفترات الشهرية للرواتب (صرف/إقرار دين لكل شهر تقويمي منفرد) —
+  //    انظر تعليق جدول salary_periods بـ server.js لتفاصيل السبب ──
+  const [salaryPeriodsGlobal, setSalaryPeriodsGlobal] = useState<SalaryPeriod[]>([]);
   const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([{ id: 1, username: "admin", password: "1234", displayName: "مدير النظام" }]);
   const [sidebarSettings, setSidebarSettings] = useState<SidebarSettings>({ hiddenSections: [], hideRevenueFromStaff: false, deptCapacity: {} });
   useEffect(() => {
@@ -16718,7 +17157,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     const _doLoad = async () => {
-      const [dbDrawers, dbPatients, dbStaff, dbEmployees, dbAdvances, dbExternalDebts, dbInsurances, dbCustomDepts, dbAdminAccounts, dbDebts, dbEmployeeAdvances, dbLabTests, dbInventory, dbRadImages, dbSessions, dbInvoices, dbAttendance, dbPurchaseRequests, dbDiagnoses, dbSurgeryInv, dbSuppliers, dbRehabServices, dbRehabPlans, dbRehabQueue, dbReminders, dbBroadcast, dbReceiptVouchers, dbPaymentVouchers, dbDeleteRequests, dbDebtPayments] = await Promise.all([
+      const [dbDrawers, dbPatients, dbStaff, dbEmployees, dbAdvances, dbExternalDebts, dbInsurances, dbCustomDepts, dbAdminAccounts, dbDebts, dbEmployeeAdvances, dbLabTests, dbInventory, dbRadImages, dbSessions, dbInvoices, dbAttendance, dbPurchaseRequests, dbDiagnoses, dbSurgeryInv, dbSuppliers, dbRehabServices, dbRehabPlans, dbRehabQueue, dbReminders, dbBroadcast, dbReceiptVouchers, dbPaymentVouchers, dbDeleteRequests, dbDebtPayments, dbSalaryPeriods] = await Promise.all([
         api.drawers.getAll(),
         api.patients.getAll(),
         api.staff.getAll(),
@@ -16749,6 +17188,7 @@ export default function App() {
         api.finance.paymentVouchers.getAll(),
         api.patients.deleteRequests.getAll(),
         api.finance.debtPayments.getAll(),
+        api.staff.salaryPeriods.getAll(),
       ]);
       console.log('[DB LOAD] Raw API results:', {
         drawers: (dbDrawers as any[])?.length, patients: (dbPatients as any[])?.length,
@@ -16807,10 +17247,10 @@ export default function App() {
         if (changed) _syncPatients();
       }
       if (dbStaff && (dbStaff as any[]).length > 0) {
-        setStaffList((dbStaff as any[]).map((s: any) => ({ id: s.id, name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: s.password_hash || "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) })));
+        setStaffList((dbStaff as any[]).map((s: any) => ({ id: Number(s.id), name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: s.password_hash || "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) })));
       }
       if (dbEmployees && (dbEmployees as any[]).length > 0) {
-        setEmployees((dbEmployees as any[]).map((e: any) => ({ id: e.id, staffId: e.staff_id ?? null, name: e.name, dept: e.dept || "", role: e.role || "", salary: Number(e.salary) || 0, expenses: Number(e.expenses) || 0, status: e.status || "pending", paidDate: e.paid_date || "" })));
+        setEmployees((dbEmployees as any[]).map((e: any) => ({ id: e.id, staffId: e.staff_id != null ? Number(e.staff_id) : null, name: e.name, dept: e.dept || "", role: e.role || "", salary: Number(e.salary) || 0, expenses: Number(e.expenses) || 0, status: e.status || "pending", paidDate: e.paid_date || "" })));
       }
       if (dbAdvances && (dbAdvances as any[]).length > 0) {
         setStaffAdvanceRequests((dbAdvances as any[]).map((r: any) => ({ id: r.id, staffId: Number(r.staff_id) || 0, staffName: r.staff_name || "", dept: r.dept || "", amount: Number(r.amount) || 0, date: r.date || "", reason: r.reason || "", status: r.status || "pending", reviewedBy: r.reviewed_by || "", reviewDate: r.review_date || "", rejectionReason: r.rejection_reason || "" })));
@@ -16844,7 +17284,7 @@ export default function App() {
         setDebts((dbDebts as any[]).map((d: any) => { const _dRaw = d.date ? String(d.date).slice(0, 10) : ""; const _dDisp = _dRaw ? `${_dRaw.slice(8, 10)}/${_dRaw.slice(5, 7)}/${_dRaw.slice(0, 4)}` : ""; const _days = _dRaw ? Math.floor((Date.now() - new Date(_dRaw).getTime()) / (1000 * 60 * 60 * 24)) : 0; return { id: d.id, patient: d.patient || "", pid: d.patient_id || "", dept: d.dept || "", amount: Number(d.amount) || 0, date: _dDisp, days: _days, phone: d.phone || "", smsSent: !!d.sms_sent }; }));
       }
       if (dbEmployeeAdvances && (dbEmployeeAdvances as any[]).length > 0) {
-        setEmployeeAdvances((dbEmployeeAdvances as any[]).map((a: any) => ({ id: a.id, staffId: a.staff_id ?? null, empName: a.emp_name || "", dept: a.dept || "", amount: Number(a.amount) || 0, date: a.date || "", note: a.note || "", repaid: !!a.repaid, repaidDate: a.repaid_date || "" })));
+        setEmployeeAdvances((dbEmployeeAdvances as any[]).map((a: any) => ({ id: a.id, staffId: a.staff_id != null ? Number(a.staff_id) : null, empName: a.emp_name || "", dept: a.dept || "", amount: Number(a.amount) || 0, date: a.date || "", note: a.note || "", repaid: !!a.repaid, repaidDate: a.repaid_date || "" })));
       }
       if (dbLabTests && (dbLabTests as any[]).length > 0) {
         const mapped = (dbLabTests as any[]).map((t: any) => {
@@ -16928,6 +17368,13 @@ export default function App() {
       if (dbReceiptVouchers && Array.isArray(dbReceiptVouchers)) { setReceiptVouchersGlobal((dbReceiptVouchers as any[]).map((v: any) => ({ ...v, amount: Number(v.amount) }))); }
       if (dbPaymentVouchers && Array.isArray(dbPaymentVouchers)) { setPaymentVouchersGlobal((dbPaymentVouchers as any[]).map((v: any) => ({ ...v, amount: Number(v.amount) }))); }
       if (dbDebtPayments && Array.isArray(dbDebtPayments)) { setDebtPaymentsGlobal((dbDebtPayments as any[]).map((v: any) => ({ ...v, amount: Number(v.amount), remaining_after: v.remaining_after != null ? Number(v.remaining_after) : null }))); }
+      if (dbSalaryPeriods && Array.isArray(dbSalaryPeriods)) {
+        setSalaryPeriodsGlobal((dbSalaryPeriods as any[]).map((p: any) => ({
+          id: p.id, employeeId: Number(p.employee_id), staffId: p.staff_id != null ? Number(p.staff_id) : null,
+          yearMonth: p.year_month, netAmount: Number(p.net_amount) || 0,
+          status: p.status, closedDate: p.closed_date || "", carriedIn: Number(p.carried_in) || 0,
+        })));
+      }
       console.log('[DB LOAD] All state updates applied. Setting dbLoaded=true');
       setDbLoaded(true);
     };
@@ -17456,6 +17903,7 @@ export default function App() {
       setLoggedUser={setLoggedUser}
       setSuppliersRoot={setSuppliersRoot}
       setReceiptVouchers={setReceiptVouchersGlobal}
+      salaryPeriods={salaryPeriodsGlobal}
     />
   );
   const renderScreen = () => {
@@ -17497,7 +17945,7 @@ export default function App() {
       case "dept-expenses": { const rdwExp = route.dept ? { [route.dept]: drawers[route.dept] || { balance: 0, txs: [] } } : drawers; const deptSessExp = route.dept ? sessions.filter(s => s.dept === route.dept) : sessions; const deptRVExp = route.dept ? receiptVouchersGlobal.filter((v: any) => v.dept === route.dept) : receiptVouchersGlobal; const deptPVExp = route.dept ? paymentVouchersGlobal.filter((v: any) => v.dept === route.dept) : paymentVouchersGlobal; return <FinExpensesScreen drawers={rdwExp} purchaseRequests={purchaseRequests} employeeAdvances={employeeAdvances} dept={route.dept} sessions={deptSessExp} receiptVouchers={deptRVExp} paymentVouchers={deptPVExp} />; }
 
       case "fin-revenue": return <FinRevenueScreen drawers={drawers} debts={debts} customDepts={customDepts} toast={toast} sessions={sessions} receiptVouchers={receiptVouchersGlobal} />;
-      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} setPaymentVouchers={setPaymentVouchersGlobal} attendance={attendance} />; }
+      case "fin-payroll": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _payEmps = _isStaff ? employees.filter(e => e.staffId != null ? e.staffId === _staffId : e.name === _staffName) : employees; return <PayrollScreen employees={_payEmps} setEmployees={setEmployees} drawers={drawers} doWithdraw={doWithdraw} toast={toast} customDepts={customDepts} employeeAdvances={employeeAdvances} setEmployeeAdvances={setEmployeeAdvances} staffList={staffList} sessions={sessions} paymentVouchers={paymentVouchersGlobal} setPaymentVouchers={setPaymentVouchersGlobal} attendance={attendance} salaryPeriods={salaryPeriodsGlobal} setSalaryPeriods={setSalaryPeriodsGlobal} />; }
       case "fin-advances": { const _isStaff = loggedUser?.type === "staff"; const _staffId = _isStaff ? (loggedUser as any).staff.id : null; const _staffName = _isStaff ? (loggedUser as any).staff.name : ""; const _advs = _isStaff ? employeeAdvances.filter(a => a.staffId != null ? a.staffId === _staffId : a.empName === _staffName) : employeeAdvances; return <EmployeeAdvancesScreen employeeAdvances={_advs} setEmployeeAdvances={setEmployeeAdvances} drawers={drawers} doWithdraw={doWithdraw} staffList={staffList} toast={toast} customDepts={customDepts} staffAdvanceRequests={staffAdvanceRequests} onApproveStaffAdvanceRequest={onApproveStaffAdvanceRequest} onRejectStaffAdvanceRequest={onRejectStaffAdvanceRequest} onDeleteStaffAdvanceRequest={onDeleteStaffAdvanceRequest} />; };
       case "fin-external-debts": return <ExternalDebtsScreen externalDebts={externalDebts} setExternalDebts={setExternalDebts} drawers={drawers} doWithdraw={doWithdraw} doDeposit={doDeposit} toast={toast} />;
       case "fin-debts": return <DebtManagementScreen debts={debts} setDebts={setDebts} drawers={drawers} doDeposit={doDeposit} toast={toast} customDepts={customDepts} setReceiptVouchers={setReceiptVouchersGlobal} onSettleSessionsDebt={onSettleSessionsDebt} setDebtPayments={setDebtPaymentsGlobal} />;
