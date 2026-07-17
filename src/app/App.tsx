@@ -10939,6 +10939,27 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
     } catch { toast("خطأ في تسوية الفاتورة", "error"); }
     finally { setSettlingInv(false); }
   };
+  // ── حذف فاتورة تأمين — لا يوجد أي صف بقاعدة البيانات مرتبط بها بمفتاح
+  //    أجنبي (FK)، فحذفها آمن تماماً على مستوى تكامل البيانات. الاستثناء
+  //    الوحيد: لو الفاتورة كانت اتحصّلت (paid > 0)، يكون في سند/سندات قبض
+  //    مرتبطة بيها (عبر settlement_breakdown.invoice) — هاي بتضل موجودة
+  //    كما هي (النقد المستلم فعلياً حقيقي ولازم يضل مسجَّل كإيراد)، بس
+  //    مرجعها لفاتورة محذوفة، فبنحذّر المستخدم من هيك بدل ما نصمت ونحذف. ──
+  const deleteInvoice = async (inv: Invoice) => {
+    if (!isAdmin) { toast("صلاحية الحذف متاحة للمدير فقط", "error"); return; }
+    const confirmed = window.confirm(
+      inv.paid > 0
+        ? `حذف فاتورة التأمين رقم ${inv.id}؟\nالإجمالي: ${fmt(inv.total)} ₪ — منها محصَّل فعلياً: ${fmt(inv.paid)} ₪.\n⚠️ المبلغ المحصَّل سيبقى مسجَّلاً كإيراد (النقد استُلم فعلياً ولا يجوز حذفه) — الحذف يمسّ سجل الفاتورة نفسه فقط.`
+        : `حذف فاتورة التأمين رقم ${inv.id}؟\nالإجمالي: ${fmt(inv.total)} ₪ — لم يُحصَّل منها أي مبلغ بعد.`
+    );
+    if (!confirmed) return;
+    try {
+      const res = await api.finance.invoices.delete(inv.id);
+      if (res === null) { toast("فشل الحذف — قد تكون الجلسة منتهية، سجّل الدخول مجدداً", "error"); return; }
+      if (setInvoices) setInvoices(p => p.filter(x => x.id !== inv.id));
+      toast(`تم حذف فاتورة التأمين ${inv.id} ✓`, "warning");
+    } catch { toast("خطأ في حذف الفاتورة — حاول مجدداً", "error"); }
+  };
   // ── كان الفلتر الافتراضي "اليوم فقط" (fromDate=toDate=تاريخ اليوم) — بما إنه
   //    inRange() بترجع "الكل" فقط لو الحقلين فاضيين، فكل تبويبات الشاشة كانت
   //    تُظهر بيانات فاضية تلقائياً من أول فتح للشاشة، إلا لو المستخدم بالصدفة
@@ -11203,6 +11224,7 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
                     <TD><div className="flex gap-1">
                       <Btn small variant="ghost" onClick={() => { const html = `<h2>مطالبة تأمين فردية</h2><table><tbody><tr><td>رقم الفاتورة</td><td>${inv.id}</td></tr><tr><td>شركة التأمين</td><td>${inv.company}</td></tr><tr><td>اسم المريض</td><td>${inv.patientName || "—"}</td></tr><tr><td>رقم الكشفية</td><td>${inv.claimNo || "—"}</td></tr><tr><td>القسم</td><td>${deptShortById(inv.dept)}</td></tr><tr><td>التاريخ</td><td>${inv.date}</td></tr><tr><td>المبلغ</td><td>${fmt(inv.total)}</td></tr><tr><td>المدفوع</td><td>${fmt(inv.paid)}</td></tr><tr><td>المتبقي</td><td>${fmt(inv.remaining)}</td></tr><tr><td>الحالة</td><td>${inv.status === "paid" ? "محصَّل ✓" : "غير محصَّل"}</td></tr></tbody></table>`; printHtml(html, `مطالبة تأمين — ${inv.company} — ${inv.id}`); }}><Printer size={13} /></Btn>
                       {isAdmin && inv.status !== "paid" && <Btn small variant="secondary" onClick={() => openSettleInvoice(inv)}>سداد</Btn>}
+                      {isAdmin && <Btn small variant="outline" onClick={() => deleteInvoice(inv)}><Trash2 size={13} /></Btn>}
                     </div></TD>
                   </TRow>
                 ))}</tbody>
