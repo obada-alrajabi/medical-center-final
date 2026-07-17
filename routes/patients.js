@@ -238,6 +238,12 @@ router.delete('/cascade/:id', requireAdmin, async (req, res) => {
     await pool.query(
       "DELETE FROM receipt_vouchers WHERE received_from_type='patient' AND received_from_id=$1", [id]
     );
+    // 5b. سجل دفعات تسديد الديون (debt_payments) — نفس منطق سندات القبض أعلاه:
+    //    بدون هذا الحذف، أي مريض جديد يُنشأ لاحقاً ويرث نفس الرقم (لأن توليد
+    //    الرقم التالي يعتمد على أعلى رقم موجود فعلياً بجدول المرضى) كان
+    //    "يورث" سجل دفعات دين مريض محذوف بالكامل، فيظهر بملفه المالي وكأنه
+    //    دفع مبالغ لم يدفعها فعلياً — هذا بالضبط الخلل المُبلَّغ عنه.
+    await pool.query('DELETE FROM debt_payments WHERE patient_id=$1', [id]);
     // 6. Rehab plans + queue entries tied to this patient (rehab pricing data
     //    was also being left behind with no patient FK to clean it up).
     await pool.query('DELETE FROM rehab_queue_entries WHERE patient_id=$1', [id]);
