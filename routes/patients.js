@@ -244,6 +244,12 @@ router.delete('/cascade/:id', requireAdmin, async (req, res) => {
     //    "يورث" سجل دفعات دين مريض محذوف بالكامل، فيظهر بملفه المالي وكأنه
     //    دفع مبالغ لم يدفعها فعلياً — هذا بالضبط الخلل المُبلَّغ عنه.
     await pool.query('DELETE FROM debt_payments WHERE patient_id=$1', [id]);
+    // 5c. الفواتير (invoices) وطابور الانتظار (queues) — نفس النمط: عمودا
+    //    patient_id بالجدولين مضافان بـ ALTER TABLE بدون FK/CASCADE، فبدون
+    //    حذفهما هون رح يورثهما أي مريض جديد ياخد نفس الرقم لاحقاً (فحص شامل
+    //    على كامل النظام أكّد إنه هدول أول تابلين ناقصين هون تحديداً). ──
+    await pool.query('DELETE FROM invoices WHERE patient_id=$1', [id]);
+    await pool.query('DELETE FROM queues WHERE patient_id=$1', [id]);
     // 6. Rehab plans + queue entries tied to this patient (rehab pricing data
     //    was also being left behind with no patient FK to clean it up).
     await pool.query('DELETE FROM rehab_queue_entries WHERE patient_id=$1', [id]);

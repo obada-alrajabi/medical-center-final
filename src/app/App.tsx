@@ -13128,7 +13128,7 @@ function DeptManagementScreen({ customDepts, setCustomDepts, onAddDeptDrawer, to
 
   const toggleSubItem = (id: string) => setDeptForm(p => ({ ...p, subItemIds: p.subItemIds.includes(id) ? p.subItemIds.filter(s => s !== id) : [...p.subItemIds, id] }));
 
-  const saveDept = () => {
+  const saveDept = async () => {
     if (!deptForm.name.trim() || !deptForm.short.trim()) { toast("أدخل اسم القسم والاسم المختصر", "error"); return; }
     if (deptForm.subItemIds.length === 0) { toast("اختر قسماً فرعياً واحداً على الأقل", "error"); return; }
     const newId = deptForm.name.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^\w-]/g, "") || `dept-${Date.now()}`;
@@ -13138,8 +13138,16 @@ function DeptManagementScreen({ customDepts, setCustomDepts, onAddDeptDrawer, to
       toast("تم تعديل القسم بنجاح", "success");
     } else {
       if ([...DEPARTMENTS.map(d => d.id), ...customDepts.map(d => d.id)].includes(newId)) { toast("يوجد قسم بنفس المعرف — غيّر الاسم", "error"); return; }
+      // ── ننتظر رد الخادم قبل إضافة القسم محلياً: الخادم قد يرفض المعرّف
+      //    برسالة 409 إذا كان لا يزال مرتبطاً ببيانات تاريخية لقسم محذوف
+      //    سابقاً بنفس الاسم (انظر تعليق فحص التعارض بـ routes/departments.js)
+      //    — بدون هذا الانتظار كنا سنضيف القسم بالواجهة رغم فشل الحفظ فعلياً. ──
+      const r = await api.departments.create({ id: newId, name: deptForm.name, short_name: deptForm.short, icon: deptForm.iconId, sub_item_ids: deptForm.subItemIds });
+      if (!r || (r as any).error) {
+        toast((r as any)?.error || "تعذّر إنشاء القسم — حاول مجدداً", "error");
+        return;
+      }
       setCustomDepts(p => [...p, { id: newId, name: deptForm.name, short: deptForm.short, iconId: deptForm.iconId, subItemIds: deptForm.subItemIds }]);
-      api.departments.create({ id: newId, name: deptForm.name, short_name: deptForm.short, icon: deptForm.iconId, sub_item_ids: deptForm.subItemIds });
       onAddDeptDrawer(newId);
       toast(`تم إضافة قسم "${deptForm.name}" بنجاح`, "success");
     }
