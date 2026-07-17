@@ -9488,6 +9488,10 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const [payFrom, setPayFrom] = useState(""); const [payTo, setPayTo] = useState("");
   const todayISO = _localISO();
   const curMonthStart = (() => { const d = _jlmNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; })();
+  // ── نهاية الشهر الحالي التقويمية — تُستخدم لتحديد فترة "نسبة الإيرادات"
+  //    بجدول الرواتب الرئيسي (getCommission) لتطابق فترة قسيمة الراتب
+  //    الافتراضية بدل الاعتماد على كامل أرشيف الجلسات منذ بداية النظام ──
+  const curMonthEnd = (() => { const d = _jlmNow(); const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)); return `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, "0")}-${String(last.getUTCDate()).padStart(2, "0")}`; })();
   const [payslipModal, setPayslipModal] = useState<{ emp: Employee; from: string; to: string } | null>(null);
   const getPayslipData = (e: Employee, from: string, to: string) => {
     const sm = getStaffMember(e);
@@ -9509,7 +9513,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const shiftRecs = isShift ? attendance.filter(r => r.empId === shiftEmpId && inRangeDDMMYYYY(r.date, from, to)) : [];
     const shiftHours = shiftRecs.reduce((s, r) => s + (r.totalHours ?? hoursBetweenTimes(r.checkIn, r.checkOut) ?? 0), 0);
     const shiftPay = Math.round(shiftHours * shiftRate * 100) / 100;
-    const net = Math.max(0, e.salary + commission + shiftPay - rangeExpenses - totalAdvances);
+    const net = e.salary + commission + shiftPay - rangeExpenses - totalAdvances;
     return { sm, isFix, isShift, commission, rangeSessions, rangeRevenue, pendingAdvances, totalAdvances, rangeExpenses, shiftHours, shiftRate, shiftPay, net };
   };
   const printPayslip = (e: Employee, from: string, to: string) => {
@@ -9553,15 +9557,20 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const totalHrs = recs.reduce((s, r) => s + (r.totalHours ?? hoursBetweenTimes(r.checkIn, r.checkOut) ?? 0), 0);
     return Math.round(totalHrs * rate * 100) / 100;
   };
+  // ── نسبة الإيرادات بجدول الرواتب الرئيسي: كانت تُحسب من كامل أرشيف الجلسات
+  //    (بلا أي تصفية تاريخ) بينما قسيمة الراتب لنفس الموظف تعرض فترة الشهر
+  //    الحالي فقط — فيختلف الرقمان لنفس الموظف بنفس اللحظة. توحيداً لهما،
+  //    نُقيِّد الاحتساب هنا بالشهر التقويمي الحالي (نفس فترة قسيمة الراتب
+  //    الافتراضية) بدل كل الأرشيف ──
   const getCommission = (e: Employee) => {
     const sm = getStaffMember(e);
     if (!sm || sm.salaryType === "fixed") return 0;
     const pDepts = effectivePercentageDepts(sm);
-    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept)).reduce((sum, s) => sum + s.paid, 0);
+    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, curMonthStart, curMonthEnd)).reduce((sum, s) => sum + s.paid, 0);
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
   const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).reduce((s, a) => s + a.amount, 0);
-  const calcNet = (e: Employee) => Math.max(0, e.salary + getCommission(e) + getShiftPay(e) - getExpenses(e) - getTotalAdvances(e));
+  const calcNet = (e: Employee) => e.salary + getCommission(e) + getShiftPay(e, curMonthStart, curMonthEnd) - getExpenses(e) - getTotalAdvances(e);
   // If the employee's payroll config lists more than one drawer to deduct from, split the net
   // salary proportionally to how much revenue he actually generated in each of those departments.
   // Falls back to a single-department withdrawal (unchanged legacy behavior) otherwise.
@@ -9585,6 +9594,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const filteredEmps = employees.filter(e => inPayRange(e));
   const handlePay = () => {
     if (!confirmModal) return;
+    if (calcNet(confirmModal) <= 0) { toast("⚠️ لا يوجد راتب مستحق للصرف — الموظف مدين للمركز", "warning"); return; }
     const split = getPaySplit(confirmModal);
     if (getPaySplitTotalAvailable(split) < calcNet(confirmModal)) { toast("⚠️ رصيد الصندوق غير كافٍ", "warning"); return; }
     // ── نلتقط سندات الصرف اللي دخلت فعلياً بحساب هذا الراتب *قبل* الصرف، لنعلّمها
@@ -9643,30 +9653,33 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
                 <TD className={commission > 0 ? "text-[#388E3C] font-medium" : "text-[#999]"}>{commission > 0 ? `+${fmt(commission)}` : "—"}</TD>
                 <TD className="text-[#FF8F00] font-medium">{getExpenses(e) > 0 ? `−${fmt(getExpenses(e))}` : "—"}</TD>
                 <TD className={advances > 0 ? "text-[#D32F2F] font-medium" : "text-[#999]"}>{advances > 0 ? `−${fmt(advances)}` : "—"}</TD>
-                <TD className="font-bold text-[#0D7377]">{e.status !== "pending" ? fmt(calcNet(e)) : <span className="text-[#999]">—</span>}</TD>
+                <TD className={calcNet(e) < 0 ? "font-bold text-[#D32F2F]" : "font-bold text-[#0D7377]"}>{e.status !== "pending" ? (calcNet(e) < 0 ? <span title="الموظف مدين للمركز">{fmt(calcNet(e))} (مدين)</span> : fmt(calcNet(e))) : <span className="text-[#999]">—</span>}</TD>
                 <TD>{statusBadge(e.status)}{e.paidDate && <span className="text-xs text-[#999] mr-1">{e.paidDate}</span>}</TD>
-                <TD><div className="flex items-center gap-1 flex-wrap">{e.status === "pending" && <Btn small variant="outline" onClick={() => { const comm = getCommission(e); const net = calcNet(e); setEmployees(p => p.map(x => x.id === e.id ? { ...x, status: "calculated" as const, commission: comm, netSalary: net } : x)); api.staff.employees.update(e.id, { status: "calculated", commission: comm, net_salary: net }); }}>احتساب</Btn>}{e.status === "calculated" && <Btn small variant="success" onClick={() => setConfirmModal(e)}>{insuf ? "⚠️ رصيد ناقص" : "صرف الراتب"}</Btn>}<Btn small variant="ghost" onClick={() => setPayslipModal({ emp: e, from: curMonthStart, to: todayISO })}><Printer size={12} />قسيمة</Btn></div></TD>
+                <TD><div className="flex items-center gap-1 flex-wrap">{e.status === "pending" && <Btn small variant="outline" onClick={() => { const comm = getCommission(e); const net = calcNet(e); setEmployees(p => p.map(x => x.id === e.id ? { ...x, status: "calculated" as const, commission: comm, netSalary: net } : x)); api.staff.employees.update(e.id, { status: "calculated", commission: comm, net_salary: net }); }}>احتساب</Btn>}{e.status === "calculated" && <Btn small variant="success" onClick={() => setConfirmModal(e)}>{insuf ? "⚠️ رصيد ناقص" : "صرف الراتب"}</Btn>}<Btn small variant="ghost" onClick={() => setPayslipModal({ emp: e, from: curMonthStart, to: curMonthEnd })}><Printer size={12} />قسيمة</Btn></div></TD>
               </TRow>;
             })}</tbody>
           </table>
         </div>
       </Card>
       <Modal open={!!confirmModal} onClose={() => setConfirmModal(null)} title="تأكيد صرف الراتب"
-        footer={<><Btn variant="success" loading={paying} onClick={handlePay}><Check size={16} />تأكيد الصرف</Btn><Btn variant="outline" onClick={() => setConfirmModal(null)}>إلغاء</Btn></>}>
+        footer={<><Btn variant="success" loading={paying} disabled={!!confirmModal && calcNet(confirmModal) <= 0} onClick={handlePay}><Check size={16} />تأكيد الصرف</Btn><Btn variant="outline" onClick={() => setConfirmModal(null)}>إلغاء</Btn></>}>
         {confirmModal && (() => {
           const comm = getCommission(confirmModal); const adv = getTotalAdvances(confirmModal);
           const split = getPaySplit(confirmModal);
-          const insufficient = getPaySplitTotalAvailable(split) < calcNet(confirmModal);
+          const net = calcNet(confirmModal);
+          const isDebtor = net <= 0;
+          const insufficient = !isDebtor && getPaySplitTotalAvailable(split) < net;
           return <div className="space-y-3">
-            <div className="p-4 rounded-xl bg-[#E8F5E9] text-center"><Wallet size={32} className="mx-auto text-[#388E3C] mb-2" /><p className="text-base font-bold">{confirmModal.name}</p><p className="text-3xl font-bold mt-2 text-[#388E3C]">{fmt(calcNet(confirmModal))}</p><p className="text-xs text-[#555] mt-1">صافي مستحق لشهر يونيو 2026</p></div>
+            <div className="p-4 rounded-xl text-center" style={{ backgroundColor: isDebtor ? "#FFEBEE" : "#E8F5E9" }}><Wallet size={32} className="mx-auto mb-2" style={{ color: isDebtor ? "#C62828" : "#388E3C" }} /><p className="text-base font-bold">{confirmModal.name}</p><p className="text-3xl font-bold mt-2" style={{ color: isDebtor ? "#C62828" : "#388E3C" }}>{fmt(net)}</p><p className="text-xs text-[#555] mt-1">{isDebtor ? "الموظف مدين للمركز — لا يوجد صافي مستحق للصرف" : "صافي مستحق لشهر يونيو 2026"}</p></div>
+            {isDebtor && <div className="p-3 rounded-lg bg-[#FFEBEE] text-xs text-[#C62828] font-semibold text-center">⚠️ لا يوجد راتب مستحق للصرف — الموظف مدين للمركز</div>}
             <div className="p-3 rounded-lg bg-[#F5F5F5] text-xs space-y-1">
               <p className="flex justify-between"><span>الراتب الأساسي</span><strong>{fmt(confirmModal.salary)}</strong></p>
               {comm > 0 && <p className="flex justify-between text-[#388E3C]"><span>+ نسبة الإيرادات الفردية</span><strong>+{fmt(comm)}</strong></p>}
               {getExpenses(confirmModal) > 0 && <p className="flex justify-between text-[#FF8F00]"><span>− الخصومات</span><strong>−{fmt(getExpenses(confirmModal))}</strong></p>}
               {adv > 0 && <p className="flex justify-between text-[#D32F2F]"><span>− السلف القائمة</span><strong>−{fmt(adv)}</strong></p>}
-              <div className="border-t border-[#E0E0E0] pt-1 flex justify-between font-bold text-[#0D7377]"><span>الصافي المستحق</span><strong>{fmt(calcNet(confirmModal))}</strong></div>
+              <div className="border-t border-[#E0E0E0] pt-1 flex justify-between font-bold" style={{ color: isDebtor ? "#D32F2F" : "#0D7377" }}><span>الصافي المستحق</span><strong>{fmt(net)}</strong></div>
             </div>
-            {split.length > 1 ? (
+            {!isDebtor && (split.length > 1 ? (
               <div className="p-3 rounded-lg bg-[#EBF3FB] text-sm space-y-2">
                 <p className="font-semibold text-[#1B3A6B]">سيُقسَّم المبلغ حسب نسبة إيرادات الموظف الفعلية بين {split.length} صناديق:</p>
                 {split.map(p => {
@@ -9680,7 +9693,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
               </div>
             ) : (
               <div className="p-3 rounded-lg bg-[#EBF3FB] text-sm"><p>سيُخصم من صندوق قسم: <strong>{allDepts.find(d => d.id === split[0]?.dept)?.short || confirmModal.dept}</strong></p><p className="mt-1">رصيد الصندوق الحالي: <strong className="text-[#0D7377]">{fmt(drawers[split[0]?.dept]?.balance || 0)}</strong></p>{insufficient && <p className="text-[#D32F2F] text-xs mt-1">⚠️ رصيد الصندوق غير كافٍ!</p>}</div>
-            )}
+            ))}
           </div>;
         })()}
       </Modal>
@@ -9703,10 +9716,15 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
                 {[{ l: "هذا الشهر", f: curMonthStart, t: todayISO }, { l: "الشهر الماضي", f: prevStart, t: prevEnd }, { l: "الكل", f: "", t: "" }].map(q => <button key={q.l} onClick={() => setPayslipModal(p => p ? { ...p, from: q.f, to: q.t } : p)} className="px-2 py-1 rounded text-[10px] font-semibold" style={{ backgroundColor: "#1B3A6B", color: "#fff" }}>{q.l}</button>)}
               </div>
             </div>
+            {payslipModal.from === curMonthStart && payslipModal.to === curMonthEnd && (
+              <p className="text-xs text-[#1B3A6B] p-2 rounded-lg" style={{ backgroundColor: "#EBF3FB" }}>
+                الراتب المتوقع لنهاية الشهر ({curMonthEnd.split("-").reverse().join("/")}) — محسوب من فعليات الشهر حتى الآن (جلسات/ساعات/سلف/خصومات)، وبيستمر يتحدّث تلقائياً مع أي إضافة جديدة حتى آخر يوم بالشهر
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl text-center" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
-                <p className="text-xs text-[#555] mb-1">الصافي المستحق</p>
-                <p className="text-2xl font-bold text-[#388E3C]">{fmt(net)}</p>
+              <div className="p-3 rounded-xl text-center" style={{ backgroundColor: net < 0 ? "#FFEBEE" : "#E8F5E9", border: `1px solid ${net < 0 ? "#EF9A9A" : "#A5D6A7"}` }}>
+                <p className="text-xs text-[#555] mb-1">{net < 0 ? "الموظف مدين للمركز" : "الصافي المستحق"}</p>
+                <p className="text-2xl font-bold" style={{ color: net < 0 ? "#C62828" : "#388E3C" }}>{fmt(net)}</p>
               </div>
               <div className="p-3 rounded-xl text-center" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BEDCF5" }}>
                 <p className="text-xs text-[#555] mb-1">جلسات الفترة</p>
@@ -9721,7 +9739,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
                 {!commission && !isFix && <div className="flex justify-between items-center p-3 text-[#999]"><span>+ نسبة الإيرادات ({sm?.percentageValue}% — لا جلسات في الفترة)</span><strong>—</strong></div>}
                 {getExpenses(e) > 0 && <div className="flex justify-between items-center p-3 text-[#FF8F00]"><span>− الخصومات</span><strong>−{fmt(getExpenses(e))}</strong></div>}
                 {pendingAdvances.map((a, i) => <div key={i} className="flex justify-between items-center p-3 text-[#D32F2F]"><span>− سلفة بتاريخ {a.date} — {a.note || "سلفة موظف"}</span><strong>−{fmt(a.amount)}</strong></div>)}
-                <div className="flex justify-between items-center p-3 font-bold text-base" style={{ backgroundColor: "#E8F5E9" }}><span className="text-[#388E3C]">الصافي المستحق</span><strong className="text-[#388E3C]">{fmt(net)}</strong></div>
+                <div className="flex justify-between items-center p-3 font-bold text-base" style={{ backgroundColor: net < 0 ? "#FFEBEE" : "#E8F5E9" }}><span style={{ color: net < 0 ? "#C62828" : "#388E3C" }}>{net < 0 ? "الموظف مدين للمركز" : "الصافي المستحق"}</span><strong style={{ color: net < 0 ? "#C62828" : "#388E3C" }}>{fmt(net)}</strong></div>
               </div>
             </div>
             {rangeSessions.length > 0 && <div className="text-xs text-[#666] p-2 rounded-lg" style={{ backgroundColor: "#F9F9F9", border: "1px solid #EEE" }}>
@@ -12624,7 +12642,7 @@ function StaffManagementScreen({
                       <div className="flex items-center gap-3 mt-2 flex-wrap">
                         <span className="text-xs bg-[#EBF3FB] text-[#1B3A6B] px-2 py-0.5 rounded font-medium">
                           {salaryLabel[s.salaryType]}
-                          {s.salaryType !== "percentage" && <> — {fmt(s.fixedSalary)}</>}
+                          {s.salaryType !== "percentage" && s.salaryType !== "daily" && <> — {fmt(s.fixedSalary)}</>}
                           {s.salaryType !== "fixed" && <> + {s.percentageValue}%{pDepts.length > 0 ? ` (${pDepts.length} قسم)` : " (جميع الأقسام)"}</>}
                         </span>
                         {extraDepts.length > 0 && <span className="text-xs bg-[#E6F4F4] text-[#0D7377] px-2 py-0.5 rounded">+{extraDepts.length} قسم إضافي</span>}
@@ -13358,10 +13376,13 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
 
   // ── قسيمة الراتب (فترة قابلة للتحديد) ──
   const curMonthStartISO = (() => { const d = _jlmNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; })();
+  // ── نهاية الشهر الحالي التقويمية (وليس تاريخ اليوم) — تُستخدم كافتراضي لحقل
+  //    "إلى" عشان تعرض قيمة الراتب "المتوقعة" حتى نهاية الشهر لا "حتى اليوم" فقط ──
+  const curMonthEndISO = (() => { const d = _jlmNow(); const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)); return `${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, "0")}-${String(last.getUTCDate()).padStart(2, "0")}`; })();
   const [payFrom, setPayFrom] = useState(curMonthStartISO);
-  const [payTo, setPayTo] = useState(_localISO());
+  const [payTo, setPayTo] = useState(curMonthEndISO);
   const isFixSalary = staff.salaryType === "fixed" || staff.salaryType === "both";
-  const isPctSalary = staff.salaryType === "percentage" || staff.salaryType === "both";
+  const isPctSalary = staff.salaryType === "percentage" || staff.salaryType === "both" || staff.salaryType === "daily";
   const isShiftSalary = staff.salaryType === "shift";
   const pDepts = effectivePercentageDepts(staff as any);
   const rangeSessions = sessions.filter(s => s.doctor === staff.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, payFrom, payTo));
@@ -13375,7 +13396,7 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
   const rangeShiftAttendance = isShiftSalary ? myAttendance.filter(a => inRangeDDMMYYYY(a.date, payFrom, payTo)) : [];
   const shiftHours = rangeShiftAttendance.reduce((s, a) => s + (a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0), 0);
   const shiftPay = Math.round(shiftHours * shiftRate * 100) / 100;
-  const netPayslip = Math.max(0, (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay - rangePersonalExp - totalPending);
+  const netPayslip = (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay - rangePersonalExp - totalPending;
   const printMyPayslip = () => {
     const periodLabel = `${payFrom.split("-").reverse().join("/")} → ${payTo.split("-").reverse().join("/")}`;
     const salaryTypeLabel = isShiftSalary ? "أجر بالوردية (بالساعة)" : isFixSalary && isPctSalary ? "راتب ثابت + نسبة" : isFixSalary ? "راتب ثابت شهري" : isPctSalary ? `نسبة ${staff.percentageValue}% من الإيرادات` : "—";
@@ -13404,7 +13425,7 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
               <p className="font-bold text-[#388E3C] text-lg">{fmt(staff.fixedSalary)}</p>
             </div>
           )}
-          {(staff.salaryType === "percentage" || staff.salaryType === "both") && (
+          {(staff.salaryType === "percentage" || staff.salaryType === "both" || staff.salaryType === "daily") && (
             <div className="p-4 rounded-xl text-center" style={{ backgroundColor: "#FFF3E0", border: "1px solid #FFCC80" }}>
               <p className="text-xs text-[#555] mb-1">نسبة العمولة</p>
               <p className="font-bold text-[#FF8F00] text-lg">{staff.percentageValue}%</p>
@@ -13438,13 +13459,21 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
           <span className="text-xs text-[#555]">إلى</span>
           <input type="date" value={payTo} onChange={e => setPayTo(e.target.value)} className="h-8 px-2 rounded-lg text-xs outline-none" style={{ border: "1px solid #CCC" }} />
         </div>
+        {payTo === curMonthEndISO && payFrom === curMonthStartISO && (
+          <p className="text-xs text-[#1B3A6B] mb-2 p-2 rounded-lg" style={{ backgroundColor: "#EBF3FB" }}>
+            الراتب المتوقع لنهاية الشهر ({curMonthEndISO.split("-").reverse().join("/")}) — محسوب من فعلياتك حتى الآن هالشهر، وبيستمر يتحدّث تلقائياً مع أي إضافة جديدة حتى آخر يوم بالشهر
+          </p>
+        )}
         <div className="space-y-2">
           {isFixSalary && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">الراتب الأساسي</span><span className="text-sm font-bold text-[#388E3C]">{fmt(staff.fixedSalary || 0)}</span></div>}
           {isShiftSalary && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">أجر الوردية ({fmt(shiftRate)}/ساعة × {shiftHours} ساعة)</span><span className="text-sm font-bold text-[#388E3C]">{fmt(shiftPay)}</span></div>}
           {commission > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">نسبة الإيرادات ({rangeSessions.length} جلسة × {staff.percentageValue}%)</span><span className="text-sm font-bold text-[#388E3C]">+{fmt(commission)}</span></div>}
           {rangePersonalExp > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">مصروفات شخصية بالفترة ({rangeExpenseVouchers.length})</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(rangePersonalExp)}</span></div>}
           {totalPending > 0 && <div className="flex items-center justify-between p-2.5 rounded-lg" style={{ backgroundColor: "#F5F5F5" }}><span className="text-sm text-[#555]">سلف معلقة</span><span className="text-sm font-bold text-[#D32F2F]">−{fmt(totalPending)}</span></div>}
-          <div className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}><span className="text-sm font-bold text-[#2E7D32]">الصافي المستحق</span><span className="text-lg font-bold text-[#2E7D32]">{fmt(netPayslip)}</span></div>
+          <div className="flex items-center justify-between p-3 rounded-lg" style={{ backgroundColor: netPayslip < 0 ? "#FFEBEE" : "#E8F5E9", border: `1px solid ${netPayslip < 0 ? "#EF9A9A" : "#A5D6A7"}` }}>
+            <span className="text-sm font-bold" style={{ color: netPayslip < 0 ? "#C62828" : "#2E7D32" }}>{netPayslip < 0 ? "الموظف مدين للمركز" : "الصافي المستحق"}</span>
+            <span className="text-lg font-bold" style={{ color: netPayslip < 0 ? "#C62828" : "#2E7D32" }}>{fmt(netPayslip)}</span>
+          </div>
         </div>
       </Card>
 
@@ -13520,19 +13549,40 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, employe
         </Card>
       )}
 
-      {tab === "attendance" && (
-        <Card title="سجل الحضور والانصراف">
-          {myAttendance.length === 0 ? <EmptyState msg="لا توجد سجلات حضور مسجلة" /> : (
-            <table className="w-full text-sm"><THead cols={["التاريخ", "اليوم", "الدخول", "الخروج"]} />
-              <tbody>{[...myAttendance].reverse().map((a, i) => <TRow key={a.id} i={i}>
-                <TD className="text-[#555]">{a.date}</TD><TD className="text-[#777]">{a.dayName}</TD>
-                <TD className="font-medium text-[#388E3C]">{a.checkIn || "—"}</TD>
-                <TD className="font-medium text-[#D32F2F]">{a.checkOut || "—"}</TD>
-              </TRow>)}</tbody>
-            </table>
-          )}
-        </Card>
-      )}
+      {tab === "attendance" && (() => {
+        // ── ساعات العمل وقيمة الوردية لكل سجل حضور: نفس منطق getShiftPay
+        //    بشاشة الرواتب، لكن مطبَّق على الموظف صاحب الحساب نفسه فقط
+        //    (لا حاجة للبحث عن الموظف بكل صف — السعر ثابت لكل السجلات) ──
+        const attHourlyRate = staffHourlyRate(staff);
+        const isAttShift = staff.salaryType === "shift";
+        const attRows = [...myAttendance].reverse();
+        const totalAttHours = attRows.reduce((s, a) => s + (a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0), 0);
+        const totalAttPay = isAttShift ? Math.round(totalAttHours * attHourlyRate * 100) / 100 : 0;
+        return (
+          <Card title="سجل الحضور والانصراف">
+            {myAttendance.length === 0 ? <EmptyState msg="لا توجد سجلات حضور مسجلة" /> : (
+              <table className="w-full text-sm"><THead cols={["التاريخ", "اليوم", "الدخول", "الخروج", "عدد الساعات", "قيمة الوردية"]} />
+                <tbody>{attRows.map((a, i) => {
+                  const hrs = a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0;
+                  const pay = isAttShift ? Math.round(hrs * attHourlyRate * 100) / 100 : null;
+                  return <TRow key={a.id} i={i}>
+                    <TD className="text-[#555]">{a.date}</TD><TD className="text-[#777]">{a.dayName}</TD>
+                    <TD className="font-medium text-[#388E3C]">{a.checkIn || "—"}</TD>
+                    <TD className="font-medium text-[#D32F2F]">{a.checkOut || "—"}</TD>
+                    <TD className="text-[#555]">{hrs ? `${hrs} س` : "—"}</TD>
+                    <TD className="font-medium text-[#0D7377]">{pay != null ? fmt(pay) : "—"}</TD>
+                  </TRow>;
+                })}</tbody>
+                <tfoot><tr style={{ borderTop: "2px solid #E0E0E0", fontWeight: 700 }}>
+                  <td className="p-2 text-xs" colSpan={4}>الإجمالي</td>
+                  <td className="p-2 text-xs">{totalAttHours ? `${Math.round(totalAttHours * 100) / 100} س` : "—"}</td>
+                  <td className="p-2 text-xs text-[#0D7377]">{isAttShift ? fmt(totalAttPay) : "—"}</td>
+                </tr></tfoot>
+              </table>
+            )}
+          </Card>
+        );
+      })()}
 
       <Modal open={showAdvModal} onClose={() => setShowAdvModal(false)} title="إرسال طلب سلفة للمدير"
         footer={<><Btn variant="secondary" onClick={submitAdvanceReq}><ArrowUpRight size={15} />إرسال الطلب</Btn><Btn variant="outline" onClick={() => setShowAdvModal(false)}>إلغاء</Btn></>}>
@@ -15429,6 +15479,27 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
                   );
                 })}
               </tbody>
+              {records.length > 0 && (() => {
+                // ── سطر إجمالي: مجموع الساعات ومجموع "المستحق" (لموظفي الوردية فقط)
+                //    للسجلات المعروضة/المصفّاة حالياً — يشكّل كشف حساب مختصر للفترة ──
+                const totalHoursSum = records.reduce((s, r) => s + (r.totalHours ?? calcHoursNum(r.checkIn, r.checkOut) ?? 0), 0);
+                const totalPaySum = isAdmin ? records.reduce((s, r) => {
+                  const emp = findStaffShift(r.empId);
+                  const rate = emp?.salaryType === "shift" ? staffHourlyRate(emp) : 0;
+                  const h = r.totalHours ?? calcHoursNum(r.checkIn, r.checkOut);
+                  return s + (rate > 0 && h != null ? Math.round(h * rate * 100) / 100 : 0);
+                }, 0) : 0;
+                return (
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid #E0E0E0", fontWeight: 700, backgroundColor: "#F5F7FA" }}>
+                      <td className="px-3 py-2.5 text-xs text-[#555]" colSpan={isAdmin ? 7 : 5}>الإجمالي ({records.length} سجل)</td>
+                      <td className="px-3 py-2.5 text-xs text-[#0D7377]">{Math.round(totalHoursSum * 100) / 100}س</td>
+                      {isAdmin && <td className="px-3 py-2.5 text-xs text-[#388E3C]">{fmt(totalPaySum)}</td>}
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tfoot>
+                );
+              })()}
             </table>
           </div>
         )}

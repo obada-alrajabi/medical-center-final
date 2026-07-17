@@ -663,6 +663,24 @@ pool
       END $$;
     `);
     console.log("[migration] employees_staff_id_link applied");
+    // ── مزامنة عمود "القسم" مع قسم الموظف الحقيقي ────────────────────────
+    // بعد اعتماد الربط الذري أعلاه (staff_id)، شاشة الرواتب صارت تعرض بس
+    // القيمة المخزَّنة فعلياً بعمود employees.dept — وهاي القيمة عند صفوف
+    // قديمة أُنشئت قبل هذا الإصلاح ممكن تكون بقيت "عالقة" على قسم خاطئ (مثلاً
+    // الجراحة) رغم إنه المدير غيّر القسم الأساسي للموظف بشاشة إدارة الموظفين
+    // لاحقاً، لأنه التحديث القديم كان أحياناً ما يوصل لنفس الصف الصحيح. هلأ
+    // بما إنه staff_id موثوق 100%، نزامن dept من "المصدر الحقيقي"
+    // (staff_members.primary_dept) لكل صف مرتبط، فتصحح تلقائياً أي انحراف
+    // قديم — وتبقى بلا أثر (no-op) إذا كانت القيم متطابقة أصلاً. ──
+    const { rowCount: deptFixCount } = await pool.query(`
+      UPDATE employees e
+      SET dept = sm.primary_dept
+      FROM staff_members sm
+      WHERE e.staff_id = sm.id
+        AND sm.primary_dept IS NOT NULL
+        AND e.dept IS DISTINCT FROM sm.primary_dept
+    `);
+    if (deptFixCount) console.log(`[migration] employees_dept_sync: corrected ${deptFixCount} row(s)`);
   } catch (e) {
     console.error("[migration] employees_staff_id_link:", e.message);
   }
