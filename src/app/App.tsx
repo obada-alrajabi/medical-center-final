@@ -5229,7 +5229,7 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
         body += `</tbody></table>`;
       });
     }
-    body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الأخصائي</div><div class="sig-box"><div class="sig-line"></div>مراجعة الطبيب</div><div class="sig-box"><div class="sig-line"></div>ختم المختبر</div></div>`;
+    if (gAllPrintSettings["lab"]?.show_signature ?? true) body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الأخصائي</div><div class="sig-box"><div class="sig-line"></div>مراجعة الطبيب</div><div class="sig-box"><div class="sig-line"></div>ختم المختبر</div></div>`;
     return `<div class="pt-card">${body}</div>`;
   };
   const printLabReport = (patientName: string, results: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> | undefined, patId?: string | null) => {
@@ -5824,7 +5824,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
       body += `<p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p>`;
       body += `<p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`;
     });
-    body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الطبيب المُشخِّص</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div><div class="sig-box"><div class="sig-line"></div>ختم قسم الأشعة</div></div>`;
+    if (gAllPrintSettings["radiology"]?.show_signature ?? true) body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الطبيب المُشخِّص</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div><div class="sig-box"><div class="sig-line"></div>ختم قسم الأشعة</div></div>`;
     return `<div class="pt-card">${body}</div>`;
   };
   const printRadReport = (s: RadBoardItem) => {
@@ -6583,7 +6583,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
     body += `<div class="tests-title">ملاحظات الجلسة</div><p style="font-size:13px;color:#444;margin:4px 0">${modalNotes || "—"}</p>`;
     body += `<div class="tests-title">نتيجة الجلسة</div><p style="font-size:13px;color:#444;margin:4px 0">${modalResult || "—"}</p>`;
     if (plan) body += `<div class="tests-title">خطة العلاج التأهيلي</div><p style="font-size:13px;color:#444;margin:4px 0">إجمالي الجلسات: ${plan.totalSessions} — المُنجَز: ${plan.completedSessions} — المتبقي: ${plan.totalSessions - plan.completedSessions}</p>`;
-    body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الأخصائي المعالج</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div></div>`;
+    if (gAllPrintSettings["rehab"]?.show_signature ?? true) body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الأخصائي المعالج</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div></div>`;
     return `<div class="pt-card">${body}</div>`;
   };
   const printRehabReport = (entry: RehabQueueEntry) => {
