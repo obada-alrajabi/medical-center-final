@@ -93,7 +93,14 @@ function inRange(date: string | null | undefined, fromMs: number | null, toMsVal
 //    النظام نفسه عند الإنشاء، وليس نصاً حراً يكتبه المستخدم) — نستخدمه لاستثناء
 //    هذه السندات من معادلة الإيرادات، لأن نفس المبلغ محتسب أصلاً عبر تحديث
 //    sessions.paid (انظر الشرح المفصّل عند فلترة filteredRV بالأسفل). ──
-const DEBT_SETTLEMENT_RV_MARKER = "تسديد دين مريض";
+export const DEBT_SETTLEMENT_RV_MARKER = "تسديد دين مريض";
+
+// ── مساعد مشترك: أي مكان بالتطبيق بيجمع receiptVouchers مباشرة كـ"إيراد"
+//    (خارج calculateFinancials) لازم يستخدم هذا الفلتر أولاً، وإلا كل تسديد
+//    دين (اللي بيرفع sessions.paid تلقائياً) بينضاف مرة ثانية كسند قبض منفصل
+//    فيتضاعف الإيراد المعروض. ──
+export const isRevenueReceiptVoucher = (v: { reason?: string | null }): boolean =>
+  !(v.reason || "").startsWith(DEBT_SETTLEMENT_RV_MARKER);
 
 export function calculateFinancials(
   sessions: { date: string; paid: number; dept: string }[],

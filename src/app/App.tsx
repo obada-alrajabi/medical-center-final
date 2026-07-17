@@ -1,6 +1,6 @@
 ﻿import React from "react";
 import { useState, useEffect, useRef, Fragment, useMemo, useCallback } from "react";
-import { calculateFinancials } from "./financialEngine";
+import { calculateFinancials, isRevenueReceiptVoucher, DEBT_SETTLEMENT_RV_MARKER } from "./financialEngine";
 import { calcNetProfit } from "../utils/finance";
 import UnifiedPrintComponent from "./components/UnifiedPrintComponent";
 import { createPortal } from "react-dom";
@@ -2055,7 +2055,7 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
   const deptRevenueData = allDepts4Charts.map(d => ({
     name: d.short,
     إيرادات: sessions.filter(s => s.dept === d.id && ir(s.date || "")).reduce((a, s) => a + (Number(s.paid) || 0), 0)
-      + receiptVouchers.filter(v => (v.dept || "") === (d.id || "") && ir(v.date || "")).reduce((a, v) => a + (Number(v.amount) || 0), 0),
+      + receiptVouchers.filter(v => (v.dept || "") === (d.id || "") && ir(v.date || "") && isRevenueReceiptVoucher(v)).reduce((a, v) => a + (Number(v.amount) || 0), 0),
   }));
   const patientsPieData = allDepts4Charts.map(d => ({
     name: d.short,
@@ -2067,7 +2067,7 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
     return {
       name: d.short,
       إيرادات: sessions.filter(s => s.dept === d.id && ir(s.date || "")).reduce((a, s) => a + (Number(s.paid) || 0), 0)
-        + receiptVouchers.filter(v => (v.dept || "") === (d.id || "") && ir(v.date || "")).reduce((a, v) => a + (Number(v.amount) || 0), 0),
+        + receiptVouchers.filter(v => (v.dept || "") === (d.id || "") && ir(v.date || "") && isRevenueReceiptVoucher(v)).reduce((a, v) => a + (Number(v.amount) || 0), 0),
       مصروفات: txs.filter(t => t.type === "out" && (t.category === "مصروف شخصي" || t.category === "مصروف شخصي — موظف" || t.category === "مصروف تشغيلي")).reduce((s, t) => s + t.amount, 0),
       مشتريات: txs.filter(t => t.type === "out" && (t.category === "مشتريات مباشرة" || t.category === "مشتريات تشغيلية")).reduce((s, t) => s + t.amount, 0),
       ديون: deptDebts.reduce((s, b) => s + b.amount, 0),
@@ -2084,7 +2084,7 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
       if (!mMap[m]) mMap[m] = { إيرادات: 0, سحوبات: 0 };
       mMap[m].إيرادات += (Number(s.paid) || 0);
     });
-    receiptVouchers.filter(v => ir(v.date || "")).forEach(v => {
+    receiptVouchers.filter(v => ir(v.date || "") && isRevenueReceiptVoucher(v)).forEach(v => {
       const p = (v.date || "").split("/");
       const m = p.length === 3 ? `${p[1]}/${p[2].slice(2)}` : "";
       if (!m) return;
@@ -3696,7 +3696,7 @@ function PatientSearchScreen({ onNavigate, debts, customDepts = [] }: { onNaviga
 
 // ─── PATIENT FILE ──────────────────────────────────────────────────────────────
 
-function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, onSettleSessionsDebt, sessionFiles, setSessionFiles, setReceiptVouchers, perms, insurances = [], invoices = [] }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; perms?: DeptPermissions; insurances?: InsuranceCo[]; invoices?: Invoice[] }) {
+function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDeposit, setDebts, customDepts = [], patientDeleteRequests, setPatientDeleteRequests, loggedUser, setDeletedPatientIds, onAdminDeletePatient, rehabQueueEntries = [], rehabPlans = [], onDeleteSession, onEditSession, onSettleSessionsDebt, sessionFiles, setSessionFiles, setReceiptVouchers, receiptVouchers = [], perms, insurances = [], invoices = [] }: { dept: string; onNavigate: (r: Route) => void; patientId: string; sessions: PatientSession[]; debts: DebtRow[]; doDeposit?: (dept: string, amount: number, title: string, type: string) => void; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; customDepts?: Array<{ id: string; name: string; short: string }>; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; loggedUser?: LoggedUser | null; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; rehabQueueEntries?: RehabQueueEntry[]; rehabPlans?: RehabPlan[]; onDeleteSession?: (id: number) => void; onEditSession?: (id: number, updated: { doctor: string; date: string; notes: string; amount: number; paid: number; diagnoses: string[]; medications: { name: string; dose: string; freq: string; duration: string }[]; labRefs: string[]; radRefs: string[] }) => void; onSettleSessionsDebt?: (patientId: string, deptId: string | null, amount: number) => void; sessionFiles: Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>; setSessionFiles: React.Dispatch<React.SetStateAction<Record<number, Array<{ id: number; filename: string; originalname: string; size: number }>>>>; setReceiptVouchers?: React.Dispatch<React.SetStateAction<any[]>>; receiptVouchers?: any[]; perms?: DeptPermissions; insurances?: InsuranceCo[]; invoices?: Invoice[] }) {
   const isAdmin = loggedUser?.type === "admin";
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null);
   const handleDeleteSession = async (id: number) => {
@@ -3832,6 +3832,28 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
   const initials = (n: string) => n.split(" ").slice(0, 2).map(w => w[0]).join("");
   const totalAmt = finSess.reduce((s, x) => s + x.amount, 0);
   const totalPaid = finSess.reduce((s, x) => s + x.paid, 0);
+  // ── سجل دفعات تسديد الدين — كل سند قبض حقيقي صادر لهذا المريض بسبب "تسديد
+  //    دين مريض" (من ملف المريض أو من شاشة إدارة الديون، كلاهما يستخدمان نفس
+  //    النص). نحسب "الباقي بعد الدفعة" رجوعاً من الدين الحالي الفعلي (liveDebt)
+  //    بدل الاعتماد على أي رصيد تاريخي مخزَّن — كل دفعة أقدم كان الباقي بعدها
+  //    أكبر بمقدار كل الدفعات الأحدث منها، وهذا يبقى صحيحاً حتى لو تغيّر إجمالي
+  //    الفاتورة لاحقاً. ──
+  const debtPayments = React.useMemo(() => {
+    const list = (receiptVouchers || []).filter((v: any) =>
+      (v.received_from_id === p.id || v.received_from_name === p.name) &&
+      typeof v.reason === "string" && v.reason.startsWith(DEBT_SETTLEMENT_RV_MARKER) &&
+      canSeeFinance(v.dept)
+    );
+    const sorted = [...list].sort((a: any, b: any) => (String(b.date || "")).localeCompare(String(a.date || "")) || ((b.id || 0) - (a.id || 0)));
+    let running = liveDebt;
+    const out: { date: string; amount: number; remainingAfter: number; dept?: string; notes?: string }[] = [];
+    for (const v of sorted) {
+      const amt = Number(v.amount) || 0;
+      out.push({ date: v.date, amount: amt, remainingAfter: running, dept: v.dept, notes: v.notes });
+      running += amt;
+    }
+    return out;
+  }, [receiptVouchers, p.id, p.name, liveDebt]);
   // ── فواتير شركة التأمين المرتبطة بهذا المريض (الجزء المخصوم من الكشفية
   //    ويُسجَّل كذمة/دَين منفصل على شركة التأمين، مش على المريض نفسه) — نفس
   //    قاعدة إظهار الأقسام المطبَّقة على باقي الملف المالي (canSeeFinance). ──
@@ -4210,8 +4232,9 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
               // ── قسم تفاصيل التأمين بكشف الحساب: بيظهر بس لو المريض مؤمَّن وعنده
               //    فواتير مسجَّلة على شركة التأمين (patientInsInvoices) — نفس
               //    البيانات المعروضة بتبويب "الملف المالي" أعلاه. ──
-              const insuranceHtml = p.insurance ? `<h2>تفاصيل التأمين</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">شركة التأمين</div><div class="kpi-v">${p.insuranceCompany || "غير محدد"}</div></div></div>${patientInsInvoices.length > 0 ? `<table><thead><tr><th>التاريخ</th><th>القسم</th><th>رقم الكشفية</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${patientInsInvoices.map(inv => `<tr><td>${inv.date}</td><td>${deptShort(inv.dept)}</td><td>${inv.claimNo || "—"}</td><td>${fmt(inv.total)}</td><td class="in">${fmt(inv.paid)}</td><td class="${inv.remaining > 0 ? "out" : "in"}">${inv.remaining > 0 ? fmt(inv.remaining) : "✓"}</td><td>${inv.status === "paid" ? "مسدد" : inv.status === "partial" ? "جزئي" : "غير مسدد"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي على شركة التأمين</td><td style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.total, 0))}</td><td class="in" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.paid, 0))}</td><td class="out" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.remaining, 0))}</td><td></td></tr></tfoot></table>` : `<p style="font-size:12px;color:#777">لا توجد فواتير مسجَّلة على شركة التأمين لهذا المريض</p>`}` : "";
-              const html = `<h2>كشف الحساب المالي — ${p.name}${isAdmin ? "" : ` (قسم ${deptShort(dept)} فقط)`}</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">الاسم</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div></div><h2>تفاصيل الفواتير</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>إجمالي الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${finSess.map(s => `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي</td><td style="font-weight:bold">${fmt(totalAmt)}</td><td class="in" style="font-weight:bold">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}" style="font-weight:bold">${liveDebt > 0 ? fmt(liveDebt) : "مسدد بالكامل ✓"}</td></tr></tfoot></table>${insuranceHtml}`;
+              const paymentsHtml = debtPayments.length > 0 ? `<h2>سجل دفعات تسديد الديون</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>قيمة الدفعة</th><th>الباقي بعد الدفعة</th></tr></thead><tbody>${[...debtPayments].reverse().map(pay => `<tr><td>${pay.date}</td><td>${deptShort(pay.dept || "")}</td><td class="in">${fmt(pay.amount)}</td><td class="${pay.remainingAfter > 0 ? "out" : "in"}">${pay.remainingAfter > 0 ? fmt(pay.remainingAfter) : "مسدد بالكامل ✓"}</td></tr>`).join("")}</tbody></table>` : "";
+              const insuranceHtml = p.insurance ?`<h2>تفاصيل التأمين</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">شركة التأمين</div><div class="kpi-v">${p.insuranceCompany || "غير محدد"}</div></div></div>${patientInsInvoices.length > 0 ? `<table><thead><tr><th>التاريخ</th><th>القسم</th><th>رقم الكشفية</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${patientInsInvoices.map(inv => `<tr><td>${inv.date}</td><td>${deptShort(inv.dept)}</td><td>${inv.claimNo || "—"}</td><td>${fmt(inv.total)}</td><td class="in">${fmt(inv.paid)}</td><td class="${inv.remaining > 0 ? "out" : "in"}">${inv.remaining > 0 ? fmt(inv.remaining) : "✓"}</td><td>${inv.status === "paid" ? "مسدد" : inv.status === "partial" ? "جزئي" : "غير مسدد"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي على شركة التأمين</td><td style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.total, 0))}</td><td class="in" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.paid, 0))}</td><td class="out" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.remaining, 0))}</td><td></td></tr></tfoot></table>` : `<p style="font-size:12px;color:#777">لا توجد فواتير مسجَّلة على شركة التأمين لهذا المريض</p>`}` : "";
+              const html = `<h2>كشف الحساب المالي — ${p.name}${isAdmin ? "" : ` (قسم ${deptShort(dept)} فقط)`}</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">الاسم</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div></div><h2>تفاصيل الفواتير</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>إجمالي الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${finSess.map(s => `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي</td><td style="font-weight:bold">${fmt(totalAmt)}</td><td class="in" style="font-weight:bold">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}" style="font-weight:bold">${liveDebt > 0 ? fmt(liveDebt) : "مسدد بالكامل ✓"}</td></tr></tfoot></table>${paymentsHtml}${insuranceHtml}`;
               printHtml(html, `كشف الحساب المالي — ${p.name}`, undefined, undefined, true, dept);
             }}><Receipt size={13} />كشف الحساب</Btn>
           </div>
@@ -4569,6 +4592,22 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
               </div>
             )}
           </Card>
+          {/* سجل دفعات تسديد الديون — تفصيلي: كل دفعة على حدة بتاريخها ومبلغها والباقي بعدها */}
+          {debtPayments.length > 0 && (
+            <Card title="🧾 سجل دفعات تسديد الديون">
+              <table className="w-full text-sm">
+                <THead cols={["التاريخ", "القسم", "قيمة الدفعة", "الباقي بعد الدفعة"]} />
+                <tbody>{debtPayments.map((pay, i) => (
+                  <TRow key={i} i={i}>
+                    <TD className="text-[#999]">{pay.date}</TD>
+                    <TD><Badge color="info">{DEPARTMENTS.find(dd => dd.id === pay.dept)?.short || customDepts.find(dd => dd.id === pay.dept)?.short || pay.dept || "—"}</Badge></TD>
+                    <TD className="font-bold text-[#388E3C]">{fmt(pay.amount)}</TD>
+                    <TD>{pay.remainingAfter > 0 ? <span className="font-bold text-[#D32F2F]">{fmt(pay.remainingAfter)}</span> : <span className="text-[#388E3C]">مسدد بالكامل ✓</span>}</TD>
+                  </TRow>
+                ))}</tbody>
+              </table>
+            </Card>
+          )}
           {/* تفاصيل التأمين */}
           {p.insurance && (
             <Card title="🛡️ تفاصيل التأمين">
@@ -8422,7 +8461,7 @@ function FinChartsScreen({ drawers, debts, employees, invoices = [], sessions = 
   const allDeptsList = [...DEPARTMENTS];
   const revenueByDept = allDeptsList.filter(d => drawers[d.id]).map(d => {
     const deptSessRev = sessions.filter(s => s.dept === d.id && ir(s.date || "")).reduce((a, s) => a + (Number(s.paid) || 0), 0);
-    const deptRVRev = receiptVouchers.filter(v => v.dept === d.id && ir(v.date || "")).reduce((a, v) => a + (Number(v.amount) || 0), 0);
+    const deptRVRev = receiptVouchers.filter(v => v.dept === d.id && ir(v.date || "") && isRevenueReceiptVoucher(v)).reduce((a, v) => a + (Number(v.amount) || 0), 0);
     return { name: d.short, إيرادات: deptSessRev + deptRVRev };
   }).filter(d => d.إيرادات > 0);
   return (
@@ -11750,7 +11789,10 @@ function FinRevenueScreen({ drawers, debts, customDepts = [], toast, sessions = 
   };
   const allTxs = Object.values(drawers).flatMap(d => d.txs || []).filter(t => ir(t.date || ""));
   const sessionRev = sessions.filter(s => irSession(s.date)).reduce((sum, s) => sum + (Number(s.paid) || 0), 0);
-  const rvRev = receiptVouchers.filter(v => ir(v.date || "")).reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
+  // ── تصحيح ازدواج: نستثني سندات القبض "المرآة" الصادرة عن تسديد دين مريض —
+  //    نفس المبلغ محتسب أصلاً عبر sessions.paid أعلاه (انظر شرح المحرك الموحّد
+  //    بـ financialEngine.ts)، وإلا كل تسديد دين يظهر إيراداً مرتين هون ──
+  const rvRev = receiptVouchers.filter(v => ir(v.date || "") && isRevenueReceiptVoucher(v)).reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
   const totalRevenue = sessionRev + rvRev;
   // إيرادات المرضى الفعلية فقط (للتحصيل)
   const totalPatientRevenue = sessionRev;
@@ -11760,7 +11802,7 @@ function FinRevenueScreen({ drawers, debts, customDepts = [], toast, sessions = 
   const collectionRate = totalExpected > 0 ? Math.round((totalPatientRevenue / totalExpected) * 100) : 0;
   const deptRevenue = allDeptsRev.map(d => {
     const rev = sessions.filter(s => s.dept === d.id && irSession(s.date)).reduce((a, s) => a + (Number(s.paid) || 0), 0);
-    const rvRev = receiptVouchers.filter(v => v.dept === d.id && ir(v.date || "")).reduce((a, v) => a + (Number(v.amount) || 0), 0);
+    const rvRev = receiptVouchers.filter(v => v.dept === d.id && ir(v.date || "") && isRevenueReceiptVoucher(v)).reduce((a, v) => a + (Number(v.amount) || 0), 0);
     return { name: d.short, إيرادات: rev + rvRev };
   }).filter(d => d.إيرادات > 0);
   const monthMap: Record<string, number> = {};
@@ -11769,7 +11811,7 @@ function FinRevenueScreen({ drawers, debts, customDepts = [], toast, sessions = 
     const m = p.length === 3 ? `${p[1]}/${p[2].slice(2)}` : "";
     if (m) monthMap[m] = (monthMap[m] || 0) + (Number(s.paid) || 0);
   });
-  receiptVouchers.filter(v => ir(v.date || "")).forEach(v => {
+  receiptVouchers.filter(v => ir(v.date || "") && isRevenueReceiptVoucher(v)).forEach(v => {
     const p = (v.date || "").split("/");
     const m = p.length === 3 ? `${p[1]}/${p[2].slice(2)}` : "";
     if (m) monthMap[m] = (monthMap[m] || 0) + (Number(v.amount) || 0);
@@ -14029,7 +14071,7 @@ function StaffPortal({ staff, drawers, sessions, debts, invoices, setInvoices, d
                 <NewSessionScreen dept={activeDept} patientId={route.patientId || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={staffToast} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={{ type: "staff", staff }} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />
               )}
               {subScreen === "patient-file" && activeDept && (
-                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} perms={deptPerms ?? undefined} insurances={insurances} />
+                <PatientFileScreen dept={activeDept} onNavigate={r => { setRoute(r); setSubScreen(r.screen); }} patientId={route.patientId || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} loggedUser={{ type: "staff", staff }} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchers} receiptVouchers={allReceiptVouchers} perms={deptPerms ?? undefined} insurances={insurances} />
               )}
 
               {subScreen === "purchase-reqs" && activeDept && (
@@ -15309,10 +15351,16 @@ function LoginScreen({ onLogin, staffList, adminAccounts = [] }: { onLogin: (use
 
 // ─── DATA IMPORT SCREEN ────────────────────────────────────────────────────────
 
-function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>; toast: (m: string, t?: ToastItem["type"]) => void }) {
+function DataImportScreen({ setSessions, setDebts, doDeposit, toast }: {
+  setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
+  setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>;
+  doDeposit?: (dept: string, amount: number, title: string, type: string) => void;
+  toast: (m: string, t?: ToastItem["type"]) => void;
+}) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, { count: number; errors: number }>>({});
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [results, setResults] = useState<Record<string, { patients: number; sessions: number; errors: number; warnings: string[] }>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeDept, setActiveDept] = useState<string>("");
 
@@ -15334,60 +15382,135 @@ function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<
 
   ];
 
+  // ── محلّل CSV يحترم الحقول المقتبَسة (") — الإصدار القديم كان split(",")
+  //    ساذج بيكسر ترتيب كل الأعمدة لو في فاصلة جوا حقل نصي متل العنوان ──
+  const parseCSVLine = (line: string, sep: string): string[] => {
+    const out: string[] = []; let cur = ""; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inQ) {
+        if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+        else cur += c;
+      } else {
+        if (c === '"') inQ = true;
+        else if (c === sep) { out.push(cur); cur = ""; }
+        else cur += c;
+      }
+    }
+    out.push(cur);
+    return out.map(c => c.trim());
+  };
   const parseCSV = (text: string): { rows: string[][]; headers: string[] } => {
     const lines = text.split(/\r?\n/).filter(l => l.trim());
     if (lines.length === 0) return { rows: [], headers: [] };
     const sep = lines[0].includes("\t") ? "\t" : ",";
-    const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, ""));
-    const rows = lines.slice(1).map(l => l.split(sep).map(c => c.trim().replace(/^"|"$/g, "")));
+    const headers = parseCSVLine(lines[0], sep);
+    const rows = lines.slice(1).map(l => parseCSVLine(l, sep));
     return { rows, headers };
+  };
+
+  // ── تطبيع التاريخ: يقبل DD/MM/YYYY (الصيغة المعتمدة بكل شاشات النظام) أو
+  //    YYYY-MM-DD (لو إكسل خزّن الخلية كتاريخ حقيقي) ويوحّدهما لصيغة
+  //    DD/MM/YYYY — بدونها كانت تواريخ مستوردة بصيغة مختلفة تكسر فلترة
+  //    التاريخ لاحقاً بكل شاشات التقارير (اللي بتفترض DD/MM/YYYY دائماً). ──
+  const normalizeImportDate = (raw: string, fallback: string): { date: string; ok: boolean } => {
+    const s = (raw || "").trim();
+    if (!s) return { date: fallback, ok: true };
+    let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if (m) return { date: `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[3]}`, ok: true };
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return { date: `${m[3].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[1]}`, ok: true };
+    return { date: fallback, ok: false };
+  };
+
+  // ── المعالجة الفعلية — تصلح العلة الجوهرية: الاستيراد كان يضيف كل شيء
+  //    بذاكرة المتصفح فقط (بدون أي استدعاء API)، فيختفي فور تحديث الصفحة، وحتى
+  //    وقتياً كان "المدفوع" المستورد يظهر إيراداً بشاشات الربح دون أي دخول
+  //    فعلي للصندوق. هلق كل صف بيُنشئ مريضاً حقيقياً (لو جديد) + جلسة حقيقية
+  //    بالخادم + إيداع حقيقي بالصندوق (doDeposit) لو المدفوع > 0 + سجل دين
+  //    حقيقي لو تبقّى دين — تماماً بنفس مسار "تسجيل مريض جديد" العادي. ──
+  const processRows = async (deptId: string, rows: string[][], fileName: string) => {
+    const today = _today();
+    let patientsAdded = 0, sessionsAdded = 0, errors = 0;
+    const warnings: string[] = [];
+    setProgress({ done: 0, total: rows.length });
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // +1 للعنوان، +1 للترقيم من 1
+      const bump = () => setProgress(p => p ? { ...p, done: p.done + 1 } : p);
+      const rawId = String(row[0] ?? "").trim();
+      const name = String(row[1] ?? "").trim();
+      if (!name) { errors++; warnings.push(`صف ${rowNum}: تم تجاهله — الاسم فارغ`); bump(); continue; }
+      const age = parseInt(String(row[2] ?? "0")) || 0;
+      const phone = String(row[3] ?? "").trim() || "—";
+      const gender = String(row[4] ?? "").trim() || "ذكر";
+      const blood = String(row[5] ?? "").trim() || "غير معروف";
+      const address = String(row[6] ?? "").trim();
+      const insRaw = String(row[7] ?? "").trim().toLowerCase();
+      const insurance = insRaw === "نعم" || insRaw === "yes" || insRaw === "1" || insRaw === "true";
+      const chronic = String(row[8] ?? "").trim();
+      const allergy = String(row[9] ?? "").trim();
+      const { date: sessionDate, ok: dateOk } = normalizeImportDate(String(row[10] ?? ""), today);
+      if (!dateOk) warnings.push(`صف ${rowNum}: تاريخ غير مفهوم "${row[10]}" — استُخدم تاريخ اليوم بدلاً منه`);
+      const amount = parseFloat(String(row[11] ?? "0")) || 0;
+      const paid = parseFloat(String(row[12] ?? "0")) || 0;
+      // ── تصحيح: كان يعامل "0" الصريحة بحقل الدين نفس معاملة الحقل الفارغ
+      //    (بسبب || مع صفر) فيعيد حساب دين رغم إدخال 0 صراحةً — هلق نميّز بين
+      //    "فارغ" (نحسبه تلقائياً) و"0 مكتوبة صراحةً" (نحترمها كما هي) ──
+      const debtRaw = String(row[13] ?? "").trim();
+      const debt = debtRaw !== "" ? (parseFloat(debtRaw) || 0) : Math.max(0, amount - paid);
+      try {
+        let effectiveId = rawId;
+        const existing = rawId && mockPatients.find(p => p.id === rawId);
+        if (!existing) {
+          const created = await api.patients.create({
+            id: rawId || undefined, name, age, gender, phone, blood_type: blood, address,
+            has_insurance: insurance, has_chronic: !!chronic, chronic_detail: chronic || null,
+            has_allergy: !!allergy, allergy_detail: allergy || null,
+            dept: deptId, debt: 0, date: api.parseDateISO(sessionDate), notes: `مستورد من ملف — ${fileName}`,
+          });
+          if (!created || !(created as any).id) { errors++; warnings.push(`صف ${rowNum}: فشل حفظ بيانات المريض "${name}" بالخادم`); bump(); continue; }
+          effectiveId = String((created as any).id);
+          mockPatients.push({ id: effectiveId, name, age, phone, blood, insurance, dept: deptId, debt, date: sessionDate, gender, address, chronic, allergy });
+          _syncPatients();
+          patientsAdded++;
+        }
+        const sessionRes: any = await api.sessions.create({
+          patient_id: effectiveId, dept: deptId, doctor: "مستورد", date: api.parseDateISO(sessionDate),
+          diagnoses: [], medications: [], notes: `مستورد من ملف — ${fileName}`, lab_refs: [], rad_refs: [],
+          amount, paid, debt,
+        });
+        if (!sessionRes || sessionRes.id == null) { errors++; warnings.push(`صف ${rowNum}: فشل حفظ الجلسة للمريض "${name}"`); bump(); continue; }
+        const ns: PatientSession = { id: sessionRes.id, patientId: effectiveId, dept: deptId, doctor: "مستورد", date: sessionDate, diagnoses: [], medications: [], notes: `مستورد من ملف — ${fileName}`, labRefs: [], radRefs: [], amount, paid, debt };
+        setSessions(p => [ns, ...p]);
+        sessionsAdded++;
+        if (paid > 0 && doDeposit) doDeposit(deptId, paid, `دفعة مريض (استيراد) — ${name}`, "إيراد مريض");
+        if (debt > 0 && setDebts) {
+          const nd: DebtRow = { id: Date.now() + i, patient: name, pid: effectiveId, dept: deptId, amount: debt, date: sessionDate, days: 0, phone };
+          setDebts(p => [nd, ...p]);
+          api.finance.debts.create({ patient: name, patient_id: effectiveId, dept: deptId, amount: debt, date: api.parseDateISO(sessionDate), phone }).then(r => { if (r && (r as any).id && setDebts) setDebts(p => p.map(d => d.id === nd.id ? { ...d, id: (r as any).id } : d)); }).catch(() => { });
+        }
+      } catch {
+        errors++;
+        warnings.push(`صف ${rowNum}: خطأ اتصال بالخادم — لم يُحفظ سجل "${name}"`);
+      }
+      bump();
+    }
+    setResults(r => ({ ...r, [deptId]: { patients: patientsAdded, sessions: sessionsAdded, errors, warnings: warnings.slice(0, 40) } }));
+    setProgress(null);
+    if (sessionsAdded > 0) toast(`تم استيراد ${sessionsAdded} جلسة (${patientsAdded} مريض جديد) فعلياً بالخادم — قسم ${DEPT_CONFIGS.find(d => d.id === deptId)?.label} ✓`, "success");
+    else toast("لم يتم استيراد أي صف — راجع الأخطاء أسفل البطاقة", "error");
   };
 
   const importFile = (deptId: string, file: File) => {
     setImporting(deptId);
     const reader = new FileReader();
-    reader.onload = e => {
+    reader.onload = async e => {
       try {
         const text = e.target?.result as string;
         const { rows } = parseCSV(text);
         if (rows.length === 0) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
-        let added = 0; let errors = 0;
-        const newSessions: PatientSession[] = [];
-        const today = _today();
-        rows.forEach((row, i) => {
-          // Columns (0-indexed): رقم_الملف, الاسم, العمر, الهاتف, الجنس, فصيلة_الدم,
-          //   العنوان, تأمين, أمراض_مزمنة, حساسية, تاريخ_التسجيل, المبلغ, المدفوع, الدين
-          const nid = row[0]?.trim() || `IMP-${Date.now()}-${i}`;
-          const name = row[1]?.trim();
-          const age = parseInt(row[2] || "0") || 0;
-          const phone = row[3]?.trim() || "—";
-          const gender = row[4]?.trim() || "ذكر";
-          const blood = row[5]?.trim() || "غير معروف";
-          const address = row[6]?.trim() || "";
-          const insRaw = row[7]?.trim().toLowerCase();
-          const insurance = insRaw === "نعم" || insRaw === "yes" || insRaw === "1" || insRaw === "true";
-          const chronic = row[8]?.trim() || "";
-          const allergy = row[9]?.trim() || "";
-          const dateRaw = row[10]?.trim() || today;
-          const amount = parseFloat(row[11] || "0") || 0;
-          const paid = parseFloat(row[12] || "0") || 0;
-          const debt = parseFloat(row[13] || "0") || Math.max(0, amount - paid);
-          if (!name) { errors++; return; }
-          // Add to patient registry if not already present
-          if (!mockPatients.find(p => p.id === nid)) {
-            mockPatients.push({ id: nid, name, age, phone, blood, insurance, dept: deptId, debt, date: dateRaw, gender, address, chronic, allergy });
-            _syncPatients();
-          }
-          newSessions.push({
-            id: Date.now() + i, patientId: nid, dept: deptId, doctor: "مستورد",
-            date: dateRaw, diagnoses: [], medications: [], notes: `مستورد من ملف — ${file.name}`,
-            labRefs: [], radRefs: [], amount, paid, debt,
-          });
-          added++;
-        });
-        setSessions(p => [...p, ...newSessions]);
-        setResults(r => ({ ...r, [deptId]: { count: added, errors } }));
-        toast(`تم استيراد ${added} مريض في قسم ${DEPT_CONFIGS.find(d => d.id === deptId)?.label}`, "success");
+        await processRows(deptId, rows, file.name);
       } catch { toast("خطأ في قراءة الملف — تأكد من صيغة CSV", "error"); }
       finally { setImporting(null); }
     };
@@ -15398,44 +15521,15 @@ function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<
   const importXlsx = (deptId: string, file: File) => {
     setImporting(deptId);
     const reader = new FileReader();
-    reader.onload = e => {
+    reader.onload = async e => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" }) as string[][];
         if (rows.length < 2) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
-        const today = _today();
         const dataRows = rows.slice(1).filter(r => r.some(c => String(c).trim()));
-        let added = 0; let errors = 0;
-        const newSessions: PatientSession[] = [];
-        dataRows.forEach((row, i) => {
-          const nid = String(row[0] || "").trim() || `IMP-${Date.now()}-${i}`;
-          const name = String(row[1] || "").trim();
-          const age = parseInt(String(row[2] || "0")) || 0;
-          const phone = String(row[3] || "").trim() || "—";
-          const gender = String(row[4] || "").trim() || "ذكر";
-          const blood = String(row[5] || "").trim() || "غير معروف";
-          const address = String(row[6] || "").trim() || "";
-          const insRaw = String(row[7] || "").trim().toLowerCase();
-          const insurance = insRaw === "نعم" || insRaw === "yes" || insRaw === "1";
-          const chronic = String(row[8] || "").trim() || "";
-          const allergy = String(row[9] || "").trim() || "";
-          const dateRaw = String(row[10] || "").trim() || today;
-          const amount = parseFloat(String(row[11] || "0")) || 0;
-          const paid = parseFloat(String(row[12] || "0")) || 0;
-          const debt = parseFloat(String(row[13] || "0")) || Math.max(0, amount - paid);
-          if (!name) { errors++; return; }
-          if (!mockPatients.find(p => p.id === nid)) {
-            mockPatients.push({ id: nid, name, age, phone, blood, insurance, dept: deptId, debt, date: dateRaw, gender, address, chronic, allergy });
-            _syncPatients();
-          }
-          newSessions.push({ id: Date.now() + i, patientId: nid, dept: deptId, doctor: "مستورد", date: dateRaw, diagnoses: [], medications: [], notes: `مستورد من ملف — ${file.name}`, labRefs: [], radRefs: [], amount, paid, debt });
-          added++;
-        });
-        setSessions(p => [...p, ...newSessions]);
-        setResults(r => ({ ...r, [deptId]: { count: added, errors } }));
-        toast(`تم استيراد ${added} مريض في قسم ${DEPT_CONFIGS.find(d => d.id === deptId)?.label}`, "success");
+        await processRows(deptId, dataRows, file.name);
       } catch { toast("خطأ في قراءة ملف Excel — تأكد أن الملف سليم", "error"); }
       finally { setImporting(null); }
     };
@@ -15478,7 +15572,7 @@ function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-bold text-[#1B3A6B]">استيراد المعلومات</h2>
-          <p className="text-xs text-[#999] mt-0.5">ارفع ملف Excel (XLSX) أو CSV لترحيل بيانات المرضى السابقين — حمّل النموذج، عبّئه في Excel، ثم ارفعه مباشرةً</p>
+          <p className="text-xs text-[#999] mt-0.5">ارفع ملف Excel (XLSX) أو CSV لترحيل بيانات المرضى السابقين — حمّل النموذج، عبّئه في Excel، ثم ارفعه مباشرةً. كل صف يُحفظ فعلياً بالخادم (مريض + جلسة)، وأي مبلغ "مدفوع" يُودَع فعلياً بصندوق القسم تلقائياً</p>
         </div>
         <button onClick={downloadGeneralTemplate} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white shadow-sm transition-all hover:opacity-90" style={{ backgroundColor: "#1B3A6B", border: "1px solid #1B3A6B" }}>
           <Download size={16} />تحميل نموذج الاستيراد ({PATIENT_FIELDS.length} عمود)
@@ -15499,7 +15593,8 @@ function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<
         <div className="mt-3 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
           <p><strong>تأمين_صحي:</strong> اكتب <strong>نعم</strong> أو <strong>لا</strong></p>
           <p><strong>فصيلة_الدم:</strong> A+ / A- / B+ / B- / AB+ / AB- / O+ / O-</p>
-          <p><strong>الدين:</strong> يُحسب تلقائياً (المبلغ − المدفوع) إن تُرك فارغاً</p>
+          <p><strong>الدين:</strong> يُحسب تلقائياً (المبلغ − المدفوع) إن تُرك فارغاً — اكتب 0 صراحةً إن كان مسدداً بالكامل فعلاً</p>
+          <p><strong>تاريخ_التسجيل:</strong> اكتبه نصاً بصيغة DD/MM/YYYY (مثال: 01/07/2026) لتفادي تنسيق إكسل التلقائي للتاريخ</p>
           <p><strong>الصيغة:</strong> Excel (XLSX) مباشرةً، أو CSV (UTF-8) — كلاهما مقبول عند الرفع</p>
         </div>
       </div>
@@ -15532,7 +15627,7 @@ function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<
                   {isImporting ? (
                     <div className="space-y-2">
                       <div className="w-7 h-7 border-2 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: `${dept.color} transparent ${dept.color} ${dept.color}` }} />
-                      <p className="text-xs text-[#555]">جاري الاستيراد...</p>
+                      <p className="text-xs text-[#555]">{progress ? `جارٍ الحفظ بالخادم... ${progress.done}/${progress.total}` : "جاري الاستيراد..."}</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -15550,12 +15645,19 @@ function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<
 
                 {/* Result banner */}
                 {res && (
-                  <div className="flex items-center gap-2 p-2 rounded-lg text-xs" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
-                    <CheckCircle size={13} className="text-[#388E3C] flex-shrink-0" />
-                    <div>
-                      <p className="font-bold text-[#2E7D32]">تم الاستيراد!</p>
-                      <p className="text-[#555]">{res.count} مريض{res.errors > 0 ? ` · ${res.errors} خطأ` : ""}</p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 p-2 rounded-lg text-xs" style={{ backgroundColor: res.sessions > 0 ? "#E8F5E9" : "#FFEBEE", border: `1px solid ${res.sessions > 0 ? "#A5D6A7" : "#FFCDD2"}` }}>
+                      {res.sessions > 0 ? <CheckCircle size={13} className="text-[#388E3C] flex-shrink-0" /> : <AlertTriangle size={13} className="text-[#D32F2F] flex-shrink-0" />}
+                      <div>
+                        <p className="font-bold" style={{ color: res.sessions > 0 ? "#2E7D32" : "#D32F2F" }}>{res.sessions > 0 ? "تم الحفظ فعلياً بالخادم ✓" : "لم يُحفظ أي صف"}</p>
+                        <p className="text-[#555]">{res.sessions} جلسة ({res.patients} مريض جديد){res.errors > 0 ? ` · ${res.errors} خطأ` : ""}</p>
+                      </div>
                     </div>
+                    {res.warnings.length > 0 && (
+                      <div className="p-2 rounded-lg text-[10px] leading-relaxed max-h-28 overflow-y-auto" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082", color: "#5D4037" }}>
+                        {res.warnings.map((w, i) => <p key={i}>• {w}</p>)}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -15579,8 +15681,8 @@ function DataImportScreen({ setSessions, toast }: { setSessions: React.Dispatch<
               return cfg ? (
                 <div key={deptId} className="bg-white rounded-lg p-3 text-center" style={{ border: "1px solid #C8E6C9" }}>
                   <p className="text-xs text-[#555]">{cfg.label}</p>
-                  <p className="text-2xl font-bold text-[#2E7D32]">{res.count}</p>
-                  <p className="text-[10px] text-[#999]">مريض مستورد</p>
+                  <p className="text-2xl font-bold text-[#2E7D32]">{res.sessions}</p>
+                  <p className="text-[10px] text-[#999]">جلسة مستوردة ({res.patients} مريض جديد)</p>
                 </div>
               ) : null;
             })}
@@ -16766,7 +16868,7 @@ export default function App() {
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} insurances={insurances} />;
       case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} setRehabPlans={setRehabPlans} setRehabQueueEntries={setRehabQueueEntries} />;
       case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />;
-      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} insurances={insurances} invoices={invoices} />;
+      case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} receiptVouchers={receiptVouchersGlobal} insurances={insurances} invoices={invoices} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" suppliers={suppliersRoot} />;
       case "lab-session": return <LabSessionScreen toast={toast} doDeposit={doDeposit} doWithdraw={doWithdraw} setDebts={setDebts} debts={debts} patientId={route.patientId} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} labTests={labTests} insurances={insurances} setInvoices={setInvoices} sessions={sessions} setSessions={setSessions} />;
@@ -16808,7 +16910,7 @@ export default function App() {
       case "backup": return <BackupScreen toast={toast} />;
       case "print-settings": return <PrintSettingsScreen toast={toast} />;
       case "general-settings": return <GeneralSettingsScreen toast={toast} insurances={insurances} setInsurances={setInsurances} adminAccounts={adminAccounts} setAdminAccounts={setAdminAccounts} sidebarSettings={sidebarSettings} setSidebarSettings={setSidebarSettings} loggedUser={loggedUser} setLoggedUser={setLoggedUser} suppliers={suppliersRoot} setSuppliers={setSuppliersRoot} />;
-      case "data-import": return <DataImportScreen setSessions={setSessions} toast={toast} />;
+      case "data-import": return <DataImportScreen setSessions={setSessions} setDebts={setDebts} doDeposit={doDeposit} toast={toast} />;
       case "data-delete": return <DataDeletionScreen sessions={sessions} setSessions={setSessions} debts={debts} setDebts={setDebts} attendance={attendance} setAttendance={setAttendance} purchaseRequests={purchaseRequests} setPurchaseRequests={setPurchaseRequests} drawers={drawers} setDrawers={setDrawers} invoices={invoices} setInvoices={setInvoices} toast={toast} />;
       case "surgery-print": return <PrintExportScreen dept="surgery" deptLabel="العيادة والطوارئ" sessions={sessions} toast={toast} />;
       case "lab-print": return <PrintExportScreen dept="lab" deptLabel="مختبر التحاليل الطبية" sessions={sessions} toast={toast} />;
