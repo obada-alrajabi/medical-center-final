@@ -154,25 +154,25 @@ export function calculateFinancials(
     (sum, r) => sum + (Number(r.paidAmount ?? r.paid_amount) || 0), 0
   );
 
-  // Personal Expenses = Payment Vouchers — لكن نستثني سندات الصرف الصادرة
-  // "مرآةً" عن دفعة مورد/طلب شراء (paid_to_type === "supplier"): هذه بالأصل
-  // نفس المبلغ اللي زاد عليه purchase_requests.paid_amount أعلاه (عند الموافقة
-  // مع دفعة فورية، أو لاحقاً من "تسديد") — فحسابها هون كمان كان يضاعف كل دفعة
-  // مورد بمعادلة المصروفات. سندات الصرف الشخصية للموظفين (paid_to_type
-  // "staff") ما فيها هاي المشكلة — تلك مصممة عمداً لتُحسب هون وتُخصم لاحقاً من
-  // الراتب الفعلي المسحوب (salaryCost)، فمفيش ازدواج فيها.
+  // Personal Expenses = Payment Vouchers (paid_to_type === "staff") — لكن هذه
+  // ── منذ هذا التعديل ── مستبعدة بالكامل من "المصروفات" و"صافي الربح"، بقرار
+  // صريح من صاحب النظام: سند الصرف الشخصي هو مبلغ يُسجَّل على حساب الموظف
+  // نفسه ويُخصم لاحقاً من راتبه الفعلي — بما إن "صافي الربح" أصلاً بيخصم
+  // الراتب (salaryCost) وهذا الراتب يفترض إنه محسوب صافياً بعد خصم أي سندات
+  // صرف شخصية أخذها الموظف مسبقاً، فحسابها هون كمان كـ"مصروف" منفصل كان
+  // بيعتبر بمثابة خصمها مرتين من صافي الربح (مرة كمصروف مباشر، ومرة ضمنياً
+  // عبر الراتب الصافي الأقل). لسا نحسبها (personalExpenseVouchersAmt) ونرجعها
+  // بالنتيجة لأغراض العرض/التقارير المستقلة (شاشات "سندات الصرف" ونظام
+  // الرواتب)، فقط ما عادت تدخل على "expenses"/"profit" هون. سندات دفعات
+  // الموردين (paid_to_type === "supplier") تبقى مستثناة كما كانت — قيمتها
+  // محسوبة أصلاً عبر purchase_requests.paid_amount أعلاه (purchaseExpenses).
   const filteredPV = paymentVouchers.filter(v =>
     (departmentId ? v.dept === departmentId : true) && ir(v.date) &&
     v.paid_to_type !== "supplier"
   );
   const personalExpenseVouchersAmt = filteredPV.reduce((sum, v) => sum + (Number(v.amount) || 0), 0);
 
-  // Personal expense vouchers are a real, immediate cash outflow (a voucher can be
-  // issued any day, independent of when payroll is actually run), so they must
-  // always count as an expense — never be netted only against salaryCost below,
-  // otherwise a day with a voucher but no salary disbursement (grossSalary = 0)
-  // would push salaryCost negative and incorrectly inflate profit.
-  const expenses = purchaseExpenses + personalExpenseVouchersAmt;
+  const expenses = purchaseExpenses;
 
   // Salaries: drawer transactions actually recorded as "راتب موظف" disbursements.
   const filteredSalary = drawerTxs.filter(t =>

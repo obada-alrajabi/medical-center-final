@@ -2038,10 +2038,12 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
   const totalPersonalExp = dashStats.breakdown.expenses.personalExpenseVouchers;
   const totalPurchases = dashStats.breakdown.expenses.purchaseRequests;
   const totalReceiptsAll = dashStats.breakdown.revenue.receiptVouchers;
-  // ── نفس إصلاح "الملخص المالي": "إجمالي المصروفات" هون كانت مربوطة فقط
-  //    بسندات الصرف الشخصية (totalPersonalExp) بدل كل ما يُخصم فعلياً من
-  //    صافي الربح (مشتريات + سندات شخصية + رواتب) — فكانت تظهر رقم أصغر
-  //    بكثير من الفرق الحقيقي بين الإيرادات وصافي الربح. ──
+  // ── نفس إصلاح "الملخص المالي": "إجمالي المصروفات" هون بتساوي كل ما يُخصم
+  //    فعلياً من صافي الربح (مشتريات معتمدة + رواتب صافية). سندات الصرف
+  //    الشخصية للموظفين (totalPersonalExp) مستبعدة عمداً من هذا المجموع —
+  //    بقرار صريح إنها تُخصم من راتب الموظف عبر نظام الرواتب المستقل، مش
+  //    مصروف عام على المركز (راجع financialEngine.ts) — لسا معروضة كبطاقة
+  //    منفصلة بلوحة التحكم للمتابعة، بس ما بتدخل بمجموع "المصروفات". ──
   const totalWithdrawals = dashStats.expenses + dashStats.salaryCost;
   const netProfit = dashStats.profit;
 
@@ -8249,9 +8251,13 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
   const salariesOut = stats.salaryCost;
   const advancesOut = stats.breakdown.salary.advanceDeduction;
   const purchasesOut = stats.breakdown.expenses.purchaseRequests;
-  const paymentVoucherOut = stats.breakdown.expenses.personalExpenseVouchers;
   const grossSalaryOut = stats.breakdown.salary.grossDisbursed;
-  const personalOut = stats.breakdown.expenses.personalExpenseVouchers;
+  // ── سندات الصرف الشخصية (personalExpenseVouchers) مستبعدة عمداً من "المصروفات"
+  //    و"صافي الربح" هون — بقرار صريح: هي مبلغ يُخصم لاحقاً من راتب الموظف نفسه
+  //    (نظام الرواتب المستقل)، مش مصروف عام على المركز. القيمة لسا موجودة
+  //    بـ stats.breakdown لو احتجناها بمكان تاني (شاشات الرواتب)، بس ما بتدخل
+  //    هون بجدول "تفاصيل المصروفات" ولا بمجموع rangeOut. راجع نفس القرار
+  //    بـ financialEngine.ts وشاشة "المصروفات" (FinExpensesScreen) ──
   const otherOut = 0;
   // ── تصحيح: كان يُعرض اسم الشهر الحالي دايماً لو ما في فلترة تاريخ، بينما
   //    الأرقام الفعلية بتُحسب لكل التاريخ (بدون أي قيد) — فيبدو للمستخدم وكأنها
@@ -8271,10 +8277,10 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
             <div style="font-size:14px;padding:15px;background:#F5F8FF;border-radius:8px;line-height:1.6;margin-bottom:20px;border:1px solid #1B3A6B;color:#1B3A6B;">
               <p><b>صافي الربح</b> = الإيرادات - (المصروفات + الرواتب)</p>
               <p><b>الإيرادات</b> = الدخل من المرضى + سندات القبض</p>
-              <p><b>الرواتب</b> = الرواتب الأصلية - قيمة السلف المقبولة - سندات الصرف (مصروفات شخصية)</p>
+              <p><b>الرواتب</b> = الرواتب الأصلية - قيمة السلف المقبولة (سندات الصرف الشخصية للموظفين مستبعدة من هذه المعادلة — تُخصم من راتب الموظف عبر نظام الرواتب المستقل)</p>
             </div>
             <h2>تفاصيل الإيرادات</h2><table><thead><tr><th>البند</th><th>المبلغ</th></tr></thead><tbody><tr><td>الدخل من المرضى</td><td class="in">${fmt(patientRevenue)}</td></tr><tr><td>سندات القبض</td><td class="in">${fmt(receiptVoucherRev)}</td></tr><tr style="font-weight:bold"><td>إجمالي الإيرادات</td><td class="in">${fmt(rangeRevenue)}</td></tr></tbody></table>
-            <h2>تفاصيل المصروفات والرواتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ</th></tr></thead><tbody><tr><td>المصروفات</td><td>طلبات الشراء المسددة</td><td class="out">${fmt(purchasesOut)}</td></tr><tr><td>الرواتب</td><td>الرواتب الأصلية الموزعة (${fmt(grossSalaryOut)}) ناقصاً السلف (${fmt(advancesOut)}) والمصروفات الشخصية (${fmt(paymentVoucherOut)})</td><td class="out">${fmt(salariesOut)}</td></tr><tr style="font-weight:bold"><td>إجمالي الخصومات</td><td></td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table>`; printHtml(html, `تقرير الربح والخسارة — ${periodLabel}`, dateFrom, dateTo, true, dept);
+            <h2>تفاصيل المصروفات والرواتب</h2><table><thead><tr><th>البند</th><th>التفاصيل</th><th>المبلغ</th></tr></thead><tbody><tr><td>المصروفات</td><td>طلبات الشراء المسددة</td><td class="out">${fmt(purchasesOut)}</td></tr><tr><td>الرواتب</td><td>الرواتب الأصلية الموزعة (${fmt(grossSalaryOut)}) ناقصاً السلف (${fmt(advancesOut)})</td><td class="out">${fmt(salariesOut)}</td></tr><tr style="font-weight:bold"><td>إجمالي الخصومات</td><td></td><td class="out">${fmt(rangeOut)}</td></tr></tbody></table>`; printHtml(html, `تقرير الربح والخسارة — ${periodLabel}`, dateFrom, dateTo, true, dept);
           }}><Printer size={14} />طباعة</Btn>
         </div>
       </div>
@@ -8296,7 +8302,7 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
         </div>
         <div className="rounded-xl p-4 space-y-2" style={{ backgroundColor: "#FFF8F8", border: "1px solid #FFCDD2" }}>
           <p className="text-xs text-[#C62828] font-semibold mb-2">تفاصيل المصروفات</p>
-          {[["رواتب موظفين", salariesOut, "#7B1FA2"], ["سلف موظفين", advancesOut, "#6A1B9A"], ["مشتريات", purchasesOut, "#1565C0"], ["سندات صرف", paymentVoucherOut, "#E65100"], ["مصروفات شخصية", personalOut, "#F57C00"], ["أخرى", otherOut, "#C62828"]].filter(r => (r[1] as number) > 0).map(r => (
+          {[["رواتب موظفين", salariesOut, "#7B1FA2"], ["سلف موظفين", advancesOut, "#6A1B9A"], ["مشتريات", purchasesOut, "#1565C0"], ["أخرى", otherOut, "#C62828"]].filter(r => (r[1] as number) > 0).map(r => (
             <div key={String(r[0])} className="flex justify-between text-sm"><span className="text-[#555]">{r[0]}</span><span className="font-bold" style={{ color: String(r[2]) }}>{fmt(r[1] as number)}</span></div>
           ))}
           <div className="flex justify-between text-sm font-bold pt-1" style={{ borderTop: "1px solid #FFCDD2" }}><span className="text-[#C62828]">الإجمالي</span><span className="text-[#C62828]">{fmt(rangeOut)}</span></div>
@@ -8312,7 +8318,7 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
             {fmt(rangeProfit)} صافي الربح
           </div>
         </div>
-        <p className="text-xs text-[#999] mt-2">الإيرادات من الجلسات وسندات القبض، والمصروفات من طلبات الشراء المسددة وسندات الصرف، والرواتب من حركات الصندوق — لا يوجد ازدواج في الاحتساب. ملاحظة: أي إيداع/سحب يدوي من الصندوق خارج هذه المسارات لا يظهر هنا</p>
+        <p className="text-xs text-[#999] mt-2">الإيرادات من الجلسات وسندات القبض، والمصروفات من طلبات الشراء المسددة، والرواتب من حركات الصندوق — لا يوجد ازدواج في الاحتساب. سندات الصرف الشخصية للموظفين لا تدخل هنا (تُخصم من راتب الموظف عبر نظام الرواتب المستقل). ملاحظة: أي إيداع/سحب يدوي من الصندوق خارج هذه المسارات لا يظهر هنا</p>
       </Card>
     </div>
   );
@@ -8338,12 +8344,15 @@ function FinExpensesScreen({ drawers, purchaseRequests = [], employeeAdvances = 
   const personalTotal = outTxs.filter(t => t.category === "مصروف شخصي" || t.category === "مصروف شخصي — موظف").reduce((s, t) => s + (t.amount || 0), 0);
   const otherExpenses = outTxs.filter(t => !["راتب موظف", "سلف موظفين", "مشتريات مباشرة", "مشتريات تشغيلية", "سند صرف", "إلغاء سند قبض", "مصروف شخصي", "مصروف شخصي — موظف"].includes(t.category || "")).reduce((s, t) => s + (t.amount || 0), 0);
   const _prExpFin = purchaseRequests.filter(r => r.status === "approved" && ir(r.date || "") && (!dept || r.dept === dept)).reduce((s, r) => s + (Number(r.paidAmount) || 0), 0);
-  const _personalPVFin = paymentVouchers.filter(v => ir(v.date || "") && (!dept || (v.dept || "") === (dept || "")) && ["نفقة شخصية للموظف", "مصروف شخصي — موظف", "مصروف شخصي"].some(c => (v.category || "").includes(c))).reduce((s, v) => s + (Number(v.amount) || 0), 0);
+  // ── سندات الصرف الشخصية للموظفين مستبعدة عمداً من هذه الشاشة ومن "الإجمالي"
+  //    — بقرار صريح: هي مبلغ يُخصم لاحقاً من راتب الموظف نفسه (نظام الرواتب)،
+  //    وبما إن "رواتب (صافي)" هون أصلاً بتمثل الراتب الفعلي المسحوب من الصندوق،
+  //    فحساب سند الصرف الشخصي هون كمان كـ"مصروف" منفصل كان يُعتبر خصمها مرتين
+  //    من صافي الربح. راجع نفس القرار في financialEngine.ts (personalExpenseVouchersAmt) ──
   const rangeOut = engExpTotal;
   const catData = [
     { cat: "رواتب (صافي)", amount: engSalaryCost, color: "#7B1FA2" },
     { cat: "مشتريات معتمدة", amount: _prExpFin, color: "#1565C0" },
-    { cat: "مصروف شخصي", amount: _personalPVFin, color: "#F57C00" },
   ].filter(c => c.amount > 0);
   const revenueByDept = Object.entries(filteredDrawers).map(([deptId, dr]) => {
     const txs = (dr.txs || []).filter(t => t.type === "in" && ir(t.date || "") && (t.category || "") !== "رصيد افتتاحي");
@@ -15425,10 +15434,12 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
   //    لاسم شركة موجودة فعلياً بالنظام قبل أي استيراد)، وأيضاً البريد الإلكتروني
   //    ورقم الهوية الوطنية (كان بند "رقم_الملف_او_الهوية" يخلط بين رقم الملف
   //    ورقم الهوية بعمود واحد، بينما هما حقلان منفصلان بباقي شاشات النظام). ──
-  // ── تسميات الأعمدة تعكس بالضبط نفس قواعد الإلزامي/الاختياري بشاشة التسجيل
-  //    اليدوي (NewPatientScreen): الاسم/العمر/الهاتف/المبلغ_الاجمالي إلزامية
-  //    (v1/v2 هناك)، وباقي الحقول اختيارية ولها نفس القيم الافتراضية عند
-  //    تركها فارغة (مثلاً فصيلة الدم الفارغة → "غير معروف" تلقائياً) ──
+  // ── الحقول الإلزامية بالاستيراد حُصرت بطلب صريح من صاحب النظام بثلاثة حقول
+  //    فقط: الاسم الكامل، العمر، رقم الهاتف — حتى لو كانت شاشة التسجيل اليدوي
+  //    (NewPatientScreen) تطلب المبلغ الإجمالي كمان (v2() هناك). المبلغ الإجمالي
+  //    هنا بالاستيراد صار اختيارياً ويُعتبر صفراً إن تُرك فارغاً (بدون جلسة/دين
+  //    فعلي)، وباقي الحقول اختيارية ولها نفس القيم الافتراضية عند تركها فارغة
+  //    (مثلاً فصيلة الدم الفارغة → "غير معروف" تلقائياً) ──
   // ── تعريف موحَّد لكل عمود: مفتاح منطقي (للقراءة بالاسم لاحقاً، مش بالترتيب
   //    الثابت) + التسمية الأساسية (بدون لاحقة إلزامي/اختياري — تُستخدم لمطابقة
   //    عناوين الأعمدة بالملف المرفوع بغض النظر عن ترتيبها) + هل هو إلزامي + قيمة
@@ -15450,15 +15461,10 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     { key: "chronic", label: "امراض_مزمنة", required: false, sample: "ضغط دم" },
     { key: "allergy", label: "حساسية", required: false, sample: "بنسلين" },
     { key: "date", label: "تاريخ_التسجيل", required: false, sample: "01/07/2026" },
-    { key: "amount", label: "المبلغ_الاجمالي", required: true, sample: "250" },
+    { key: "amount", label: "المبلغ_الاجمالي", required: false, sample: "250" },
     { key: "paid", label: "المدفوع", required: false, sample: "200" },
     { key: "debt", label: "الدين", required: false, sample: "50" },
   ];
-  const REQ_NOTE: Record<string, string> = { insCompany: "(إلزامي إذا التأمين=نعم)", debt: "(يُحسب تلقائياً إن تُرك فارغاً)", phone: "(10 أرقام)" };
-  const fieldDisplayLabel = (f: typeof PATIENT_FIELD_DEFS[number]) => `${f.label} ${f.required ? "(إلزامي)" : `(اختياري)${REQ_NOTE[f.key] ? " " + REQ_NOTE[f.key] : ""}`}`;
-  // ── تُستخدم فقط بالبطاقة التوضيحية (كل الأعمدة، إلزامية واختيارية) — النموذج
-  //    القابل للتحميل نفسه يستخدم فقط PATIENT_FIELD_DEFS.filter(required) ──
-  const PATIENT_FIELDS = PATIENT_FIELD_DEFS.map(fieldDisplayLabel);
   // ── يبني خريطة "مفتاح منطقي → رقم عمود بالملف المرفوع" بالاعتماد على مطابقة
   //    اسم العمود بالسطر الأول (Header)، بدل الاعتماد على ترتيب ثابت للأعمدة.
   //    هذا يسمح برفع ملف فيه فقط الأعمدة الإلزامية (بدون أي عمود اختياري على
@@ -15577,14 +15583,14 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
       }
       // ── المبلغ الإجمالي والمدفوع: أرقام فقط (عشرية مسموحة، مثال 250.50)، ما
       //    فيهم أي نص، وما بينفع يكونوا سالبين — نفس منطق أي حقل مبلغ بباقي
-      //    شاشات النظام. المبلغ الإجمالي إلزامي وأكبر من صفر (نفس شرط v2()
-      //    بشاشة التسجيل اليدوي)، المدفوع اختياري لكن لازم يكون رقماً غير سالب
-      //    لو كُتب. الدين مستثنى عمداً من هذا الشرط لأنه دايماً محسوب تلقائياً
+      //    شاشات النظام. المبلغ الإجمالي بات اختيارياً بطلب صريح (يُعتبر صفراً
+      //    إن تُرك فارغاً — يعني تسجيل بيانات المريض فقط بدون جلسة/فاتورة
+      //    فعلية)، بس لازم يكون رقماً صحيحاً غير سالب لو انكتب. المدفوع نفس
+      //    الشيء. الدين مستثنى عمداً من هذا الشرط لأنه دايماً محسوب تلقائياً
       //    (amount − paid) ولا يُطلب من المستخدم إدخاله يدوياً أصلاً ──
       const NUM_RE = /^\d+(\.\d+)?$/; // رقم موجب (أو صفر) بخانات عشرية اختيارية — بدون نصوص وبدون إشارة سالبة
       const amountRaw = col(row, hIdx, "amount");
-      if (!amountRaw) problems.push(`صف ${rowNum} (${name}): المبلغ الإجمالي فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
-      else if (!NUM_RE.test(amountRaw) || Number(amountRaw) <= 0) problems.push(`صف ${rowNum} (${name}): المبلغ الإجمالي "${amountRaw}" يجب أن يكون رقماً (عشرياً مسموح) أكبر من صفر — بدون نصوص أو إشارة سالبة`);
+      if (amountRaw && !NUM_RE.test(amountRaw)) problems.push(`صف ${rowNum} (${name}): المبلغ الإجمالي "${amountRaw}" يجب أن يكون رقماً (عشرياً مسموح) غير سالب — بدون نصوص أو إشارة سالبة`);
       const paidRaw = col(row, hIdx, "paid");
       if (paidRaw && !NUM_RE.test(paidRaw)) problems.push(`صف ${rowNum} (${name}): المدفوع "${paidRaw}" يجب أن يكون رقماً (عشرياً مسموح) غير سالب — بدون نصوص أو إشارة سالبة`);
       const debtRaw = col(row, hIdx, "debt");
@@ -15684,7 +15690,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
   // ── البوابة: تفحص الملف بالكامل أولاً (validateRows). لو في أي مشكلة، نرفض
   //    الاستيراد كاملاً — صفر استدعاءات API — ونعرض كل الأسباب دفعة وحدة، تماماً
   //    متل ما طُلب: "رفض الطلب وإعطاء سبب المشاكل" بدل استيراد جزئي غامض. ──
-  const validateAndProcess = async (deptId: string, rows: string[][], fileName: string, hIdx: Record<string, number>) => {
+  const validateAndProcess = async (deptId: string, rows: string[][], fileName: string, hIdx: Record<string, number>, headers: string[]) => {
     // ── نتحقق إنه كل الأعمدة الإلزامية موجودة فعلاً بملف الرفع (وليس فقط
     //    إنها غير فارغة بكل صف) — لو المستخدم حمّل نموذج "الحقول الإلزامية
     //    فقط" وحذف عمود إلزامي بالغلط، أو غيّر اسم العمود، نرفض بوضوح بدل ما
@@ -15692,6 +15698,19 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
     const missingRequiredCols = PATIENT_FIELD_DEFS.filter(f => f.required && hIdx[f.key] < 0);
     if (missingRequiredCols.length > 0) {
       const msg = `الملف ناقص عمود/أعمدة إلزامية: ${missingRequiredCols.map(f => f.label).join("، ")} — تأكد من وجود هذه الأعمدة بنفس الاسم بالسطر الأول من الملف`;
+      setResults(r => ({ ...r, [deptId]: { patients: 0, sessions: 0, errors: 1, warnings: [msg], rejected: true } }));
+      toast(msg, "error");
+      return;
+    }
+    // ── النموذج مقفول عمداً على 3 أعمدة فقط (الاسم/العمر/الهاتف) — بطلب صريح
+    //    ما بينفع يضاف أي عمود إضافي على الإطلاق، حتى لو كان أحد الحقول
+    //    الاختيارية القديمة (فصيلة دم، تأمين...). أي عمود بالسطر الأول غير
+    //    الثلاثة المسموحين يرفض الملف بالكامل فوراً ──
+    const normHeader = (s: string) => String(s || "").trim().replace(/\s*\(.*?\)\s*$/g, "");
+    const allowedLabels = new Set(REQUIRED_FIELD_DEFS.map(f => f.label));
+    const extraCols = headers.map(normHeader).filter(h => h && !allowedLabels.has(h));
+    if (extraCols.length > 0) {
+      const msg = `الملف يحتوي أعمدة غير مسموحة: ${extraCols.join("، ")} — النموذج مقفول على 3 أعمدة فقط: ${REQUIRED_FIELD_DEFS.map(f => f.label).join("، ")}. احذف أي عمود إضافي وأعد المحاولة`;
       setResults(r => ({ ...r, [deptId]: { patients: 0, sessions: 0, errors: 1, warnings: [msg], rejected: true } }));
       toast(msg, "error");
       return;
@@ -15713,7 +15732,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
         const text = e.target?.result as string;
         const { rows, headers } = parseCSV(text);
         if (rows.length === 0) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
-        await validateAndProcess(deptId, rows, file.name, buildHeaderIndex(headers));
+        await validateAndProcess(deptId, rows, file.name, buildHeaderIndex(headers), headers);
       } catch { toast("خطأ في قراءة الملف — تأكد من صيغة CSV", "error"); }
       finally { setImporting(null); }
     };
@@ -15732,7 +15751,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
         const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" }) as string[][];
         if (rows.length < 2) { toast("الملف فارغ أو لا يحتوي على بيانات", "error"); setImporting(null); return; }
         const dataRows = rows.slice(1).filter(r => r.some(c => String(c).trim()));
-        await validateAndProcess(deptId, dataRows, file.name, buildHeaderIndex(rows[0]));
+        await validateAndProcess(deptId, dataRows, file.name, buildHeaderIndex(rows[0]), rows[0]);
       } catch { toast("خطأ في قراءة ملف Excel — تأكد أن الملف سليم", "error"); }
       finally { setImporting(null); }
     };
@@ -15804,26 +15823,14 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
           ))}
         </div>
         <div className="mt-3 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
-          <p className="font-bold text-[#1B5E20]">✅ هذه فقط الحقول التي لا يمكن تركها فارغة — نفس شاشة التسجيل اليدوي بالضبط، لا أكثر ولا أقل:</p>
-          <p><strong>الاسم_الكامل</strong>، <strong>العمر</strong> (رقم موجب)، <strong>رقم_الهاتف</strong> (10 أرقام بالضبط)، و<strong>المبلغ_الاجمالي</strong> (رقم أكبر من صفر).</p>
+          <p className="font-bold text-[#1B5E20]">✅ هذه فقط الحقول التي لا يمكن تركها فارغة (بطلب صريح — أقل حتى من شاشة التسجيل اليدوي):</p>
+          <p><strong>الاسم_الكامل</strong>، <strong>العمر</strong> (رقم موجب)، و<strong>رقم_الهاتف</strong> (10 أرقام بالضبط، بدون رمز دولة).</p>
         </div>
-        <div className="mt-2 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
-          <p className="font-bold">النموذج المُحمَّل ما فيه غير هاي الأعمدة عمداً. لو عندك بيانات إضافية لبعض المرضى (فصيلة دم، تأمين...)، تقدر تضيف أي عمود من القائمة تحت يدوياً بنفس الاسم بالضبط بالسطر الأول بملف Excel — النظام بيكتشفه ويقرأه تلقائياً بغض النظر عن ترتيبه. أي عمود ما تضيفه بيُعتبر فارغاً ويُملأ بنفس القيمة الافتراضية المستخدمة بالتسجيل اليدوي:</p>
-          <div className="flex flex-wrap gap-1.5 py-1">
-            {PATIENT_FIELDS.filter((_, i) => !PATIENT_FIELD_DEFS[i].required).map(f => (
-              <span key={f} className="px-2 py-0.5 rounded-full text-[10px] font-mono" style={{ backgroundColor: "#FFFFFF", border: "1px solid #FFCC80", color: "#795548" }}>{PATIENT_FIELD_DEFS.find(d => fieldDisplayLabel(d) === f)?.label}</span>
-            ))}
-          </div>
-          <p><strong>الجنس:</strong> اختياري — إن تُرك فارغاً يُسجَّل "ذكر" تلقائياً (نفس افتراضي الشاشة اليدوية). إن كُتب، يجب أن يكون <strong>ذكر</strong> أو <strong>أنثى</strong> بالضبط</p>
-          <p><strong>فصيلة_الدم:</strong> اختياري تماماً — اتركه فارغاً وسيُسجَّل "غير معروف" تلقائياً (تماماً كما بالشاشة اليدوية)، أو اكتب واحدة من: A+ / A- / B+ / B- / AB+ / AB- / O+ / O- / غير معروف</p>
-          <p><strong>العنوان، رقم_الهوية_الوطنية، البريد_الالكتروني، امراض_مزمنة، حساسية:</strong> اختيارية بالكامل — اتركها فارغة بدون أي مشكلة</p>
-          <p><strong>تأمين_صحي:</strong> اختياري — اتركه فارغاً إن كان المريض غير مؤمَّن. اكتب <strong>نعم</strong> أو <strong>لا</strong> فقط إن كتبته</p>
-          <p><strong>شركة_التأمين:</strong> إلزامي <u>فقط</u> إذا كان تأمين_صحي = نعم — ويجب أن يطابق <u>حرفياً</u> اسم شركة مسجَّلة مسبقاً بالنظام (شاشة شركات التأمين)</p>
-          <p><strong>المدفوع:</strong> اختياري — يُعتبر صفراً إن تُرك فارغاً</p>
-          <p><strong>الدين:</strong> اختياري — يُحسب تلقائياً (المبلغ − المدفوع) إن تُرك فارغاً، أو اكتب 0 صراحةً إن كان مسدداً بالكامل فعلاً</p>
-          <p><strong>تاريخ_التسجيل:</strong> اختياري — يُستخدم تاريخ اليوم إن تُرك فارغاً. إن كُتب، اكتبه نصاً بصيغة DD/MM/YYYY (مثال: 01/07/2026) لتفادي تنسيق إكسل التلقائي للتاريخ</p>
+        <div className="mt-2 p-3 rounded-xl text-xs text-[#5D4037] space-y-1" style={{ backgroundColor: "#FFEBEE", border: "1px solid #FFCDD2" }}>
+          <p className="font-bold text-[#C62828]">🔒 النموذج مقفول على هاي الأعمدة الثلاثة فقط — ممنوع إضافة أي عمود آخر.</p>
+          <p>أي عمود إضافي بالملف (فصيلة دم، تأمين، مبلغ...) بيتم <u>رفض الملف بالكامل فوراً</u> ولا يُستورد ولا صف واحد، حتى لو كانت باقي البيانات سليمة. لازم يكون بالسطر الأول من الملف <strong>بالضبط</strong> 3 أعمدة: {REQUIRED_FIELD_DEFS.map(f => f.label).join("، ")}.</p>
           <p><strong>الصيغة:</strong> Excel (XLSX) مباشرةً، أو CSV (UTF-8) — كلاهما مقبول عند الرفع</p>
-          <p className="text-[#B71C1C] font-semibold">⚠️ يتم فحص كل صفوف الملف أولاً قبل أي حفظ فعلي — لو في أي صف فيه مشكلة بحقل إلزامي فارغ أو قيمة غير صحيحة، يُرفض الملف <u>بالكامل</u> ولا يُستورد ولا صف واحد، مع بيان سبب كل مشكلة بالتحديد.</p>
+          <p className="text-[#B71C1C] font-semibold">⚠️ يتم فحص كل صفوف الملف أولاً قبل أي حفظ فعلي — لو في أي صف فيه مشكلة (حقل فارغ، قيمة غير صحيحة، أو عمود غير مسموح)، يُرفض الملف <u>بالكامل</u> ولا يُستورد ولا صف واحد، مع بيان سبب المشكلة بالتحديد.</p>
         </div>
       </div>
 
