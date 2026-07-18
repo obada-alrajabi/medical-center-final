@@ -83,6 +83,7 @@ router.post("/", requireFinancialAuth, async (req, res) => {
     debt,
     discount,
     discount_type,
+    gross_amount,
     patient_name,
     patient_phone,
     diagnoses,
@@ -92,8 +93,8 @@ router.post("/", requireFinancialAuth, async (req, res) => {
   } = req.body;
   try {
     const { rows } = await pool.query(
-      `INSERT INTO sessions (patient_id,dept,doctor,date,notes,amount,paid,debt,discount,discount_type)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO sessions (patient_id,dept,doctor,date,notes,amount,paid,debt,discount,discount_type,gross_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [
         patient_id,
         dept ?? null,
@@ -105,6 +106,9 @@ router.post("/", requireFinancialAuth, async (req, res) => {
         debt ?? 0,
         discount ?? 0,
         discount_type ?? "amount",
+        // ── لو ما انبعتش gross_amount (استيراد قديم أو مسار لم يُحدَّث)، نسقط
+        //    احتياطياً على amount (الصافي) بدل صفر — أفضل تقريب متاح ──
+        gross_amount ?? amount ?? 0,
       ],
     );
     const session = rows[0];
@@ -215,15 +219,15 @@ router.put("/:id", requireFinancialAuth, async (req, res) => {
     );
     if (!curr.length) return res.status(404).json({ error: "Not found" });
     const c = curr[0];
-    const { doctor, date, notes, amount, paid, debt, discount, discount_type } =
+    const { doctor, date, notes, amount, paid, debt, discount, discount_type, gross_amount } =
       req.body;
 
     const newPaid = paid !== undefined ? parseFloat(paid) : parseFloat(c.paid);
 
     const { rows } = await pool.query(
       `UPDATE sessions SET doctor=$1,date=$2,notes=$3,amount=$4,paid=$5,
-       debt=$6,discount=$7,discount_type=$8,updated_at=NOW()
-       WHERE id=$9 RETURNING *`,
+       debt=$6,discount=$7,discount_type=$8,gross_amount=$9,updated_at=NOW()
+       WHERE id=$10 RETURNING *`,
       [
         doctor !== undefined ? doctor : c.doctor,
         date !== undefined ? date : c.date,
@@ -233,6 +237,7 @@ router.put("/:id", requireFinancialAuth, async (req, res) => {
         debt !== undefined ? debt : c.debt,
         discount !== undefined ? discount : c.discount,
         discount_type !== undefined ? discount_type : c.discount_type,
+        gross_amount !== undefined ? gross_amount : c.gross_amount,
         req.params.id,
       ],
     );

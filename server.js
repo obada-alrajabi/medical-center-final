@@ -923,6 +923,15 @@ pool
   .then(() => console.log("[migration] staff_members.daily_wage_amount applied"))
   .catch((e) => console.error("[migration] staff_members.daily_wage_amount:", e.message));
 
+// ── gross_amount: السعر الإجمالي الأصلي للجلسة قبل أي خصم (شخصي أو تأمين) —
+//    عمود منفصل عن amount (الصافي بعد الخصومات) لأن عمولة الموظف (نسبة/راتب
+//    ونسبة) يجب أن تُحتسب على كامل المبلغ الإجمالي دائماً، بغض النظر عن أي
+//    خصم مُنح للمريض أو أي تغطية تأمين — الخصم يتحمّله المركز، وليس الموظف. ──
+pool
+  .query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS gross_amount NUMERIC(10,2) DEFAULT 0`)
+  .then(() => console.log("[migration] sessions.gross_amount applied"))
+  .catch((e) => console.error("[migration] sessions.gross_amount:", e.message));
+
 // ── Base path (set APP_BASE_PATH env var on Hostinger, e.g. /45.159.160.11) ──
 const BASE = process.env.APP_BASE_PATH || "";
 

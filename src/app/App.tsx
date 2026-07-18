@@ -2806,14 +2806,9 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   const isLab = dept === "lab";
   const isRad = dept === "radiology";
   const isRehab = dept === "rehab";
-  // ── تصحيح جوهري: نفس علة NewSessionScreen — لما المدير هو من يسجّل مريضاً
-  //    جديداً وينشئ جلسته الأولى، لازم يختار صراحة الموظف/الطبيب المسؤول
-  //    بدل ما يسقط اسم الجلسة احتياطياً على اسم القسم (deptInfo.short)، وإلا
-  //    تنكسر مطابقة العمولة بشاشة الرواتب لهذا الموظف. ──
+  // ── نربط الجلسة تلقائياً باسم الموظف المسجَّل دخوله فعلياً، بدون أي اختيار
+  //    يدوي، بغض النظر عن القسم المفتوحة فيه (صلاحية وصول متعددة الأقسام). ──
   const autoDoctorNP = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
-  const [doctor, setDoctor] = useState(autoDoctorNP);
-  const isAdminCreatorNP = loggedUser?.type !== "staff";
-  const doctorOptionsNP = staffList.filter(s => s.status === "active" && (s.primaryDept === dept || (s.assignedDepts || []).includes(dept)));
 
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -2997,12 +2992,10 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       if (sessionPaid > 0) doDeposit(dept, sessionPaid, `دفعة مريض — ${form.name}`, "إيراد مريض");
       if (setSessions && sessionTotal > 0) {
         const deptInfo = findDeptInfo(dept);
-        // ── اسم الطبيب/الأخصائي المسؤول عن الجلسة: يُؤخذ تلقائياً من اسم الموظف
-        //    المسجَّل دخوله بالحساب، أو من اختيار المدير الصريح عبر القائمة
-        //    المنسدلة بخطوة "التفاصيل المالية" (حقل doctor أصبح قابلاً للتعديل
-        //    فعلياً الآن — راجع تعريفه أعلى الملف). لا يُسمح بالسقوط على اسم
-        //    القسم بعد الآن حتى لا تنكسر مطابقة العمولة. ──
-        const doctorName = doctor.trim();
+        // ── اسم الطبيب/الأخصائي المسؤول عن الجلسة: يُؤخذ تلقائياً وحصرياً من
+        //    اسم الموظف المسجَّل دخوله بالحساب — بلا أي اختيار يدوي، ولا يُسمح
+        //    بالسقوط على اسم القسم حتى لا تنكسر مطابقة العمولة. ──
+        const doctorName = autoDoctorNP;
         const sessionDiag = isRehab
           ? [rehabDiagnosis].filter(Boolean)
           : selDiagIds.map(xid => availDiag.find(d => d.id === xid)?.name).filter(Boolean) as string[];
@@ -3026,9 +3019,9 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
         //    "تسجيل فحص" (دالة printAndComplete)، بغض النظر من أي شاشة حُجز
         //    الفحص أصلاً، لأن كل الفحوصات المحجوزة تمر بنفس قائمة الانتظار
         //    المشتركة (board) وتُنجَز من هناك. ──
-        const ns: PatientSession = { id: Date.now(), patientId: effectiveId, dept, doctor: doctorName, date: today, diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()).map(m => ({ name: m.name, dose: m.dose, freq: m.freq, duration: m.duration })), notes: sessionNotesComputed, labRefs: sessionLabR, radRefs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt };
+        const ns: PatientSession = { id: Date.now(), patientId: effectiveId, dept, doctor: doctorName, date: today, diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()).map(m => ({ name: m.name, dose: m.dose, freq: m.freq, duration: m.duration })), notes: sessionNotesComputed, labRefs: sessionLabR, radRefs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt, grossAmount: sessionTotal };
         setSessions(prev => [ns, ...prev]);
-        api.sessions.create({ patient_id: effectiveId, dept, doctor: doctorName, date: form.joinDate || _localISO(), diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()), notes: sessionNotesComputed, lab_refs: sessionLabR, rad_refs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt }).then((r: any) => {
+        api.sessions.create({ patient_id: effectiveId, dept, doctor: doctorName, date: form.joinDate || _localISO(), diagnoses: sessionDiag, medications: medications.filter(m => m.name.trim()), notes: sessionNotesComputed, lab_refs: sessionLabR, rad_refs: sessionRadR, amount: sessionNet, paid: sessionPaid, debt: sessionDebt, gross_amount: sessionTotal }).then((r: any) => {
           if (r && r.id) {
             setSessions?.(p => p.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
             if (pendingFiles.length > 0) {
@@ -3641,21 +3634,15 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       {/* ── Step 3: Financial ── */}
       {step === 3 && (
         <Card title="التفاصيل المالية للكشفية">
-          {/* ── الموظف المسؤول عن الجلسة: تلقائي وغير قابل للتعديل للموظف نفسه،
-              أو اختيار صريح إلزامي للمدير من موظفي هذا القسم — بدون هذا كانت
-              الجلسات التي ينشئها المدير تُنسب خطأً لاسم القسم فتنكسر مطابقة
-              العمولة بشاشة الرواتب. ── */}
-          <div className="mb-4 flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#555]">الموظف/الطبيب المسؤول عن الجلسة {isAdminCreatorNP && <span className="text-[#D32F2F]">*</span>}</label>
-            {!isAdminCreatorNP ? (
-              <div className="h-10 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 200, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />{doctor}</div>
-            ) : (
-              <select value={doctor} onChange={e => setDoctor(e.target.value)} className="h-10 px-3 rounded-lg text-sm w-full sm:w-auto outline-none" style={{ border: `1px solid ${doctor.trim() ? "#CCCCCC" : "#D32F2F"}`, backgroundColor: "#FAFAFA", minWidth: 220 }}>
-                <option value="">اختر الموظف/الطبيب المسؤول...</option>
-                {doctorOptionsNP.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-              </select>
-            )}
-          </div>
+          {/* ── الموظف المسؤول عن الجلسة يُحدَّد تلقائياً من هوية تسجيل الدخول
+              الفعلية، بدون أي اختيار يدوي — يشتغل صح حتى لو كان الموظف
+              بقسم مختلف عن قسمه الأساسي (صلاحية وصول متعددة الأقسام). ── */}
+          {autoDoctorNP && (
+            <div className="mb-4 flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-[#555]">الموظف/الطبيب المسؤول عن الجلسة</label>
+              <div className="h-10 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 200, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />{autoDoctorNP}</div>
+            </div>
+          )}
           {isLab && selTests.length > 0 && <div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{ backgroundColor: "#E6F4F4", border: "1px solid #B2DFDB" }}><FlaskConical size={16} className="text-[#0D7377]" /><span className="text-sm text-[#0D7377]">إجمالي التحاليل المحددة: <strong>{fmt(testTotalNP)}</strong></span></div>}
           {isRehab && selRehabService && <div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}><Dumbbell size={16} className="text-[#1B3A6B]" /><span className="text-sm text-[#1B3A6B]">الخطة التأهيلية: <strong>{selRehabService.name}</strong> × {rehabSessionCount} جلسة = <strong>{fmt(rehabTotal)}</strong></span></div>}
           {insComp && insDiscPct > 0 && (
@@ -3690,7 +3677,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           {remaining > 0 && <p className="text-xs text-[#D32F2F] mt-2 p-2 bg-[#FFEBEE] rounded-lg">⚠️ {fmt(remaining)} سيُضاف كدين على المريض</p>}
           {remaining === 0 && (parseFloat(form.price) || 0) > 0 && <p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">✓ مسدد بالكامل</p>}
           {remaining < 0 && (parseFloat(form.price) || 0) > 0 && <p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">رصيد لصالح المريض: {fmt(-remaining)} ₪ — لا يُسجَّل دين</p>}
-          <div className="flex justify-between mt-6"><Btn variant="outline" onClick={() => setStep(2)}><ChevronDown className="rotate-90" size={16} />رجوع للتشخيص والعلاج</Btn><Btn variant="success" loading={saving} onClick={() => { if (isAdminCreatorNP && !doctor.trim()) { toast("يجب اختيار الموظف/الطبيب المسؤول عن الجلسة", "error"); return; } if (v2()) handleSave(); }}><Save size={16} />حفظ الجلسة</Btn></div>
+          <div className="flex justify-between mt-6"><Btn variant="outline" onClick={() => setStep(2)}><ChevronDown className="rotate-90" size={16} />رجوع للتشخيص والعلاج</Btn><Btn variant="success" loading={saving} onClick={() => { if (v2()) handleSave(); }}><Save size={16} />حفظ الجلسة</Btn></div>
         </Card>
       )}
     </div>
@@ -4741,15 +4728,10 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   const deptInfo = DEPARTMENTS.find(d => d.id === dept) || customDepts.find(d => d.id === dept) || DEPARTMENTS[0];
   const initials = (n: string) => n.split(" ").slice(0, 2).map(w => w[0]).join("");
   const today = _today();
+  // ── نربط الجلسة تلقائياً باسم الموظف المسجَّل دخوله فعلياً (بغض النظر عن القسم
+  //    المفتوحة فيه الجلسة، لأنه ممكن يكون معطى صلاحية دخول لأكتر من قسم) —
+  //    ما في داعي لأي اختيار يدوي، وما منسمح أبداً إنه يسقط على اسم القسم. ──
   const autoDoctor = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
-  const [doctor, setDoctor] = useState(autoDoctor);
-  // ── تصحيح جوهري: لما المدير (وليس الموظف نفسه) هو من يفتح شاشة "جلسة جديدة"،
-  //    ما كان في أي واجهة لاختيار الموظف/الطبيب الفعلي — الحقل doctor كان يضل
-  //    فاضياً ويسقط لاحقاً وقت الحفظ على اسم القسم (deptInfo.short) بدل اسم
-  //    موظف حقيقي، وهذا يكسر مطابقة العمولة بشاشة الرواتب (تطابق نصي s.doctor
-  //    === e.name). هلق لازم المدير يختار موظفاً من قائمة موظفي هذا القسم. ──
-  const isAdminCreator = loggedUser?.type !== "staff";
-  const doctorOptions = staffList.filter(s => s.status === "active" && (s.primaryDept === dept || (s.assignedDepts || []).includes(dept)));
   const [notes, setNotes] = useState("");
   const [selDiag, setSelDiag] = useState<string[]>([]);
   const [diagSearch, setDiagSearch] = useState("");
@@ -4841,7 +4823,6 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   const handleSave = () => {
     const today = _today();
     if (totalAmt <= 0) { toast("أدخل مبلغ الجلسة", "error"); return; }
-    if (isAdminCreator && !doctor.trim()) { toast("يجب اختيار الموظف/الطبيب المسؤول عن الجلسة", "error"); return; }
     setSaving(true);
     if (paidAmt > 0) doDeposit(dept, paidAmt, `دفعة مريض — ${p.name}`, "إيراد مريض");
     // تصحيح: dept لازم يكون deptInfo.id (رمز إنجليزي مطابق لـ departments.id) لا deptInfo.short (اسم عربي) — نفس علة باقي شاشات الجلسات
@@ -4852,9 +4833,9 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
       setInvoices(p2 => [...p2, { id: insId, company: insComp.name, companyId: insComp?.id, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: p.id, patientName: p.name }]);
       api.finance.invoices.create({ id: insId, company: insComp.name, company_id: insComp?.id, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: p.id, patient_name: p.name });
     }
-    const ns: PatientSession = { id: Date.now(), patientId: p.id, dept, doctor: doctor.trim(), date: today, diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, labRefs, radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt };
+    const ns: PatientSession = { id: Date.now(), patientId: p.id, dept, doctor: autoDoctor, date: today, diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, labRefs, radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt, grossAmount: totalAmt };
     setSessions(prev => [ns, ...prev]);
-    api.sessions.create({ patient_id: p.id, dept, doctor: doctor.trim(), date: api.parseDateISO(today), diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, lab_refs: labRefs, rad_refs: radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt }).then((r: any) => {
+    api.sessions.create({ patient_id: p.id, dept, doctor: autoDoctor, date: api.parseDateISO(today), diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, lab_refs: labRefs, rad_refs: radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt, gross_amount: totalAmt }).then((r: any) => {
       if (r && r.id) {
         setSessions(prev => prev.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
         if (pendingFiles.length > 0) {
@@ -4949,17 +4930,13 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 text-sm text-[#555]"><Calendar size={14} /><span>{today}</span><span className="text-[#CCC]">·</span><span className="font-medium text-[#1B3A6B]">{deptInfo.short}</span></div>
-          {/* ── الموظف المسجَّل دخوله بحسابه الشخصي: اسمه تلقائي وغير قابل للتعديل
-              (يُستخدم لاحتساب نسبته من الرواتب). أما المدير فيختار صراحة الموظف/
-              الطبيب المسؤول عن الجلسة من قائمة موظفي هذا القسم — بدون هذا الاختيار
-              كانت الجلسة تُنسب خطأً لاسم القسم نفسه، ما يكسر مطابقة العمولة. ── */}
-          {!isAdminCreator ? (
-            <div className="h-8 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 160, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />الطبيب/الموظف: {doctor}</div>
-          ) : (
-            <select value={doctor} onChange={e => setDoctor(e.target.value)} className="h-8 px-3 rounded-lg text-sm w-full sm:w-auto outline-none" style={{ border: `1px solid ${doctor.trim() ? "#E0E0E0" : "#D32F2F"}`, minWidth: 180 }}>
-              <option value="">اختر الموظف/الطبيب المسؤول...</option>
-              {doctorOptions.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-            </select>
+          {/* ── نربط الجلسة تلقائياً بالموظف المسجَّل دخوله فعلياً (doctor = autoDoctor)
+              بغض النظر عن القسم المفتوحة فيه الجلسة — موظف قسم معيّن ممكن يكون
+              معطى صلاحية دخول جلسات بقسم تاني (مثلاً موظف مختبر إله وصول لقسم
+              العلاج التأهيلي)، فما في داعي لاختيار يدوي، النظام عارف مين فاتح
+              الجلسة من جلسة الدخول نفسها. ── */}
+          {autoDoctor && (
+            <div className="h-8 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 160, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />الطبيب/الموظف: {autoDoctor}</div>
           )}
         </div>
       </div>
@@ -5236,9 +5213,9 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     //    تقرير أو إحصائية إجمالية (لوحة التحكم، الملخص المالي، كشوفات الأقسام)
     //    رغم وجود دفعة/دين حقيقي له؛ نفس النمط المستخدم في NewSessionScreen. ──
     if (setSessions) {
-      const ns: PatientSession = { id: Date.now(), patientId: effectivePatId, dept: "lab", doctor: "المختبر", date: today, diagnoses: [], medications: [], notes: "", labRefs: labTestNames, radRefs: [], amount: netTotal, paid: paidAmt, debt: debtAmt };
+      const ns: PatientSession = { id: Date.now(), patientId: effectivePatId, dept: "lab", doctor: "المختبر", date: today, diagnoses: [], medications: [], notes: "", labRefs: labTestNames, radRefs: [], amount: netTotal, paid: paidAmt, debt: debtAmt, grossAmount: testTotal };
       setSessions(prev => [ns, ...prev]);
-      api.sessions.create({ patient_id: effectivePatId, dept: "lab", doctor: "المختبر", date: api.parseDateISO(today), diagnoses: [], medications: [], notes: "", lab_refs: labTestNames, rad_refs: [], amount: netTotal, paid: paidAmt, debt: debtAmt }).then((r: any) => {
+      api.sessions.create({ patient_id: effectivePatId, dept: "lab", doctor: "المختبر", date: api.parseDateISO(today), diagnoses: [], medications: [], notes: "", lab_refs: labTestNames, rad_refs: [], amount: netTotal, paid: paidAmt, debt: debtAmt, gross_amount: testTotal }).then((r: any) => {
         if (r && r.id) setSessions(prev => prev.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
       }).catch(() => { });
     }
@@ -5856,9 +5833,9 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     // ── تسجيل جلسة مريض فعلية (PatientSession) — نفس علة المختبر تماماً: بدون
     //    هذا لا يظهر مريض الأشعة بأي تقرير أو إحصائية إجمالية رغم دفعه فعلياً. ──
     if (setSessions) {
-      const ns: PatientSession = { id: Date.now(), patientId: effectivePatId, dept: "radiology", doctor: "الأشعة", date: today, diagnoses: [], medications: [], notes: "", labRefs: [], radRefs: radImgNames, amount: netTotal, paid: paidAmt, debt: debtAmt };
+      const ns: PatientSession = { id: Date.now(), patientId: effectivePatId, dept: "radiology", doctor: "الأشعة", date: today, diagnoses: [], medications: [], notes: "", labRefs: [], radRefs: radImgNames, amount: netTotal, paid: paidAmt, debt: debtAmt, grossAmount: imgTotal };
       setSessions(prev => [ns, ...prev]);
-      api.sessions.create({ patient_id: effectivePatId, dept: "radiology", doctor: "الأشعة", date: api.parseDateISO(today), diagnoses: [], medications: [], notes: "", lab_refs: [], rad_refs: radImgNames, amount: netTotal, paid: paidAmt, debt: debtAmt }).then((r: any) => {
+      api.sessions.create({ patient_id: effectivePatId, dept: "radiology", doctor: "الأشعة", date: api.parseDateISO(today), diagnoses: [], medications: [], notes: "", lab_refs: [], rad_refs: radImgNames, amount: netTotal, paid: paidAmt, debt: debtAmt, gross_amount: imgTotal }).then((r: any) => {
         if (r && r.id) setSessions(prev => prev.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
       }).catch(() => { });
     }
@@ -7063,9 +7040,9 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
       //    يُحتسب للأخصائي أي نسبة برواتبه (نظام الرواتب يعتمد على doctor
       //    بجدول الجلسات). نفس منطق NewPatientScreen بالضبط. ──
       if (setSessions && patientId) {
-        const ns: PatientSession = { id: Date.now() + 4, patientId, dept: "rehab", doctor: specialist, date: today, diagnoses: [rehabDiagnosis].filter(Boolean), medications: [], notes: clinicalNotes, labRefs: [], radRefs: [], amount: planPriceNet, paid: paidAmt, debt: remaining };
+        const ns: PatientSession = { id: Date.now() + 4, patientId, dept: "rehab", doctor: specialist, date: today, diagnoses: [rehabDiagnosis].filter(Boolean), medications: [], notes: clinicalNotes, labRefs: [], radRefs: [], amount: planPriceNet, paid: paidAmt, debt: remaining, grossAmount: basePrice };
         setSessions(prev => [ns, ...prev]);
-        api.sessions.create({ patient_id: patientId, dept: "rehab", doctor: specialist, date: _localISO(), diagnoses: ns.diagnoses, medications: [], notes: clinicalNotes, lab_refs: [], rad_refs: [], amount: planPriceNet, paid: paidAmt, debt: remaining }).then((r: any) => { if (r && r.id) setSessions(p => p.map(s => s.id === ns.id ? { ...s, id: r.id } : s)); }).catch(() => { });
+        api.sessions.create({ patient_id: patientId, dept: "rehab", doctor: specialist, date: _localISO(), diagnoses: ns.diagnoses, medications: [], notes: clinicalNotes, lab_refs: [], rad_refs: [], amount: planPriceNet, paid: paidAmt, debt: remaining, gross_amount: basePrice }).then((r: any) => { if (r && r.id) setSessions(p => p.map(s => s.id === ns.id ? { ...s, id: r.id } : s)); }).catch(() => { });
       }
       toast(`تم إنشاء الخطة العلاجية لـ ${patient?.name || "المريض"} ✓`, "success");
       onNavigate({ screen: "open-patient", dept });
@@ -9031,7 +9008,12 @@ function FinancialSummaryScreen({ drawers, loggedUser, employees = [], insurance
           عمداً لأنها ليست مصروفات شخصية لموظف، وقيمتها محسوبة أصلاً ضمن
           "المصروفات" عبر paid_amount لطلب الشراء نفسه، فعرضها هنا كان يخلطها
           بمصروفات الموظفين الشخصية بجدول واحد بعمود اسمه "الموظف" ── */}
-      {(() => { const personalPv = paymentVouchers.filter(v => v.paid_to_type === "staff"); return (
+      {(() => {
+        // ── لو الشاشة مفتوحة من حساب موظف (مش مدير)، نحصر "سندات الصرف
+        //    الشخصية" المعروضة بسندات هذا الموظف هو فقط — وإلا كان أي موظف
+        //    عنده وصول لهاي الشاشة يشوف سندات صرف موظفين تانيين بالاسم ──
+        const myPvName = loggedUser?.type === "staff" ? (loggedUser.staff.name || loggedUser.staff.username) : undefined;
+        const personalPv = paymentVouchers.filter(v => v.paid_to_type === "staff" && (myPvName == null || v.paid_to_name === myPvName)); return (
       <Card title="سندات الصرف (مصروفات شخصية للموظفين)" action={isAdmin && <Btn small variant="secondary" onClick={openPvNew}><Plus size={13} />جديد</Btn>}>
         {!vouchersLoaded ? <p className="text-center text-sm text-[#999] py-6">جاري التحميل...</p> : personalPv.length === 0 ? <EmptyState msg="لا توجد سندات صرف" /> : (
           <div className="overflow-x-auto">
@@ -9620,7 +9602,9 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const isFix = !sm || sm.salaryType === "fixed";
     // ── "daily" لم يعد نسبة إيرادات — لا جلسات ولا نسبة له بهذا التقرير ──
     const rangeSessions = (sm?.salaryType === "daily") ? [] : sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, from, to));
-    const rangeRevenue = rangeSessions.reduce((sum, s) => sum + s.paid, 0);
+    // ── العمولة تُحتسب من المبلغ الإجمالي للجلسة (grossAmount) قبل أي خصم —
+    //    شخصي أو تأمين — وليس من المبلغ المدفوع فعلياً (paid) ──
+    const rangeRevenue = rangeSessions.reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
     const commission = (isFix || sm?.salaryType === "daily") ? 0 : Math.round(rangeRevenue * ((sm!.percentageValue || 0) / 100));
     const pendingAdvances = employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid);
     const totalAdvances = pendingAdvances.reduce((s, a) => s + a.amount, 0);
@@ -9695,7 +9679,8 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     //    أدناه لتعريفه الجديد: أجر يومي ثابت × أيام الحضور الفعلية) ──
     if (!sm || sm.salaryType === "fixed" || sm.salaryType === "daily") return 0;
     const pDepts = effectivePercentageDepts(sm);
-    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, curMonthStart, curMonthEnd)).reduce((sum, s) => sum + s.paid, 0);
+    // ── العمولة على المبلغ الإجمالي (grossAmount) قبل أي خصم، وليس المدفوع ──
+    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, curMonthStart, curMonthEnd)).reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
   const getTotalAdvances = (e: Employee) => employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).reduce((s, a) => s + a.amount, 0);
@@ -9799,7 +9784,8 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const sm = getStaffMember(e);
     if (!sm || sm.salaryType === "fixed" || sm.salaryType === "daily") return 0;
     const pDepts = effectivePercentageDepts(sm);
-    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, from, to)).reduce((sum, s) => sum + s.paid, 0);
+    // ── العمولة على المبلغ الإجمالي (grossAmount) قبل أي خصم، وليس المدفوع ──
+    const empRevenue = sessions.filter(s => s.doctor === e.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, from, to)).reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
     return Math.round(empRevenue * (sm.percentageValue / 100));
   };
   const getAdvancesForRange = (e: Employee, from: string, to: string) =>
@@ -9913,7 +9899,8 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     if (sm && (sm.salaryType === "percentage" || sm.salaryType === "both")) {
       const pDepts = effectivePercentageDepts(sm);
       pDepts.forEach(d => {
-        const revenue = sessions.filter(s => s.doctor === e.name && s.dept === d && inRangeDDMMYYYY(s.date, start, end)).reduce((sum, s) => sum + s.paid, 0);
+        // ── العمولة على المبلغ الإجمالي (grossAmount) قبل أي خصم، وليس المدفوع ──
+        const revenue = sessions.filter(s => s.doctor === e.name && s.dept === d && inRangeDDMMYYYY(s.date, start, end)).reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
         const commission = Math.round(revenue * ((sm.percentageValue || 0) / 100));
         deptRows.push({ deptName: deptShortName(d), revenue, pct: sm.percentageValue || 0, commission });
       });
@@ -13157,7 +13144,7 @@ function StaffManagementScreen({
             {filtered.map(s => {
               const deptCount = Object.values(s.deptPermissions ?? {}).filter((d: any) => d.canView).length;
               const pDepts = effectivePercentageDepts(s);
-              const empRevenue = sessions.filter(sess => sess.doctor === s.name && pDepts.includes(sess.dept)).reduce((sum, sess) => sum + sess.paid, 0);
+              const empRevenue = sessions.filter(sess => sess.doctor === s.name && pDepts.includes(sess.dept)).reduce((sum, sess) => sum + (sess.grossAmount ?? sess.amount), 0);
               const commissionEst = (s.salaryType !== "fixed" && s.salaryType !== "daily") ? Math.round(empRevenue * (s.percentageValue / 100)) : 0;
               const extraDepts = (s.assignedDepts || []).filter((id: string) => id !== s.primaryDept);
               return (
@@ -13365,7 +13352,7 @@ function StaffManagementScreen({
                 {form.name && (() => {
                   const pDepts = effectivePercentageDepts(form as any);
                   const empSess = sessions.filter(sess => sess.doctor === form.name && pDepts.includes(sess.dept));
-                  const empRev = empSess.reduce((s, sess) => s + sess.paid, 0);
+                  const empRev = empSess.reduce((s, sess) => s + (sess.grossAmount ?? sess.amount), 0);
                   return empRev > 0 ? <div className="mt-2 pt-2" style={{ borderTop: "1px solid #BBDEFB" }}>
                     <p>عدد جلساته: <strong>{empSess.length}</strong></p>
                     <p>إيراداته: <strong>{fmt(empRev)}</strong></p>
@@ -13946,7 +13933,8 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
   const isDailyWageSalary = staff.salaryType === "daily";
   const pDepts = effectivePercentageDepts(staff as any);
   const rangeSessions = sessions.filter(s => s.doctor === staff.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, payFrom, payTo));
-  const rangeRevenue = rangeSessions.reduce((sum, s) => sum + s.paid, 0);
+  // ── العمولة على المبلغ الإجمالي (grossAmount) قبل أي خصم شخصي أو تأمين ──
+  const rangeRevenue = rangeSessions.reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
   const commission = isPctSalary ? Math.round(rangeRevenue * ((staff.percentageValue || 0) / 100)) : 0;
   // ── أجر "الأجر اليومي": عدد أيام الحضور المُسجَّلة ذاتياً (شاشة "أيام الدوام"
   //    أدناه) ضمن الفترة المختارة × المبلغ اليومي الثابت — لا علاقة له بالجلسات ──
@@ -13987,7 +13975,7 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
     if (closed) return closed.netAmount;
     const { start, end } = monthBoundsOf(ym);
     const rSessions = sessions.filter(s => s.doctor === staff.name && pDepts.includes(s.dept) && inRangeDDMMYYYY(s.date, start, end));
-    const rRevenue = rSessions.reduce((sum, s) => sum + s.paid, 0);
+    const rRevenue = rSessions.reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
     const comm = isPctSalary ? Math.round(rRevenue * ((staff.percentageValue || 0) / 100)) : 0;
     const expV = myExpenseVouchers.filter(t => !t.applied && inRangeDDMMYYYY(t.date, start, end));
     const exp = expV.reduce((s, t) => s + t.amount, 0);
@@ -14026,7 +14014,7 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
   //    حالياً (افتراضياً الشهر الحالي) — بنفس أرقام البطاقات أعلاه بالضبط ──
   const [showMyBreakdown, setShowMyBreakdown] = useState(false);
   const myBreakdownDeptRows: BreakdownDeptRow[] = isPctSalary ? pDepts.map(d => {
-    const revenue = sessions.filter(s => s.doctor === staff.name && s.dept === d && inRangeDDMMYYYY(s.date, payFrom, payTo)).reduce((sum, s) => sum + s.paid, 0);
+    const revenue = sessions.filter(s => s.doctor === staff.name && s.dept === d && inRangeDDMMYYYY(s.date, payFrom, payTo)).reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
     const comm = Math.round(revenue * ((staff.percentageValue || 0) / 100));
     return { deptName: deptShortName(d), revenue, pct: staff.percentageValue || 0, commission: comm };
   }) : [];
@@ -14126,16 +14114,73 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
       .catch(() => toast("تعذّر حفظ أيام الدوام", "error"))
       .finally(() => setSavingDailyDays(false));
   };
+  // ── تحويل التاريخ لصيغة ISO (YYYY-MM-DD) قبل إرساله للخادم — عمود date
+  //    بجدول attendance_records من نوع DATE، وإرسال صيغة DD/MM/YYYY مباشرة
+  //    (كما كان الحال هون) يُعرَّض للالتباس بترتيب اليوم/الشهر لأي تاريخ
+  //    يومه ≤ 12 (مثلاً 03/04 تُفهَم أبريل 3 بدل مارس 4)، وأحياناً يرفضه
+  //    الخادم بالكامل — بنفس تحويل شاشة الحضور الإدارية (handleSaveEdit). ──
+  const attDateToApi = (d: string) => d.includes("/") ? d.split("/").reverse().join("-") : d;
   const submitSelfAttendance = () => {
     const useDept = myAttDepts.length === 1 ? myAttDepts[0].id : attDept;
     if (!useDept) { toast("اختر القسم", "error"); return; }
     if (!attForm.date || !attForm.checkIn || !attForm.checkOut) { toast("يرجى تحديد التاريخ وساعة البدء والانتهاء", "error"); return; }
     if (attFormDurationLabel === "—") { toast("وقت الدخول والخروج غير صالحين (تأكد أنهما ليسا نفس الوقت تماماً)", "error"); return; }
-    const rec: AttendanceRecord = { id: Date.now(), empId: mySelfEmpId, empName: staff.name, dept: useDept, date: attForm.date, dayName: attForm.dayName, checkIn: attForm.checkIn, checkOut: attForm.checkOut, totalHours: attFormHours };
+    const tempId = Date.now();
+    const rec: AttendanceRecord = { id: tempId, empId: mySelfEmpId, empName: staff.name, dept: useDept, date: attForm.date, dayName: attForm.dayName, checkIn: attForm.checkIn, checkOut: attForm.checkOut, totalHours: attFormHours };
     setAttendance?.(p => [rec, ...p]);
-    api.staff.attendance.create({ emp_id: rec.empId, emp_name: rec.empName, dept: rec.dept, date: rec.date, day_name: rec.dayName, check_in: rec.checkIn, check_out: rec.checkOut });
-    toast("تم تسجيل الدوام بنجاح ✓", "success");
+    // ── لازم ننتظر رد الخادم ونستبدل المعرّف المؤقت (Date.now()) بالمعرّف
+    //    الحقيقي من قاعدة البيانات — وإلا أي تعديل/حذف لاحق لنفس السجل (زر
+    //    "تعديل"/"حذف" بالجدول تحت) بيبعت معرّفاً وهمياً ما بيطابق أي صف
+    //    فعلي بالخادم، وبالفشل الصامت (بدون .then/.catch سابقاً) كان ممكن
+    //    الحفظ نفسه يفشل بالكامل دون أي إشعار للموظف رغم ظهور "تم بنجاح" ──
+    api.staff.attendance.create({ emp_id: rec.empId, emp_name: rec.empName, dept: rec.dept, date: attDateToApi(rec.date), day_name: rec.dayName, check_in: rec.checkIn, check_out: rec.checkOut })
+      .then((r: any) => {
+        if (!r || r.id == null) throw new Error("no id");
+        setAttendance?.(p => p.map(x => x.id === tempId ? { ...x, id: Number(r.id) } : x));
+        toast("تم تسجيل الدوام بنجاح ✓", "success");
+      })
+      .catch(() => {
+        setAttendance?.(p => p.filter(x => x.id !== tempId));
+        toast("تعذّر حفظ سجل الدوام بالخادم — حاول مرة أخرى", "error");
+      });
     setAttForm({ date: todayDateSelf, dayName: todayDaySelf, checkIn: "", checkOut: "" });
+  };
+  // ── تعديل/حذف سجل حضور ذاتي (موظف الوردية) — مسموح فقط لسجلات شهر لم
+  //    يُصرف/يُغلَق راتبه بعد (نفس قفل isDailyMonthLocked لكن لكل سجل بتاريخه) ──
+  const attRecordMonthLocked = (dateStr: string): boolean => {
+    const parts = dateStr.split("/");
+    if (parts.length !== 3) return false;
+    const ym = `${parts[2]}-${parts[1].padStart(2, "0")}`;
+    return !!myClosedPeriod(ym);
+  };
+  const [editAttId, setEditAttId] = useState<number | null>(null);
+  const [editAttForm, setEditAttForm] = useState<{ date: string; checkIn: string; checkOut: string } | null>(null);
+  const startEditAtt = (a: AttendanceRecord) => {
+    if (attRecordMonthLocked(a.date)) { toast("لا يمكن تعديل سجل شهر تم صرف راتبه بالفعل", "error"); return; }
+    setEditAttId(a.id);
+    setEditAttForm({ date: a.date, checkIn: a.checkIn || "", checkOut: a.checkOut || "" });
+  };
+  const cancelEditAtt = () => { setEditAttId(null); setEditAttForm(null); };
+  const saveEditAtt = () => {
+    if (!editAttId || !editAttForm) return;
+    const hours = hoursBetweenTimes(editAttForm.checkIn, editAttForm.checkOut);
+    if (hours == null) { toast("وقت الدخول والخروج غير صالحين (تأكد أنهما ليسا نفس الوقت تماماً)", "error"); return; }
+    const dParts = editAttForm.date.split("/");
+    const dayName = dParts.length === 3 ? DAYS_AR_SELF[new Date(`${dParts[2]}-${dParts[1]}-${dParts[0]}T12:00:00`).getDay()] : "";
+    api.staff.attendance.update(editAttId, { date: attDateToApi(editAttForm.date), day_name: dayName, check_in: editAttForm.checkIn, check_out: editAttForm.checkOut })
+      .then(() => {
+        setAttendance?.(p => p.map(r => r.id === editAttId ? { ...r, date: editAttForm.date, dayName, checkIn: editAttForm.checkIn, checkOut: editAttForm.checkOut, totalHours: hours ?? undefined } : r));
+        toast("تم تعديل السجل ✓", "success");
+        setEditAttId(null); setEditAttForm(null);
+      })
+      .catch(() => toast("تعذّر تعديل السجل — حاول مرة أخرى", "error"));
+  };
+  const deleteSelfAtt = (a: AttendanceRecord) => {
+    if (attRecordMonthLocked(a.date)) { toast("لا يمكن حذف سجل شهر تم صرف راتبه بالفعل", "error"); return; }
+    if (!window.confirm("هل أنت متأكد من حذف سجل الحضور هذا؟")) return;
+    api.staff.attendance.delete(a.id)
+      .then(() => { setAttendance?.(p => p.filter(r => r.id !== a.id)); toast("تم حذف السجل", "success"); })
+      .catch(() => toast("تعذّر حذف السجل — حاول مرة أخرى", "error"));
   };
 
   return (
@@ -14398,22 +14443,50 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
           )}
           <Card title="سجل الحضور والانصراف">
             {myAttendance.length === 0 ? <EmptyState msg="لا توجد سجلات حضور مسجلة" /> : (
-              <table className="w-full text-sm"><THead cols={["التاريخ", "اليوم", "الدخول", "الخروج", "عدد الساعات", "قيمة الوردية"]} />
+              <table className="w-full text-sm"><THead cols={["التاريخ", "اليوم", "الدخول", "الخروج", "عدد الساعات", "قيمة الوردية", "إجراءات"]} />
                 <tbody>{attRows.map((a, i) => {
                   const hrs = a.totalHours ?? hoursBetweenTimes(a.checkIn, a.checkOut) ?? 0;
                   const pay = isAttShift ? Math.round(hrs * attHourlyRate * 100) / 100 : null;
+                  const locked = attRecordMonthLocked(a.date);
+                  if (editAttId === a.id && editAttForm) {
+                    const editHrs = hoursBetweenTimes(editAttForm.checkIn, editAttForm.checkOut);
+                    const editPay = isAttShift && editHrs != null ? Math.round(editHrs * attHourlyRate * 100) / 100 : null;
+                    return <TRow key={a.id} i={i}>
+                      <TD><input type="date" value={editAttForm.date.includes("/") ? editAttForm.date.split("/").reverse().join("-") : editAttForm.date}
+                        onChange={e => { const d = new Date(e.target.value + "T12:00:00"); setEditAttForm(p => p ? { ...p, date: d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" }) } : p); }}
+                        className="h-8 px-2 rounded-md text-xs outline-none w-full" style={{ border: "1px solid #CCC" }} /></TD>
+                      <TD className="text-[#777]">{a.dayName}</TD>
+                      <TD><input type="time" value={editAttForm.checkIn} onChange={e => setEditAttForm(p => p ? { ...p, checkIn: e.target.value } : p)}
+                        className="h-8 px-2 rounded-md text-xs outline-none w-full" style={{ border: "1px solid #CCC" }} /></TD>
+                      <TD><input type="time" value={editAttForm.checkOut} onChange={e => setEditAttForm(p => p ? { ...p, checkOut: e.target.value } : p)}
+                        className="h-8 px-2 rounded-md text-xs outline-none w-full" style={{ border: "1px solid #CCC" }} /></TD>
+                      <TD className="text-[#555]">{editHrs ? `${editHrs} س` : "—"}</TD>
+                      <TD className="font-medium text-[#0D7377]">{editPay != null ? fmt(editPay) : "—"}</TD>
+                      <TD><div className="flex items-center gap-1.5">
+                        <button onClick={saveEditAtt} title="حفظ" className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "#388E3C", border: "1px solid #A5D6A7", backgroundColor: "#E8F5E9" }}><Check size={13} /></button>
+                        <button onClick={cancelEditAtt} title="إلغاء" className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "#777", border: "1px solid #E0E0E0" }}><X size={13} /></button>
+                      </div></TD>
+                    </TRow>;
+                  }
                   return <TRow key={a.id} i={i}>
                     <TD className="text-[#555]">{a.date}</TD><TD className="text-[#777]">{a.dayName}</TD>
                     <TD className="font-medium text-[#388E3C]">{a.checkIn || "—"}</TD>
                     <TD className="font-medium text-[#D32F2F]">{a.checkOut || "—"}</TD>
                     <TD className="text-[#555]">{hrs ? `${hrs} س` : "—"}</TD>
                     <TD className="font-medium text-[#0D7377]">{pay != null ? fmt(pay) : "—"}</TD>
+                    <TD>{locked ? <span className="text-xs text-[#999]">مُقفل (رُاتب مصروف)</span> : (
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => startEditAtt(a)} title="تعديل" className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "#1B3A6B", border: "1px solid #BBDEFB", backgroundColor: "#EBF3FB" }}><Edit size={13} /></button>
+                        <button onClick={() => deleteSelfAtt(a)} title="حذف" className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ color: "#D32F2F", border: "1px solid #FFCDD2", backgroundColor: "#FFEBEE" }}><Trash2 size={13} /></button>
+                      </div>
+                    )}</TD>
                   </TRow>;
                 })}</tbody>
                 <tfoot><tr style={{ borderTop: "2px solid #E0E0E0", fontWeight: 700 }}>
                   <td className="p-2 text-xs" colSpan={4}>الإجمالي</td>
                   <td className="p-2 text-xs">{totalAttHours ? `${Math.round(totalAttHours * 100) / 100} س` : "—"}</td>
                   <td className="p-2 text-xs text-[#0D7377]">{isAttShift ? fmt(totalAttPay) : "—"}</td>
+                  <td className="p-2 text-xs"></td>
                 </tr></tfoot>
               </table>
             )}
@@ -15326,6 +15399,13 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
   type PV = { id: number; voucher_no: string; date: string; amount: number; paid_to_type: "supplier" | "staff" | "other"; paid_to_id?: string; paid_to_name: string; reason: string; dept?: string; notes?: string; category?: string; approved_by?: string; created_at: string; drawer_tx_id?: number; settlement_breakdown?: SettlementBreakdown };
   const isAdminUser = loggedUser?.type === "admin";
   const canDeleteVoucher = isAdminUser || !!(perms?.canDeleteVoucher);
+  // ── سندات الصرف بهاي الشاشة كلها "مصروفات شخصية" تُنسَب تلقائياً لاسم مين
+  //    ما كان مسجّل دخوله وقت الإنشاء (savePv تحت بتحدد paid_to_name = اسم
+  //    المستخدم الحالي دائماً، بغض النظر شو اختار بالنموذج). فلو الشاشة
+  //    بتعرض كل سندات صرف القسم لأي موظف عنده صلاحية "canVouchers"، بيصير
+  //    كل موظف شايف سندات موظفين تانيين — خلل خصوصية حقيقي. الحل: الموظف
+  //    (غير المدير) ما بيشوف ولا بيحسب إلا سندات الصرف يلي هو نفسه صاحبها. ──
+  const myVoucherName = loggedUser?.type === "staff" ? (loggedUser.staff.name || loggedUser.staff.username) : undefined;
   const [tab, setTab] = useState<"rv" | "pv">("rv");
   const [rvList, setRvList] = useState<RV[]>([]);
   const [pvList, setPvList] = useState<PV[]>([]);
@@ -15338,10 +15418,12 @@ function DeptVouchersScreen({ dept, deptName, drawers, doDeposit, doWithdraw, em
       //    قيمتها محسوبة أصلاً ضمن "المصروفات" عبر purchase_requests.paid_amount،
       //    وعرضها هنا كان يخلط دفعات الموردين مع مصروفات الموظفين الشخصية في
       //    نفس الجدول ("سندات الصرف" مخصصة حصراً لمصروفات الموظف الشخصية) ──
-      if (pv) setPvList((pv as any[]).map(v => ({ ...v, amount: Number(v.amount) })).filter((v: any) => v.dept === dept && v.paid_to_type !== "supplier"));
+      // ── وبعدين: لو المستخدم موظف (مش مدير)، نحصر القائمة كمان بسندات صرفه
+      //    الشخصية فقط (paid_to_name = اسمه)، مش كل سندات القسم ──
+      if (pv) setPvList((pv as any[]).map(v => ({ ...v, amount: Number(v.amount) })).filter((v: any) => v.dept === dept && v.paid_to_type !== "supplier" && (myVoucherName == null || v.paid_to_name === myVoucherName)));
       setLoaded(true);
     }).catch(() => { setLoaded(true); });
-  }, [dept]);
+  }, [dept, myVoucherName]);
   const totalRv = rvList.reduce((s, v) => s + v.amount, 0);
   const totalPv = pvList.reduce((s, v) => s + v.amount, 0);
   const net = totalRv - totalPv;
@@ -16006,10 +16088,24 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
     if (!form.date || !form.checkIn || !form.checkOut) { toast("يرجى تحديد التاريخ وساعة البدء والانتهاء", "error"); return; }
     // ملاحظة: الورديات الليلية (خروج بالصباح بعد دخول بالليل) مدعومة ومحسوبة صح تلقائياً — هذا الخطأ يظهر فقط لو الوقتين متطابقين تماماً
     if (formDuration === "—") { toast("وقت الدخول والخروج غير صالحين (تأكد أنهما ليسا نفس الوقت تماماً)", "error"); return; }
-    const rec: AttendanceRecord = { id: Date.now(), empId: currentEmpId, empName: currentEmpName, dept, date: form.date, dayName: form.dayName, checkIn: form.checkIn, checkOut: form.checkOut, totalHours: formHours };
+    const tempId = Date.now();
+    const rec: AttendanceRecord = { id: tempId, empId: currentEmpId, empName: currentEmpName, dept, date: form.date, dayName: form.dayName, checkIn: form.checkIn, checkOut: form.checkOut, totalHours: formHours };
     setAttendance(p => [rec, ...p]);
-    api.staff.attendance.create({ emp_id: rec.empId, emp_name: rec.empName, dept: rec.dept, date: rec.date, day_name: rec.dayName, check_in: rec.checkIn, check_out: rec.checkOut });
-    toast(`تم تسجيل الدوام بنجاح ✓`, "success");
+    // ── تحويل التاريخ لصيغة ISO قبل الإرسال + انتظار رد الخادم لاستبدال
+    //    المعرّف المؤقت بالمعرّف الحقيقي — نفس إصلاح شاشة "حسابي المالي"
+    //    الذاتية (submitSelfAttendance)، وإلا أي تعديل/حذف لاحق لنفس السجل
+    //    (قبل أي تحديث للصفحة) بيستهدف معرّفاً وهمياً ما بيطابق شيء بالخادم ──
+    const dateForApi = rec.date.includes("/") ? rec.date.split("/").reverse().join("-") : rec.date;
+    api.staff.attendance.create({ emp_id: rec.empId, emp_name: rec.empName, dept: rec.dept, date: dateForApi, day_name: rec.dayName, check_in: rec.checkIn, check_out: rec.checkOut })
+      .then((r: any) => {
+        if (!r || r.id == null) throw new Error("no id");
+        setAttendance(p => p.map(x => x.id === tempId ? { ...x, id: Number(r.id) } : x));
+        toast(`تم تسجيل الدوام بنجاح ✓`, "success");
+      })
+      .catch(() => {
+        setAttendance(p => p.filter(x => x.id !== tempId));
+        toast("تعذّر حفظ سجل الدوام بالخادم — حاول مرة أخرى", "error");
+      });
     setForm({ date: todayDate, dayName: todayDay, checkIn: "", checkOut: "" });
   };
 
@@ -16796,10 +16892,10 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
         const sessionRes: any = await api.sessions.create({
           patient_id: effectiveId, dept: deptId, doctor: "مستورد", date: api.parseDateISO(sessionDate),
           diagnoses: [], medications: [], notes: `مستورد من ملف — ${fileName}`, lab_refs: [], rad_refs: [],
-          amount, paid, debt,
+          amount, paid, debt, gross_amount: amount,
         });
         if (!sessionRes || sessionRes.id == null) { errors++; warnings.push(`صف ${rowNum}: فشل حفظ الجلسة للمريض "${name}"`); bump(); continue; }
-        const ns: PatientSession = { id: sessionRes.id, patientId: effectiveId, dept: deptId, doctor: "مستورد", date: sessionDate, diagnoses: [], medications: [], notes: `مستورد من ملف — ${fileName}`, labRefs: [], radRefs: [], amount, paid, debt };
+        const ns: PatientSession = { id: sessionRes.id, patientId: effectiveId, dept: deptId, doctor: "مستورد", date: sessionDate, diagnoses: [], medications: [], notes: `مستورد من ملف — ${fileName}`, labRefs: [], radRefs: [], amount, paid, debt, grossAmount: amount };
         setSessions(p => [ns, ...p]);
         sessionsAdded++;
         if (paid > 0 && doDeposit) doDeposit(deptId, paid, `دفعة مريض (استيراد) — ${name}`, "إيراد مريض");
@@ -17777,7 +17873,7 @@ export default function App() {
       }
       const isoToDisplay = (s: string) => { if (!s) return ""; const p = s.split("-"); return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : s; };
       if (dbSessions && (dbSessions as any[]).length > 0) {
-        setSessions((dbSessions as any[]).map((s: any) => ({ id: s.id, patientId: s.patient_id || "", dept: s.dept || "lab", doctor: s.doctor || "", date: isoToDisplay(s.date ? String(s.date).slice(0, 10) : ""), diagnoses: Array.isArray(s.diagnoses) ? s.diagnoses.filter(Boolean) : [], medications: Array.isArray(s.medications) ? s.medications.filter((m: any) => m && m.name) : [], notes: s.notes || "", labRefs: Array.isArray(s.lab_refs) ? s.lab_refs.filter(Boolean) : [], radRefs: Array.isArray(s.rad_refs) ? s.rad_refs.filter(Boolean) : [], amount: Number(s.amount) || 0, paid: Number(s.paid) || 0, debt: Number(s.debt) || 0 })));
+        setSessions((dbSessions as any[]).map((s: any) => ({ id: s.id, patientId: s.patient_id || "", dept: s.dept || "lab", doctor: s.doctor || "", date: isoToDisplay(s.date ? String(s.date).slice(0, 10) : ""), diagnoses: Array.isArray(s.diagnoses) ? s.diagnoses.filter(Boolean) : [], medications: Array.isArray(s.medications) ? s.medications.filter((m: any) => m && m.name) : [], notes: s.notes || "", labRefs: Array.isArray(s.lab_refs) ? s.lab_refs.filter(Boolean) : [], radRefs: Array.isArray(s.rad_refs) ? s.rad_refs.filter(Boolean) : [], amount: Number(s.amount) || 0, paid: Number(s.paid) || 0, debt: Number(s.debt) || 0, grossAmount: Number(s.gross_amount) || Number(s.amount) || 0 })));
       }
       if (dbInvoices && (dbInvoices as any[]).length > 0) {
         setInvoices((dbInvoices as any[]).map((inv: any) => ({ id: inv.id, company: inv.company || "", companyId: inv.company_id ?? undefined, date: isoToDisplay(inv.date ? String(inv.date).slice(0, 10) : ""), total: Number(inv.total) || 0, paid: Number(inv.paid) || 0, remaining: Number(inv.remaining) || 0, status: (inv.status || "unpaid") as "paid" | "partial" | "unpaid", dept: inv.dept || "lab", claimNo: inv.claim_no || undefined, patientId: inv.patient_id || undefined, patientName: inv.patient_name || undefined })));
