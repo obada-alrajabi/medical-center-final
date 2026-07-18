@@ -9578,7 +9578,7 @@ function SalaryBreakdownDetail({ isFixed, fixedSalary, deptRows, commissionTotal
   );
 }
 
-function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], setEmployeeAdvances, staffList = [], sessions = [], paymentVouchers = [], setPaymentVouchers, attendance = [], salaryPeriods = [], setSalaryPeriods, dailyAttendanceGlobal = [] }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; setEmployeeAdvances?: React.Dispatch<React.SetStateAction<EmployeeAdvance[]>>; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[]; setPaymentVouchers?: React.Dispatch<React.SetStateAction<any[]>>; attendance?: AttendanceRecord[]; salaryPeriods?: SalaryPeriod[]; setSalaryPeriods?: React.Dispatch<React.SetStateAction<SalaryPeriod[]>>; dailyAttendanceGlobal?: DailyAttendanceRecord[] }) {
+function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, customDepts = [], employeeAdvances = [], setEmployeeAdvances, staffList = [], sessions = [], paymentVouchers = [], setPaymentVouchers, attendance = [], salaryPeriods = [], setSalaryPeriods, dailyAttendanceGlobal = [] }: { employees: Employee[]; setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>; drawers: Record<string, DrawerState>; doWithdraw: (dept: string, amount: number, title: string, cat: string, ben?: string, allowNegative?: boolean) => void; toast: (m: string, t?: any) => void; customDepts?: Array<{ id: string; name: string; short: string; iconId: string }>; employeeAdvances?: EmployeeAdvance[]; setEmployeeAdvances?: React.Dispatch<React.SetStateAction<EmployeeAdvance[]>>; staffList?: StaffMember[]; sessions?: PatientSession[]; paymentVouchers?: any[]; setPaymentVouchers?: React.Dispatch<React.SetStateAction<any[]>>; attendance?: AttendanceRecord[]; salaryPeriods?: SalaryPeriod[]; setSalaryPeriods?: React.Dispatch<React.SetStateAction<SalaryPeriod[]>>; dailyAttendanceGlobal?: DailyAttendanceRecord[] }) {
   const allDepts = [...DEPARTMENTS.map(d => ({ id: d.id, short: d.short })), ...customDepts.map(d => ({ id: d.id, short: d.short }))];
   const [confirmModal, setConfirmModal] = useState<Employee | null>(null); const [paying, setPaying] = useState(false);
   const [payFrom, setPayFrom] = useState(""); const [payTo, setPayTo] = useState("");
@@ -9606,7 +9606,12 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     //    شخصي أو تأمين — وليس من المبلغ المدفوع فعلياً (paid) ──
     const rangeRevenue = rangeSessions.reduce((sum, s) => sum + (s.grossAmount ?? s.amount), 0);
     const commission = (isFix || sm?.salaryType === "daily") ? 0 : Math.round(rangeRevenue * ((sm!.percentageValue || 0) / 100));
-    const pendingAdvances = employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid);
+    // ── لازم نحصر السلف بفترة القسيمة المطلوبة (from/to) بالضبط — تماماً متل
+    //    الجلسات وسندات الصرف والحضور تحت. كانت هاي الخانة الوحيدة بالدالة
+    //    ما بتفلتر بالتاريخ إطلاقاً، فأي سلفة غير مسدَّدة (حتى لو أُخذت بعد
+    //    نهاية الفترة المطلوبة تماماً) كانت تظهر وتُخصم من قسيمة أي فترة
+    //    ماضية يفتحها المدير — سلفة بتاريخ يوليو كانت تنخصم من قسيمة يونيو. ──
+    const pendingAdvances = employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid && inRangeDDMMYYYY(a.date, from, to));
     const totalAdvances = pendingAdvances.reduce((s, a) => s + a.amount, 0);
     const rangeExpVouchers = paymentVouchers
       .filter((v: any) => v.paid_to_type === "staff" && v.paid_to_name === e.name && inRangeDDMMYYYY(v.date, from, to));
@@ -9923,8 +9928,17 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
       const rows: BreakdownShiftRow[] = recs.map(r => { const hours = r.totalHours ?? hoursBetweenTimes(r.checkIn, r.checkOut) ?? 0; return { date: r.date, hours, amount: Math.round(hours * rate * 100) / 100 }; });
       shift = { rate, nominalHours, shiftAmount: sm.shiftAmount || 0, rows, total: getShiftPay(e, start, end) };
     }
-    const vouchers: BreakdownVoucherRow[] = getUnappliedVouchers(e).map((v: any) => ({ id: v.id, title: v.reason || v.category || "مصروف شخصي", date: v.date, amount: Number(v.amount) || 0 }));
-    const advances: BreakdownAdvanceRow[] = employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid).map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }));
+    // ── للشهر الحالي (curYearMonth): نعرض كل السندات/السلف غير المُستهلَكة
+    //    بعد بغض النظر عن تاريخها — نفس تصميم calcNet/getExpenses/getTotalAdvances
+    //    (أي التزام معلَّق يُستهلَك بأول راتب يُصرف، بغض النظر متى نشأ). أما
+    //    لشهر ماضٍ محدَّد (ym !== curYearMonth) فلازم نحصر القائمة بنفس فترة
+    //    ذاك الشهر بالضبط (getVouchersForRange/getAdvancesForRange) — وإلا
+    //    كانت القائمة المعروضة هون تُظهر بنداً (مثلاً سلفة لاحقة لتاريخ الشهر)
+    //    لم يدخل فعلياً بحساب "الصافي" (computePeriodNet) لهذا الشهر تحديداً. ──
+    const vouchers: BreakdownVoucherRow[] = (ym === curYearMonth ? getUnappliedVouchers(e) : getVouchersForRange(e, start, end)).map((v: any) => ({ id: v.id, title: v.reason || v.category || "مصروف شخصي", date: v.date, amount: Number(v.amount) || 0 }));
+    const advances: BreakdownAdvanceRow[] = (ym === curYearMonth
+      ? employeeAdvances.filter(a => (a.staffId != null && e.staffId != null ? a.staffId === e.staffId : a.empName === e.name) && !a.repaid)
+      : getAdvancesForRange(e, start, end)).map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }));
     const carriedIn = getCarriedIn(e, ym);
     const net = ym === curYearMonth ? calcNet(e) : computePeriodNet(e, ym);
     return { isFixed, fixedSalary, deptRows, commissionTotal, shift, daily, vouchers, advances, carriedIn, net };
@@ -9968,8 +9982,10 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     };
     if (net > 0) {
       const split = getPaySplitForRange(e, ym, net);
-      if (getPaySplitTotalAvailable(split) < net) { toast("⚠️ رصيد الصندوق غير كافٍ", "warning"); return; }
-      split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${e.name} — ${monthLabel(ym)}`, "راتب موظف", e.name));
+      // ── الراتب لازم يُصرف كاملاً دائماً بغض النظر عن كفاية رصيد صندوق القسم —
+      //    لو غير كافٍ، يصير الصندوق سالباً (allowNegative=true) بدل حجب الصرف. ──
+      if (getPaySplitTotalAvailable(split) < net) toast("⚠️ رصيد صندوق القسم غير كافٍ — سيصبح سالباً بعد هذا الصرف", "warning");
+      split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${e.name} — ${monthLabel(ym)}`, "راتب موظف", e.name, true));
       applyConsumption();
       persistPeriod("paid");
       toast(`تم صرف راتب ${e.name} عن ${monthLabel(ym)} ✓`);
@@ -9991,7 +10007,10 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     if (!confirmModal) return;
     if (calcNet(confirmModal) <= 0) { toast("⚠️ لا يوجد راتب مستحق للصرف — الموظف مدين للمركز", "warning"); return; }
     const split = getPaySplit(confirmModal);
-    if (getPaySplitTotalAvailable(split) < calcNet(confirmModal)) { toast("⚠️ رصيد الصندوق غير كافٍ", "warning"); return; }
+    // ── الراتب لازم يُصرف كاملاً دائماً بغض النظر عن كفاية رصيد صندوق القسم —
+    //    لو غير كافٍ، يصير الصندوق سالباً (allowNegative=true بالسحب تحت) بدل
+    //    حجب الصرف بالكامل. التنبيه هون معلوماتي بس، ما بيوقف العملية. ──
+    if (getPaySplitTotalAvailable(split) < calcNet(confirmModal)) toast("⚠️ رصيد صندوق القسم غير كافٍ — سيصبح سالباً بعد هذا الصرف", "warning");
     // ── نلتقط سندات الصرف اللي دخلت فعلياً بحساب هذا الراتب *قبل* الصرف، لنعلّمها
     //    "مُستهلَكة" بعده مباشرة — فما تنخصم مرة ثانية من رواتب الأشهر الجاية ──
     const consumedVoucherIds = getUnappliedVouchers(confirmModal).map((v: any) => v.id);
@@ -10012,7 +10031,7 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     setPaying(true);
     setTimeout(() => {
       const paidDate = _today();
-      split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${confirmModal.name} — ${monthLabel(curYearMonth)}`, "راتب موظف", confirmModal.name));
+      split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${confirmModal.name} — ${monthLabel(curYearMonth)}`, "راتب موظف", confirmModal.name, true));
       setEmployees(p => p.map(e => e.id === confirmModal.id ? { ...e, status: "paid" as const, paidDate, commission: paidCommission, netSalary: paidNet } : e));
       api.staff.employees.update(confirmModal.id, { status: "paid", paid_date: _localISO(), commission: paidCommission, net_salary: paidNet });
       if (consumedVoucherIds.length) {
@@ -13961,6 +13980,13 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
   const myDailyWagePay = isDailyWageSalary ? (staff.dailyWageAmount || 0) * myDaysWorked : 0;
   const rangeExpenseVouchers = myExpenseVouchers.filter(t => inRangeDDMMYYYY(t.date, payFrom, payTo));
   const rangePersonalExp = rangeExpenseVouchers.reduce((s, t) => s + t.amount, 0);
+  // ── لازم نحصر السلف بفترة القسيمة (payFrom/payTo) بالضبط — تماماً متل
+  //    الجلسات وسندات الصرف والحضور فوق. totalPending (كل السلف غير المسدَّدة
+  //    من أي تاريخ) مقصودة فقط كبطاقة معلوماتية عامة "كم سلفة عندي إجمالاً"،
+  //    مش لحساب صافي فترة محدَّدة — وإلا سلفة أُخذت بعد نهاية الفترة المطلوبة
+  //    كانت تظهر وتُخصم من قسيمة فترة ماضية أصلاً ما فيها هاي السلفة بعد. ──
+  const rangeAdvancesForPayslip = pendingAdv.filter(a => inRangeDDMMYYYY(a.date, payFrom, payTo));
+  const totalRangeAdvances = rangeAdvancesForPayslip.reduce((s, a) => s + a.amount, 0);
   // ── نفس منطق getShiftPay بشاشة الرواتب: أجر الساعة (قيمة الوردية ÷ مدتها)
   //    × مجموع الساعات الفعلية المسجَّلة بسجلات الدوام خلال الفترة المحدَّدة ──
   const shiftRate = isShiftSalary ? staffHourlyRate(staff) : 0;
@@ -13987,7 +14013,7 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
   const myClosedCurrentPeriod = isCurrentMonthRange ? myClosedPeriod(myYearMonth) : undefined;
   const netPayslip = myClosedCurrentPeriod
     ? myClosedCurrentPeriod.netAmount
-    : (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay + myDailyWagePay - rangePersonalExp - totalPending + carriedIn;
+    : (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay + myDailyWagePay - rangePersonalExp - totalRangeAdvances + carriedIn;
   // صافي شهر ماضٍ غير مُغلَق — نفس منطق computePeriodNet بشاشة الرواتب الإدارية.
   const myComputePeriodNet = (ym: string): number => {
     const closed = myClosedPeriod(ym);
@@ -14140,7 +14166,16 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
   //    الخادم بالكامل — بنفس تحويل شاشة الحضور الإدارية (handleSaveEdit). ──
   const attDateToApi = (d: string) => d.includes("/") ? d.split("/").reverse().join("-") : d;
   const submitSelfAttendance = () => {
-    const useDept = myAttDepts.length === 1 ? myAttDepts[0].id : attDept;
+    // ── موظف الورديات (salaryType === "shift") ما إله داعي يحدد قسم الجلسة
+    //    إطلاقاً — أجره بيُحسب من ساعات حضوره فقط (getShiftPay لا يفلتر إطلاقاً
+    //    حسب قسم سجل الحضور)، وصرفه بينقسم بالتساوي على كل الأقسام يلي حددها
+    //    المدير مسبقاً بحساب الموظف (payFromDepts)، بغض النظر أي قسم داوم فيه
+    //    فعلياً. فنسجّل القسم تلقائياً (بلا اختيار) لمجرد استيفاء عمود القسم
+    //    بالسجل، ونخلي الموظف يسجّل دخول/خروج بدون أي احتكاك إضافي. ──
+    const isShiftEmp = staff.salaryType === "shift";
+    const useDept = isShiftEmp
+      ? (staff.primaryDept || myAttDepts[0]?.id || (staff.payFromDepts || [])[0] || "")
+      : (myAttDepts.length === 1 ? myAttDepts[0].id : attDept);
     if (!useDept) { toast("اختر القسم", "error"); return; }
     if (!attForm.date || !attForm.checkIn || !attForm.checkOut) { toast("يرجى تحديد التاريخ وساعة البدء والانتهاء", "error"); return; }
     if (attFormDurationLabel === "—") { toast("وقت الدخول والخروج غير صالحين (تأكد أنهما ليسا نفس الوقت تماماً)", "error"); return; }
@@ -14276,7 +14311,7 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
           <button onClick={() => setShowMyBreakdown(v => !v)} className="text-xs font-semibold text-[#1B3A6B] hover:underline">{showMyBreakdown ? "إخفاء تفاصيل الاحتساب ▲" : "عرض تفاصيل الاحتساب ▼"}</button>
           {showMyBreakdown && (myClosedCurrentPeriod?.breakdown
             ? <SalaryBreakdownDetail {...(myClosedCurrentPeriod.breakdown as any)} />
-            : <SalaryBreakdownDetail isFixed={isFixSalary} fixedSalary={staff.fixedSalary || 0} deptRows={myBreakdownDeptRows} commissionTotal={commission} shift={myBreakdownShift} daily={myBreakdownDaily} vouchers={rangeExpenseVouchers.map(t => ({ id: t.id, title: t.title || "مصروف شخصي", date: t.date, amount: t.amount }))} advances={pendingAdv.map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }))} carriedIn={carriedIn} net={netPayslip} />
+            : <SalaryBreakdownDetail isFixed={isFixSalary} fixedSalary={staff.fixedSalary || 0} deptRows={myBreakdownDeptRows} commissionTotal={commission} shift={myBreakdownShift} daily={myBreakdownDaily} vouchers={rangeExpenseVouchers.map(t => ({ id: t.id, title: t.title || "مصروف شخصي", date: t.date, amount: t.amount }))} advances={rangeAdvancesForPayslip.map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }))} carriedIn={carriedIn} net={netPayslip} />
           )}
         </div>
       </Card>
@@ -14404,7 +14439,8 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
           ) : (
             <Card title="تسجيل حركة دوام جديدة">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {myAttDepts.length > 1 && (
+                {/* ── موظف الورديات ما بيختار قسم إطلاقاً — راجع تعليق submitSelfAttendance ── */}
+                {!isAttShift && myAttDepts.length > 1 && (
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-semibold text-[#555]">القسم <span className="text-[#D32F2F]">*</span></label>
                     <select value={attDept} onChange={e => setAttDept(e.target.value)}
@@ -18024,12 +18060,17 @@ export default function App() {
   //    صلّحناها) اختفت للأبد بصمت. الحل: لو فشلت الحركة فعلياً بالخادم، نتراجع
   //    فوراً عن التحديث المحلي المتفائل، ونعرض تنبيهاً واضحاً للمستخدم إن
   //    الحركة لم تُحفَظ ولازم يعيد المحاولة — بدل رصيد "شبح" يختفي بصمت لاحقاً ──
-  const doWithdraw = async (dept: string, amount: number, title: string, cat?: string, ben?: string): Promise<number | null> => {
+  // ── allowNegative: بعض السحوبات (تحديداً صرف الرواتب) لازم تنفَّذ كاملة حتى
+  //    لو رصيد صندوق القسم غير كافٍ — الراتب لازم يُصرف بالكامل، ويصير رصيد
+  //    الصندوق سالباً (دَين على القسم يُستعاد من إيراداته القادمة)، بدل ما
+  //    يُحجب الصرف بالكامل أو يتوزّع جزئياً بس. باقي أنواع السحب (مشتريات،
+  //    سندات صرف عامة...) تبقى محكومة بفحص الرصيد الافتراضي كما كان. ──
+  const doWithdraw = async (dept: string, amount: number, title: string, cat?: string, ben?: string, allowNegative: boolean = false): Promise<number | null> => {
     const currentBal = drawersRef.current[dept]?.balance ?? 0;
-    if (!drawersRef.current[dept] || currentBal < amount) return null;
+    if (!drawersRef.current[dept] || (!allowNegative && currentBal < amount)) return null;
     const _dt = _nowDT();
     const txId = Date.now();
-    setDrawers(d => { if (!d[dept] || d[dept].balance < amount) return d; const bal = d[dept].balance - amount; const tx: DrawerTx = { id: txId, type: "out", title, category: cat || "", beneficiary: ben, amount, balance: bal, time: _dt.time, date: _dt.date }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
+    setDrawers(d => { if (!d[dept] || (!allowNegative && d[dept].balance < amount)) return d; const bal = d[dept].balance - amount; const tx: DrawerTx = { id: txId, type: "out", title, category: cat || "", beneficiary: ben, amount, balance: bal, time: _dt.time, date: _dt.date }; return { ...d, [dept]: { balance: bal, txs: [tx, ...(d[dept]?.txs ?? [])] } }; });
     // Server ledger computes the authoritative balance; no client balance sent.
     try {
       const r: any = await api.drawers.transactions.create({ dept, type: "out", title, category: cat || "", beneficiary: ben, amount, tx_date: api.parseDateISO(_dt.date), tx_time: _dt.time });
