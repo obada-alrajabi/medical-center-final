@@ -890,6 +890,14 @@ pool
   .then(() => console.log("[migration] salary_periods table applied"))
   .catch((e) => console.error("[migration] salary_periods:", e.message));
 
+// ── لقطة "تفاصيل الاحتساب" الكاملة المُجمَّدة وقت صرف/إغلاق الراتب (fixedSalary,
+//    commissionTotal + deptRows, shift + rows, daily + dates, vouchers, advances,
+//    carriedIn, net) — تُخزَّن بصيغة JSON كاملة لتُعاد كما هي بلا أي إعادة احتساب
+//    حي لاحقاً (انظر buildBreakdown بـ App.tsx) ──
+pool.query(`ALTER TABLE salary_periods ADD COLUMN IF NOT EXISTS breakdown JSONB`)
+  .then(() => console.log("[migration] salary_periods.breakdown applied"))
+  .catch((e) => console.error("[migration] salary_periods.breakdown:", e.message));
+
 // ── "الأجر اليومي" (daily) redefinition: this salaryType used to behave
 //    identically to "percentage" (a % of the employee's own session revenue).
 //    It now means a FIXED per-day rate paid according to actual attendance

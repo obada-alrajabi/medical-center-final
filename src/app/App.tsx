@@ -55,6 +55,15 @@ import {
   Badge, KPICard, Modal, ConfirmModal, Card, InputField, Btn, ToastContainer,
   THead, TRow, TD, EmptyState, AccessDeniedScreen,
 } from "./components/shared";
+// ── حارس على مستوى الملف (module-level) — لا يمكن استخدام useRef هنا لأن
+//    saveStaff() موجودة بمكوّن StaffManagementScreen بينما استطلاع التحديث
+//    الدوري (_pollIv/_doLoad) موجود بمكوّن App() منفصل تماماً؛ متغيّر بسيط
+//    بمستوى الملف يشترك فيه الاثنان بدون الحاجة لتمرير props/refs عبر حدود
+//    المكوّنات. يُزاد عند بدء حفظ موظف (create/update) ويُنقص عند اكتمال
+//    الطلب (نجاحاً أو فشلاً)، ليتجنّب الاستطلاع الدوري إعادة تحميل بيانات
+//    قديمة فوق حفظ لسا عم يصير بنفس اللحظة (سباق كان يُرجع الراتب/الأجر
+//    المحفوظ حديثاً إلى صفر). ──
+let _savingStaffCount = 0;
 // ─── MOCK DATA ─────────────────────────────────────────────────────────────────
 
 // ── يوثّق بالضبط أي سجلات تانية بالنظام (جلسات مريض، صفوف ديون، أو فاتورة
@@ -2788,7 +2797,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
 
 // ─── NEW PATIENT ───────────────────────────────────────────────────────────────
 
-function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles, customDepts = [], inventory = [], setInventory, computeKitStatus, checkAndNotify, setRehabPlans, setRehabQueueEntries }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>; customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>; inventory?: typeof initialInventory; setInventory?: React.Dispatch<React.SetStateAction<typeof initialInventory>>; computeKitStatus?: (qty: number, threshold: number) => "ok" | "low" | "critical" | "empty"; checkAndNotify?: (itemName: string, dept: string, deptLabel: string, qty: number, threshold: number) => void; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>> }) {
+function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNavigate, radImages: radImagesP, insurances = [], setInvoices, diagnoses = [], setDiagnoses, loggedUser, drugs = [], setDrugs, rehabServices = [], labTests: labTestsP = [], setSessionFiles, customDepts = [], inventory = [], setInventory, computeKitStatus, checkAndNotify, setRehabPlans, setRehabQueueEntries, staffList = [] }: { dept: string; doDeposit: (dept: string, amount: number, title: string, type: string) => void; setSessions?: React.Dispatch<React.SetStateAction<PatientSession[]>>; setDebts?: React.Dispatch<React.SetStateAction<DebtRow[]>>; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; radImages?: RadImage[]; insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; loggedUser?: LoggedUser; drugs?: string[]; setDrugs?: React.Dispatch<React.SetStateAction<string[]>>; rehabServices?: RehabServiceItem[]; labTests?: LabTest[]; setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>; customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>; inventory?: typeof initialInventory; setInventory?: React.Dispatch<React.SetStateAction<typeof initialInventory>>; computeKitStatus?: (qty: number, threshold: number) => "ok" | "low" | "critical" | "empty"; checkAndNotify?: (itemName: string, dept: string, deptLabel: string, qty: number, threshold: number) => void; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>>; staffList?: StaffMember[] }) {
   // ── إيجاد بيانات القسم من الثابتة أو المخصصة — بدون هذا، أي قسم مخصص (كالاستقبال)
   //    كان يسقط احتياطياً على DEPARTMENTS[0] (الجراحة)، فيُسجَّل كل دين/جلسة لقسم
   //    مخصص باسم "الجراحة" خطأً ويتضخم صندوقها بأموال لا تخصه. ──
@@ -2797,6 +2806,14 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
   const isLab = dept === "lab";
   const isRad = dept === "radiology";
   const isRehab = dept === "rehab";
+  // ── تصحيح جوهري: نفس علة NewSessionScreen — لما المدير هو من يسجّل مريضاً
+  //    جديداً وينشئ جلسته الأولى، لازم يختار صراحة الموظف/الطبيب المسؤول
+  //    بدل ما يسقط اسم الجلسة احتياطياً على اسم القسم (deptInfo.short)، وإلا
+  //    تنكسر مطابقة العمولة بشاشة الرواتب لهذا الموظف. ──
+  const autoDoctorNP = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
+  const [doctor, setDoctor] = useState(autoDoctorNP);
+  const isAdminCreatorNP = loggedUser?.type !== "staff";
+  const doctorOptionsNP = staffList.filter(s => s.status === "active" && (s.primaryDept === dept || (s.assignedDepts || []).includes(dept)));
 
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -2979,12 +2996,13 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       const sessionDebt = Math.max(0, sessionNet - sessionPaid);
       if (sessionPaid > 0) doDeposit(dept, sessionPaid, `دفعة مريض — ${form.name}`, "إيراد مريض");
       if (setSessions && sessionTotal > 0) {
-        const autoDoc = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
         const deptInfo = findDeptInfo(dept);
-        // ── اسم الطبيب/الأخصائي المسؤول عن الجلسة لا يُدخَل يدوياً أبداً بأي قسم —
-        //    يُؤخذ تلقائياً من اسم الموظف المسجَّل دخوله بالحساب (نفس مبدأ باقي
-        //    الأقسام)، حتى تبقى نسبة الرواتب مربوطة بحساب حقيقي فعلاً نفّذ العمل. ──
-        const doctorName = autoDoc || deptInfo.short;
+        // ── اسم الطبيب/الأخصائي المسؤول عن الجلسة: يُؤخذ تلقائياً من اسم الموظف
+        //    المسجَّل دخوله بالحساب، أو من اختيار المدير الصريح عبر القائمة
+        //    المنسدلة بخطوة "التفاصيل المالية" (حقل doctor أصبح قابلاً للتعديل
+        //    فعلياً الآن — راجع تعريفه أعلى الملف). لا يُسمح بالسقوط على اسم
+        //    القسم بعد الآن حتى لا تنكسر مطابقة العمولة. ──
+        const doctorName = doctor.trim();
         const sessionDiag = isRehab
           ? [rehabDiagnosis].filter(Boolean)
           : selDiagIds.map(xid => availDiag.find(d => d.id === xid)?.name).filter(Boolean) as string[];
@@ -3623,6 +3641,21 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       {/* ── Step 3: Financial ── */}
       {step === 3 && (
         <Card title="التفاصيل المالية للكشفية">
+          {/* ── الموظف المسؤول عن الجلسة: تلقائي وغير قابل للتعديل للموظف نفسه،
+              أو اختيار صريح إلزامي للمدير من موظفي هذا القسم — بدون هذا كانت
+              الجلسات التي ينشئها المدير تُنسب خطأً لاسم القسم فتنكسر مطابقة
+              العمولة بشاشة الرواتب. ── */}
+          <div className="mb-4 flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-[#555]">الموظف/الطبيب المسؤول عن الجلسة {isAdminCreatorNP && <span className="text-[#D32F2F]">*</span>}</label>
+            {!isAdminCreatorNP ? (
+              <div className="h-10 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 200, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />{doctor}</div>
+            ) : (
+              <select value={doctor} onChange={e => setDoctor(e.target.value)} className="h-10 px-3 rounded-lg text-sm w-full sm:w-auto outline-none" style={{ border: `1px solid ${doctor.trim() ? "#CCCCCC" : "#D32F2F"}`, backgroundColor: "#FAFAFA", minWidth: 220 }}>
+                <option value="">اختر الموظف/الطبيب المسؤول...</option>
+                {doctorOptionsNP.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+              </select>
+            )}
+          </div>
           {isLab && selTests.length > 0 && <div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{ backgroundColor: "#E6F4F4", border: "1px solid #B2DFDB" }}><FlaskConical size={16} className="text-[#0D7377]" /><span className="text-sm text-[#0D7377]">إجمالي التحاليل المحددة: <strong>{fmt(testTotalNP)}</strong></span></div>}
           {isRehab && selRehabService && <div className="mb-4 p-3 rounded-xl flex items-center gap-3" style={{ backgroundColor: "#EBF3FB", border: "1px solid #BBDEFB" }}><Dumbbell size={16} className="text-[#1B3A6B]" /><span className="text-sm text-[#1B3A6B]">الخطة التأهيلية: <strong>{selRehabService.name}</strong> × {rehabSessionCount} جلسة = <strong>{fmt(rehabTotal)}</strong></span></div>}
           {insComp && insDiscPct > 0 && (
@@ -3657,7 +3690,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           {remaining > 0 && <p className="text-xs text-[#D32F2F] mt-2 p-2 bg-[#FFEBEE] rounded-lg">⚠️ {fmt(remaining)} سيُضاف كدين على المريض</p>}
           {remaining === 0 && (parseFloat(form.price) || 0) > 0 && <p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">✓ مسدد بالكامل</p>}
           {remaining < 0 && (parseFloat(form.price) || 0) > 0 && <p className="text-xs text-[#388E3C] mt-2 p-2 bg-[#E8F5E9] rounded-lg">رصيد لصالح المريض: {fmt(-remaining)} ₪ — لا يُسجَّل دين</p>}
-          <div className="flex justify-between mt-6"><Btn variant="outline" onClick={() => setStep(2)}><ChevronDown className="rotate-90" size={16} />رجوع للتشخيص والعلاج</Btn><Btn variant="success" loading={saving} onClick={() => { if (v2()) handleSave(); }}><Save size={16} />حفظ الجلسة</Btn></div>
+          <div className="flex justify-between mt-6"><Btn variant="outline" onClick={() => setStep(2)}><ChevronDown className="rotate-90" size={16} />رجوع للتشخيص والعلاج</Btn><Btn variant="success" loading={saving} onClick={() => { if (isAdminCreatorNP && !doctor.trim()) { toast("يجب اختيار الموظف/الطبيب المسؤول عن الجلسة", "error"); return; } if (v2()) handleSave(); }}><Save size={16} />حفظ الجلسة</Btn></div>
         </Card>
       )}
     </div>
@@ -4693,7 +4726,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
 
 // ─── NEW SESSION ────────────────────────────────────────────────────────────────
 
-function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs, setSessionFiles, customDepts = [], insurances = [], setInvoices }: {
+function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, setDebts, debts, toast, onNavigate, diagnoses, setDiagnoses, loggedUser, drugs = [], setDrugs, setSessionFiles, customDepts = [], insurances = [], setInvoices, staffList = [] }: {
   dept: string; patientId: string; sessions: PatientSession[]; setSessions: React.Dispatch<React.SetStateAction<PatientSession[]>>;
   doDeposit: (dept: string, amount: number, title: string, type: string) => void; setDebts: React.Dispatch<React.SetStateAction<DebtRow[]>>;
   debts: DebtRow[]; toast: (m: string, t?: any) => void; onNavigate: (r: Route) => void; diagnoses: DiagnosisEntry[]; setDiagnoses: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>;
@@ -4701,6 +4734,7 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   setSessionFiles?: React.Dispatch<React.SetStateAction<Record<number, any[]>>>;
   customDepts?: Array<{ id: string; name: string; short: string; iconId?: string }>;
   insurances?: InsuranceCo[]; setInvoices?: React.Dispatch<React.SetStateAction<Invoice[]>>;
+  staffList?: StaffMember[];
 }) {
   const p = mockPatients.find(x => x.id === patientId) || mockPatients[0];
   // ── نفس إصلاح NewPatientScreen: قسم مخصص يجب ألا يسقط احتياطياً على "الجراحة" ──
@@ -4709,6 +4743,13 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   const today = _today();
   const autoDoctor = loggedUser?.type === "staff" ? loggedUser.staff.name : "";
   const [doctor, setDoctor] = useState(autoDoctor);
+  // ── تصحيح جوهري: لما المدير (وليس الموظف نفسه) هو من يفتح شاشة "جلسة جديدة"،
+  //    ما كان في أي واجهة لاختيار الموظف/الطبيب الفعلي — الحقل doctor كان يضل
+  //    فاضياً ويسقط لاحقاً وقت الحفظ على اسم القسم (deptInfo.short) بدل اسم
+  //    موظف حقيقي، وهذا يكسر مطابقة العمولة بشاشة الرواتب (تطابق نصي s.doctor
+  //    === e.name). هلق لازم المدير يختار موظفاً من قائمة موظفي هذا القسم. ──
+  const isAdminCreator = loggedUser?.type !== "staff";
+  const doctorOptions = staffList.filter(s => s.status === "active" && (s.primaryDept === dept || (s.assignedDepts || []).includes(dept)));
   const [notes, setNotes] = useState("");
   const [selDiag, setSelDiag] = useState<string[]>([]);
   const [diagSearch, setDiagSearch] = useState("");
@@ -4800,6 +4841,7 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
   const handleSave = () => {
     const today = _today();
     if (totalAmt <= 0) { toast("أدخل مبلغ الجلسة", "error"); return; }
+    if (isAdminCreator && !doctor.trim()) { toast("يجب اختيار الموظف/الطبيب المسؤول عن الجلسة", "error"); return; }
     setSaving(true);
     if (paidAmt > 0) doDeposit(dept, paidAmt, `دفعة مريض — ${p.name}`, "إيراد مريض");
     // تصحيح: dept لازم يكون deptInfo.id (رمز إنجليزي مطابق لـ departments.id) لا deptInfo.short (اسم عربي) — نفس علة باقي شاشات الجلسات
@@ -4810,9 +4852,9 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
       setInvoices(p2 => [...p2, { id: insId, company: insComp.name, companyId: insComp?.id, date: today, total: insDiscAmt, paid: 0, remaining: insDiscAmt, status: "unpaid" as const, dept, claimNo: insClaimNo.trim() || undefined, patientId: p.id, patientName: p.name }]);
       api.finance.invoices.create({ id: insId, company: insComp.name, company_id: insComp?.id, date: api.parseDateISO(today), total: insDiscAmt, paid: 0, status: "unpaid", dept, claim_no: insClaimNo.trim() || null, patient_id: p.id, patient_name: p.name });
     }
-    const ns: PatientSession = { id: Date.now(), patientId: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: today, diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, labRefs, radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt };
+    const ns: PatientSession = { id: Date.now(), patientId: p.id, dept, doctor: doctor.trim(), date: today, diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, labRefs, radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt };
     setSessions(prev => [ns, ...prev]);
-    api.sessions.create({ patient_id: p.id, dept, doctor: doctor.trim() || deptInfo.short, date: api.parseDateISO(today), diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, lab_refs: labRefs, rad_refs: radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt }).then((r: any) => {
+    api.sessions.create({ patient_id: p.id, dept, doctor: doctor.trim(), date: api.parseDateISO(today), diagnoses: selDiag, medications: meds.filter(m => m.name.trim()), notes, lab_refs: labRefs, rad_refs: radRefs, amount: netAmt, paid: paidAmt, debt: debtAmt }).then((r: any) => {
       if (r && r.id) {
         setSessions(prev => prev.map(s => s.id === ns.id ? { ...s, id: r.id } : s));
         if (pendingFiles.length > 0) {
@@ -4907,9 +4949,18 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 text-sm text-[#555]"><Calendar size={14} /><span>{today}</span><span className="text-[#CCC]">·</span><span className="font-medium text-[#1B3A6B]">{deptInfo.short}</span></div>
-          {/* ── اسم الطبيب/المسؤول عن الجلسة لا يُدخَل يدوياً — يُؤخذ تلقائياً من
-              الموظف المسجَّل دخوله بالحساب (يُستخدم لاحتساب نسبته من الرواتب). ── */}
-          <div className="h-8 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 160, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />{doctor}</div>
+          {/* ── الموظف المسجَّل دخوله بحسابه الشخصي: اسمه تلقائي وغير قابل للتعديل
+              (يُستخدم لاحتساب نسبته من الرواتب). أما المدير فيختار صراحة الموظف/
+              الطبيب المسؤول عن الجلسة من قائمة موظفي هذا القسم — بدون هذا الاختيار
+              كانت الجلسة تُنسب خطأً لاسم القسم نفسه، ما يكسر مطابقة العمولة. ── */}
+          {!isAdminCreator ? (
+            <div className="h-8 px-3 rounded-lg text-sm flex items-center gap-1.5 text-[#1B3A6B] font-medium w-full sm:w-auto" style={{ border: "1px solid #E0E0E0", minWidth: 160, backgroundColor: "#F5F5F5" }}><Users size={13} className="text-[#999]" />الطبيب/الموظف: {doctor}</div>
+          ) : (
+            <select value={doctor} onChange={e => setDoctor(e.target.value)} className="h-8 px-3 rounded-lg text-sm w-full sm:w-auto outline-none" style={{ border: `1px solid ${doctor.trim() ? "#E0E0E0" : "#D32F2F"}`, minWidth: 180 }}>
+              <option value="">اختر الموظف/الطبيب المسؤول...</option>
+              {doctorOptions.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+            </select>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
@@ -9667,7 +9718,14 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   // ── الصافي الحي للشهر الحالي يجب أن يشمل أيضاً أي "دين مرحّل" من شهر سابق
   //    أُغلق بحالة "إقرار دين" (net سالب) — تماماً كما يُحتسب بـ computePeriodNet
   //    للأشهر الماضية، وإلا كان الشهر الحالي يتجاهل ديناً معترفاً به رسمياً ──
-  const calcNet = (e: Employee) => e.salary + getCommission(e) + getShiftPay(e, curMonthStart, curMonthEnd) + getDailyWagePay(e, curMonthStart.slice(0, 7)) - getExpenses(e) - getTotalAdvances(e) + getCarriedIn(e, curMonthStart.slice(0, 7));
+  const calcNet = (e: Employee) => {
+    // ── لو الشهر الحالي مُصرَف/مُغلَق فعلاً (سجل salary_periods موجود له)،
+    //    نُرجع الصافي المُجمَّد وقت الصرف بدل إعادة احتسابه حياً — وإلا كان
+    //    الصافي المعروض يرتفع فور استهلاك أي سند/سلفة تابعة له (البند 4b) ──
+    const closed = getClosedPeriod(e, curYearMonth);
+    if (closed) return closed.netAmount;
+    return e.salary + getCommission(e) + getShiftPay(e, curMonthStart, curMonthEnd) + getDailyWagePay(e, curMonthStart.slice(0, 7)) - getExpenses(e) - getTotalAdvances(e) + getCarriedIn(e, curMonthStart.slice(0, 7));
+  };
   // If the employee's payroll config lists more than one drawer to deduct from, split the net
   // salary proportionally to how much revenue he actually generated in each of those departments.
   // Falls back to a single-department withdrawal (unchanged legacy behavior) otherwise.
@@ -9840,6 +9898,13 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   //    getCommission/getShiftPay/getUnappliedVouchers/getTotalAdvances تماماً
   //    (وليس نسخة موازية قد تنحرف عن الرقم الإجمالي المعروض بالجدول) ──
   const buildBreakdown = (e: Employee, ym: string) => {
+    // ── لو الشهر مُغلَق مسبقاً (صرف فوري أو إغلاق مستحقات) ومعه لقطة مُجمَّدة
+    //    (breakdown)، نُرجعها كما هي حرفياً بدل إعادة الاحتساب الحي — وإلا
+    //    كانت "تفاصيل الاحتساب" تنجرف فور استهلاك أي سند/سلفة تابعة لها (البند
+    //    4a بالمواصفة). سجلات إغلاق قديمة بلا breakdown (قبل هذا الإصلاح)
+    //    تتساقط بهدوء إلى الاحتساب الحي أدناه (تدهور سلوك متوقَّع، ليس عطلاً) ──
+    const closedForBreakdown = getClosedPeriod(e, ym);
+    if (closedForBreakdown && closedForBreakdown.breakdown) return closedForBreakdown.breakdown as any;
     const sm = getStaffMember(e);
     const { start, end } = ym === curYearMonth ? { start: curMonthStart, end: curMonthEnd } : monthBounds(ym);
     const isFixed = !sm || sm.salaryType === "fixed" || sm.salaryType === "both";
@@ -9884,6 +9949,12 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const net = computePeriodNet(e, ym);
     const { start, end } = monthBounds(ym);
     const closedDate = _localISO();
+    // ── لقطة "تفاصيل الاحتساب" الكاملة تُبنى الآن *قبل* تعليم أي سند/سلفة
+    //    "مُستهلَكة" — بما أن هذا الشهر (e, ym) غير مُغلَق بعد بهذه اللحظة
+    //    بالضبط (سجل salary_periods عنه لم يُنشأ إطلاقاً)، buildBreakdown يقع
+    //    مباشرة على فرع الاحتساب الحي فيُنتج لقطة دقيقة من البيانات غير
+    //    المُستهلَكة بعد (انظر البندين 4d/4e بالمواصفة) ──
+    const breakdownSnapshot = buildBreakdown(e, ym);
     const consumedVoucherIds = getVouchersForRange(e, start, end).map((v: any) => v.id);
     const consumedAdvanceIds = getAdvancesForRange(e, start, end).map(a => a.id);
     const applyConsumption = () => {
@@ -9898,12 +9969,13 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
       }
     };
     const persistPeriod = (status: "paid" | "debt_acknowledged") => {
-      api.staff.salaryPeriods.create({ employee_id: e.id, staff_id: e.staffId ?? null, year_month: ym, net_amount: net, status, closed_date: closedDate, carried_in: getCarriedIn(e, ym) })
+      api.staff.salaryPeriods.create({ employee_id: e.id, staff_id: e.staffId ?? null, year_month: ym, net_amount: net, status, closed_date: closedDate, carried_in: getCarriedIn(e, ym), breakdown: breakdownSnapshot })
         .then((r: any) => {
           if (!r) return;
           setSalaryPeriods?.(p => p.some(x => x.id === Number(r.id)) ? p : [...p, {
             id: Number(r.id), employeeId: Number(r.employee_id), staffId: r.staff_id != null ? Number(r.staff_id) : null,
             yearMonth: r.year_month, netAmount: Number(r.net_amount) || 0, status: r.status, closedDate: r.closed_date || closedDate, carriedIn: Number(r.carried_in) || 0,
+            breakdown: r.breakdown ?? breakdownSnapshot,
           }]);
         }).catch(() => { });
     };
@@ -9942,12 +10014,20 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const consumedAdvanceIds = getTotalAdvances(confirmModal) > 0
       ? employeeAdvances.filter(a => (a.staffId != null && confirmModal.staffId != null ? a.staffId === confirmModal.staffId : a.empName === confirmModal.name) && !a.repaid).map(a => a.id)
       : [];
+    // ── لقطة "تفاصيل الاحتساب" الكاملة تُبنى الآن *قبل* أي تعليم استهلاك —
+    //    نفس لحظة الأرقام المعروضة فعلياً للمستخدم وقت تأكيد الصرف. الشهر
+    //    الحالي لهذا الموظف غير مُغلَق بعد بهذه اللحظة (لا سجل salary_periods
+    //    له)، فـ buildBreakdown يقع على الفرع الحي فيُنتج لقطة دقيقة من
+    //    السندات/السلف غير المُستهلَكة بعد (انظر البندين 4c/4e بالمواصفة) ──
+    const breakdownSnapshot = buildBreakdown(confirmModal, curYearMonth);
+    const paidNet = breakdownSnapshot.net;
+    const paidCommission = getCommission(confirmModal);
     setPaying(true);
     setTimeout(() => {
       const paidDate = _today();
       split.filter(p => p.amount > 0).forEach(p => doWithdraw(p.dept, p.amount, `راتب ${confirmModal.name} — ${monthLabel(curYearMonth)}`, "راتب موظف", confirmModal.name));
-      setEmployees(p => p.map(e => e.id === confirmModal.id ? { ...e, status: "paid" as const, paidDate } : e));
-      api.staff.employees.update(confirmModal.id, { status: "paid", paid_date: _localISO(), commission: getCommission(confirmModal), net_salary: calcNet(confirmModal) });
+      setEmployees(p => p.map(e => e.id === confirmModal.id ? { ...e, status: "paid" as const, paidDate, commission: paidCommission, netSalary: paidNet } : e));
+      api.staff.employees.update(confirmModal.id, { status: "paid", paid_date: _localISO(), commission: paidCommission, net_salary: paidNet });
       if (consumedVoucherIds.length) {
         setPaymentVouchers?.(p => p.map((v: any) => consumedVoucherIds.includes(v.id) ? { ...v, applied_to_payroll: true } : v));
         consumedVoucherIds.forEach(vid => api.finance.paymentVouchers.update(vid, { applied_to_payroll: true }).catch(() => { }));
@@ -9957,6 +10037,22 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
         setEmployeeAdvances?.(p => p.map(a => consumedAdvanceIds.includes(a.id) ? { ...a, repaid: true, repaidDate: rDate } : a));
         consumedAdvanceIds.forEach(aid => api.staff.advances.update(aid, { repaid: true, repaid_date: rDate }).catch(() => { }));
       }
+      // ── نجمّد سجل "فترة راتب" لهذا الشهر أيضاً — آلية الصرف الفوري (بعكس
+      //    إغلاق الأشهر الماضية handleClosePeriod) كانت لا تُنشئ أي سجل
+      //    salary_periods إطلاقاً، فتبقى تفاصيل/صافي الشهر الحالي "حية"
+      //    وتنجرف بعد الصرف فور استهلاك السندات/السلف (البند 4c بالمواصفة) ──
+      api.staff.salaryPeriods.create({
+        employee_id: confirmModal.id, staff_id: confirmModal.staffId ?? null, year_month: curYearMonth,
+        net_amount: paidNet, status: "paid", closed_date: _localISO(), carried_in: breakdownSnapshot.carriedIn,
+        breakdown: breakdownSnapshot,
+      }).then((r: any) => {
+        if (!r) return;
+        setSalaryPeriods?.(p => p.some(x => x.id === Number(r.id)) ? p : [...p, {
+          id: Number(r.id), employeeId: Number(r.employee_id), staffId: r.staff_id != null ? Number(r.staff_id) : null,
+          yearMonth: r.year_month, netAmount: Number(r.net_amount) || 0, status: r.status, closedDate: r.closed_date || paidDate,
+          carriedIn: Number(r.carried_in) || 0, breakdown: r.breakdown ?? breakdownSnapshot,
+        }]);
+      }).catch(() => { });
       setPaying(false); setConfirmModal(null);
       toast(split.length > 1 ? `تم صرف راتب ${confirmModal.name} ✓ — مقسّم على ${split.length} صناديق أقسام` : `تم صرف راتب ${confirmModal.name} ✓ — خُصم من صندوق القسم`);
     }, 700);
@@ -12903,18 +12999,22 @@ function StaffManagementScreen({
       setStaffList(p => [...p, { ...form2, id: tempId }]);
       // After DB insert returns the real auto-increment ID, replace tempId in-memory
       // so that subsequent permission saves use the correct staff_id.
+      _savingStaffCount++;
       (api.staff.create({ name: form2.name, national_id: form2.nationalId, dob: form2.dob ? api.parseDateISO(form2.dob) : null, username: form2.username, password_hash: form2.password, job_title: form2.jobTitle, primary_dept: form2.primaryDept, assigned_depts: JSON.stringify(form2.assignedDepts || []), phone: form2.phone, role: form2.role, salary_type: form2.salaryType, fixed_salary: form2.fixedSalary, percentage_dept: form2.percentageDept, percentage_depts: JSON.stringify(form2.percentageDepts || []), pay_from_depts: JSON.stringify(form2.payFromDepts || []), percentage_value: form2.percentageValue, shift_start: form2.shiftStart, shift_end: form2.shiftEnd, shift_amount: form2.shiftAmount, daily_wage_amount: form2.dailyWageAmount ?? null, status: form2.status, join_date: form2.joinDate ? api.parseDateISO(form2.joinDate) : null, notes: form2.notes, can_access_financial: form2.canAccessFinancial, can_access_settings: form2.canAccessSettings, can_access_reports: form2.canAccessReports, can_manage_staff: form2.canManageStaff, is_admin_role: form2.isAdminRole, can_attendance: form2.canAttendance }) as Promise<any>)
         .then((created: any) => {
           if (created?.id && created.id !== tempId) setStaffList(p => p.map(s => s.id === tempId ? { ...s, id: created.id } : s));
           refreshEmployees();
         })
-        .catch(() => { });
+        .catch(() => { })
+        .finally(() => { _savingStaffCount = Math.max(0, _savingStaffCount - 1); });
       toast("تم إضافة الموظف بنجاح", "success");
     } else {
       setStaffList(p => p.map(s => s.id === form2.id ? { ...form2 } : s));
+      _savingStaffCount++;
       api.staff.update(form2.id, { name: form2.name, national_id: form2.nationalId, dob: form2.dob ? api.parseDateISO(form2.dob) : null, username: form2.username, password_hash: form2.password, job_title: form2.jobTitle, primary_dept: form2.primaryDept, assigned_depts: JSON.stringify(form2.assignedDepts || []), phone: form2.phone, role: form2.role, salary_type: form2.salaryType, fixed_salary: form2.fixedSalary, percentage_dept: form2.percentageDept, percentage_depts: JSON.stringify(form2.percentageDepts || []), pay_from_depts: JSON.stringify(form2.payFromDepts || []), percentage_value: form2.percentageValue, shift_start: form2.shiftStart, shift_end: form2.shiftEnd, shift_amount: form2.shiftAmount, daily_wage_amount: form2.dailyWageAmount ?? null, status: form2.status, join_date: form2.joinDate ? api.parseDateISO(form2.joinDate) : null, notes: form2.notes, can_access_financial: form2.canAccessFinancial, can_access_settings: form2.canAccessSettings, can_access_reports: form2.canAccessReports, can_manage_staff: form2.canManageStaff, is_admin_role: form2.isAdminRole, can_attendance: form2.canAttendance })
         .then(() => refreshEmployees())
-        .catch(() => { });
+        .catch(() => { })
+        .finally(() => { _savingStaffCount = Math.max(0, _savingStaffCount - 1); });
       toast("تم حفظ التعديلات بنجاح", "success");
     }
     setTab("list");
@@ -13873,7 +13973,14 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
   const myCarriedIn = (ym: string): number => { const prev = myClosedPeriod(prevYearMonthOf(ym)); return prev && prev.status === "debt_acknowledged" ? prev.netAmount : 0; };
   const isCurrentMonthRange = payFrom === curMonthStartISO && payTo === curMonthEndISO;
   const carriedIn = isCurrentMonthRange ? myCarriedIn(myYearMonth) : 0;
-  const netPayslip = (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay + myDailyWagePay - rangePersonalExp - totalPending + carriedIn;
+  // ── لو الشهر الحالي مُصرَف/مُغلَق فعلاً (سجل salary_periods موجود له)،
+  //    نُرجع الصافي المُجمَّد وقت الصرف بدل إعادة احتسابه حياً — نفس إصلاح
+  //    calcNet بشاشة الرواتب الإدارية (PayrollScreen)، مُطبَّق هنا بقراءة
+  //    فقط بما أن هذه الشاشة لا تُنشئ سجلات إغلاق بنفسها (البند 5 بالمواصفة) ──
+  const myClosedCurrentPeriod = isCurrentMonthRange ? myClosedPeriod(myYearMonth) : undefined;
+  const netPayslip = myClosedCurrentPeriod
+    ? myClosedCurrentPeriod.netAmount
+    : (isFixSalary ? (staff.fixedSalary || 0) : 0) + commission + shiftPay + myDailyWagePay - rangePersonalExp - totalPending + carriedIn;
   // صافي شهر ماضٍ غير مُغلَق — نفس منطق computePeriodNet بشاشة الرواتب الإدارية.
   const myComputePeriodNet = (ym: string): number => {
     const closed = myClosedPeriod(ym);
@@ -13943,19 +14050,24 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
     const amt = parseFloat(advAmount) || 0;
     if (amt <= 0) { toast("أدخل مبلغ السلفة", "error"); return; }
     if (!advReason.trim()) { toast("أدخل سبب طلب السلفة", "error"); return; }
-    onSubmitStaffAdvanceRequest({ staffId: staff.id, staffName: staff.name, dept: staff.primaryDept || "", amount: amt, date: _today(), reason: advReason });
+    onSubmitStaffAdvanceRequest({ staffId: Number(staff.id), staffName: staff.name, dept: staff.primaryDept || "", amount: amt, date: _today(), reason: advReason });
     setShowAdvModal(false); setAdvAmount(""); setAdvReason("");
     toast("تم إرسال طلب السلفة للمدير بنجاح ✓", "success");
   };
 
-  // ── تسجيل حضور ذاتي من "حسابي المالي" — نفس منطق النموذج غير الإداري
-  //    بشاشة AttendanceScreen (dept محدد مسبقاً هناك)، لكن هذه الشاشة لا
-  //    ترتبط بقسم واحد (activeDept غير معرَّف هنا)، فنضيف اختيار قسم من
-  //    ضمن الأقسام التي يملك الموظف صلاحية تسجيل الحضور فيها فقط ──
-  const myAttDepts = [...DEPARTMENTS, ...customDepts].filter(d => {
-    const p = staff.deptPermissions?.[d.id];
-    return !!p?.canAttendanceDept && staff.canAttendance && p?.canAttendanceMark !== false;
-  });
+  // ── تسجيل حضور ذاتي من "حسابي المالي" — تصحيح جوهري: كانت هذه القائمة
+  //    مبنية على صلاحيات "إدارة حضور القسم" (canAttendanceDept/canAttendance)،
+  //    وهي صلاحيات مخصصة لمن يُدير سجلات حضور *غيره* (مشرف/موارد بشرية)، وليست
+  //    مرتبطة إطلاقاً بتسجيل الموظف لساعات عمله *هو نفسه* لاحتساب راتبه. موظف
+  //    الشيفت العادي يلي ما أُعطي هذه الصلاحية كان يشوف القائمة فاضية تماماً
+  //    ولا يقدر يسجّل حضوره الذاتي إطلاقاً. هلق القائمة مبنية على أقسام صرف
+  //    راتبه الفعلية (payFromDepts) — وهذا دائماً متاح له بغض النظر عن أي
+  //    صلاحية إدارة حضور منفصلة. صلاحيات canAttendanceDept/canAttendance تبقى
+  //    كما هي بلا أي تغيير بباقي الشاشة (AttendanceScreen الإدارية). ──
+  const myAttDeptIds = (staff.payFromDepts && staff.payFromDepts.length > 0)
+    ? staff.payFromDepts
+    : [staff.primaryDept].filter(Boolean);
+  const myAttDepts = [...DEPARTMENTS, ...customDepts].filter(d => myAttDeptIds.includes(d.id));
   const DAYS_AR_SELF = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
   const todayObjSelf = new Date();
   const todayDateSelf = todayObjSelf.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -14098,7 +14210,10 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
             <span className="text-lg font-bold" style={{ color: netPayslip < 0 ? "#C62828" : "#2E7D32" }}>{fmt(netPayslip)}</span>
           </div>
           <button onClick={() => setShowMyBreakdown(v => !v)} className="text-xs font-semibold text-[#1B3A6B] hover:underline">{showMyBreakdown ? "إخفاء تفاصيل الاحتساب ▲" : "عرض تفاصيل الاحتساب ▼"}</button>
-          {showMyBreakdown && <SalaryBreakdownDetail isFixed={isFixSalary} fixedSalary={staff.fixedSalary || 0} deptRows={myBreakdownDeptRows} commissionTotal={commission} shift={myBreakdownShift} daily={myBreakdownDaily} vouchers={rangeExpenseVouchers.map(t => ({ id: t.id, title: t.title || "مصروف شخصي", date: t.date, amount: t.amount }))} advances={pendingAdv.map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }))} carriedIn={carriedIn} net={netPayslip} />}
+          {showMyBreakdown && (myClosedCurrentPeriod?.breakdown
+            ? <SalaryBreakdownDetail {...(myClosedCurrentPeriod.breakdown as any)} />
+            : <SalaryBreakdownDetail isFixed={isFixSalary} fixedSalary={staff.fixedSalary || 0} deptRows={myBreakdownDeptRows} commissionTotal={commission} shift={myBreakdownShift} daily={myBreakdownDaily} vouchers={rangeExpenseVouchers.map(t => ({ id: t.id, title: t.title || "مصروف شخصي", date: t.date, amount: t.amount }))} advances={pendingAdv.map(a => ({ id: a.id, date: a.date, note: a.note || "سلفة موظف", amount: a.amount }))} carriedIn={carriedIn} net={netPayslip} />
+          )}
         </div>
       </Card>
 
@@ -14136,7 +14251,21 @@ function MyFinancialAccountScreen({ staff, employeeAdvances, attendance, setAtte
         )}
       </Card>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className={`grid gap-3 ${myPendingDues.length > 0 ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3"}`}>
+        {/* ── إجمالي مستحقاتي من أشهر سابقة — كانت الشاشة تعرض جدول مستحقات
+            الأشهر السابقة (أسفل الصفحة) بدون أي بطاقة ملخّص لإجمالي المبلغ،
+            بعكس شاشة الرواتب الإدارية (PayrollScreen) التي فيها بطاقة "الرواتب
+            المستحقة" مكافئة. نفس الفكرة هون لكن لحساب الموظف نفسه فقط. ── */}
+        {myPendingDues.length > 0 && (() => {
+          const totalMyPendingDues = myPendingDues.reduce((s, d) => s + d.net, 0);
+          return (
+            <div className="bg-white rounded-xl p-4 text-center" style={{ border: totalMyPendingDues < 0 ? "1px solid #FFCDD2" : "1px solid #BEDCF5" }}>
+              <p className="text-xs text-[#999] mb-1">الرواتب المستحقة</p>
+              <p className={`text-xl font-bold ${totalMyPendingDues < 0 ? "text-[#D32F2F]" : "text-[#1B3A6B]"}`}>{fmt(totalMyPendingDues)}</p>
+              <p className="text-xs text-[#999]">{myPendingDues.length} شهر</p>
+            </div>
+          );
+        })()}
         <div className="bg-white rounded-xl p-4 text-center" style={{ border: "1px solid #FFCDD2" }}>
           <p className="text-xs text-[#999] mb-1">سلف معلقة</p>
           <p className="text-xl font-bold text-[#D32F2F]">{fmt(totalPending)}</p>
@@ -14369,7 +14498,7 @@ function StaffAdvanceRequestScreen({ staff, activeDept, deptName, staffAdvanceRe
     const amt = parseFloat(amount) || 0;
     if (amt <= 0) { toast("أدخل مبلغ السلفة", "error"); return; }
     if (!reason.trim()) { toast("أدخل سبب طلب السلفة", "error"); return; }
-    onSubmitStaffAdvanceRequest({ staffId: staff.id, staffName: staff.name, dept: activeDept || staff.primaryDept || "", amount: amt, date: _today(), reason: reason.trim() });
+    onSubmitStaffAdvanceRequest({ staffId: Number(staff.id), staffName: staff.name, dept: activeDept || staff.primaryDept || "", amount: amt, date: _today(), reason: reason.trim() });
     setAmount(""); setReason("");
     toast("تم إرسال طلب السلفة للمدير بنجاح ✓", "success");
   };
@@ -16349,7 +16478,7 @@ function LoginScreen({ onLogin, staffList, adminAccounts = [] }: { onLogin: (use
         if (staffRes && !("error" in (staffRes as any))) {
           const s = staffRes as any;
           if (s.token) setAdminToken(s.token);
-          const staffObj: StaffMember = { id: s.id, name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, dailyWageAmount: Number(s.daily_wage_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) };
+          const staffObj: StaffMember = { id: Number(s.id), name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, dailyWageAmount: Number(s.daily_wage_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) };
           onLogin(staffObj.isAdminRole ? { type: "admin", adminName: staffObj.name } : { type: "staff", staff: staffObj }); return;
         }
       } catch { }
@@ -17419,9 +17548,10 @@ export default function App() {
     if (req) {
       const targetDept = req.dept || "surgery";
       doWithdraw(targetDept, req.amount, `سلفة موظف — ${req.staffName}`, "سلف موظفين", req.staffName);
-      const newAdv: EmployeeAdvance = { id: Date.now(), staffId: req.staffId, empName: req.staffName, dept: targetDept, amount: req.amount, date: rDate, note: req.reason, repaid: false };
+      const reqStaffId = req.staffId != null ? Number(req.staffId) : null;
+      const newAdv: EmployeeAdvance = { id: Date.now(), staffId: reqStaffId, empName: req.staffName, dept: targetDept, amount: req.amount, date: rDate, note: req.reason, repaid: false };
       setEmployeeAdvances(p => [newAdv, ...p]);
-      api.staff.advances.create({ emp_name: req.staffName, staff_id: req.staffId, dept: targetDept, amount: req.amount, date: api.parseDateISO(rDate), note: req.reason, repaid: false }).then(r => { if (r && (r as any).id) setEmployeeAdvances(p => p.map(a => a.id === newAdv.id ? { ...a, id: (r as any).id } : a)); }).catch(() => { });
+      api.staff.advances.create({ emp_name: req.staffName, staff_id: reqStaffId, dept: targetDept, amount: req.amount, date: api.parseDateISO(rDate), note: req.reason, repaid: false }).then(r => { if (r && (r as any).id) setEmployeeAdvances(p => p.map(a => a.id === newAdv.id ? { ...a, id: (r as any).id } : a)); }).catch(() => { });
     }
     setStaffAdvanceRequests(p => p.map(r => r.id === id ? { ...r, status: "approved", reviewedBy: "المدير", reviewDate: rDate } : r));
     api.staff.advanceRequests.review(id, { status: "approved", reviewed_by: "المدير", review_date: api.parseDateISO(rDate) });
@@ -17708,7 +17838,10 @@ export default function App() {
     //    بين عدة مستخدمين بدون إغراق السيرفر بمعدل 29 طلب/ثانية ──
     const _pollIv = setInterval(() => {
       const _t = (document.activeElement?.tagName || "").toLowerCase();
-      if (_t !== "input" && _t !== "textarea" && _t !== "select") _doLoad().catch(() => { });
+      // ── إضافة "_savingStaffCount > 0" لمنع الاستطلاع الدوري من إعادة تحميل
+      //    بيانات قديمة فوق حفظ موظف لسا عم يصير بنفس اللحظة (راجع تعريف
+      //    _savingStaffCount أعلى الملف) — نفس فكرة تخطي الحقول المركّزة. ──
+      if (_t !== "input" && _t !== "textarea" && _t !== "select" && _savingStaffCount <= 0) _doLoad().catch(() => { });
     }, 15000);
     return () => clearInterval(_pollIv);
   }, []);
@@ -18157,7 +18290,7 @@ export default function App() {
   );
   if (!loggedUser) return <LoginScreen staffList={staffList} adminAccounts={adminAccounts} onLogin={(u) => { setLoggedUser(u); }} />;
 
-  const liveStaff = loggedUser.type === "staff" ? (staffList.find(s => s.id === loggedUser.staff.id) || loggedUser.staff) : null;
+  const liveStaff = loggedUser.type === "staff" ? (staffList.find(s => Number(s.id) === Number(loggedUser.staff.id)) || loggedUser.staff) : null;
   if (loggedUser.type === "staff" && liveStaff) return (
     <StaffPortal
       staff={liveStaff}
@@ -18232,8 +18365,8 @@ export default function App() {
     switch (route.screen) {
       case "dashboard": return <DashboardScreen drawers={drawers} debts={debts} invoices={invoices} purchaseRequests={purchaseRequests} onNavigate={setRoute} customDepts={customDepts} sessions={sessions} deptCapacity={sidebarSettings.deptCapacity} receiptVouchers={receiptVouchersGlobal} paymentVouchers={paymentVouchersGlobal} employeeAdvances={employeeAdvances} externalDebts={externalDebts} />;
       case "open-patient": return <OpenPatientScreen dept={dept} onNavigate={setRoute} sessions={sessions} debts={debts} customDepts={customDepts} loggedUser={loggedUser} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} deletedPatientIds={deletedPatientIds} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} diagnoses={diagnoses} setDiagnoses={setDiagnoses} rehabPlans={rehabPlans} setRehabPlans={setRehabPlans} rehabQueueEntries={rehabQueueEntries} setRehabQueueEntries={setRehabQueueEntries} doDeposit={doDeposit} toast={toast} insurances={insurances} />;
-      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} setRehabPlans={setRehabPlans} setRehabQueueEntries={setRehabQueueEntries} />;
-      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} />;
+      case "new-patient": return <NewPatientScreen dept={dept} doDeposit={(d, a, t, ty) => doDeposit(d, a, t, ty)} setSessions={setSessions} setDebts={setDebts} toast={toast} onNavigate={setRoute} radImages={radImages} insurances={insurances} setInvoices={setInvoices} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} rehabServices={rehabServices} labTests={labTests} setSessionFiles={setSessionFiles} customDepts={customDepts} inventory={inventory} setInventory={setInventory} computeKitStatus={computeKitStatus} checkAndNotify={checkAndNotify} setRehabPlans={setRehabPlans} setRehabQueueEntries={setRehabQueueEntries} staffList={staffList} />;
+      case "new-session": return <NewSessionScreen dept={dept} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} setSessions={setSessions} doDeposit={doDeposit} setDebts={setDebts} debts={debts} toast={toast} onNavigate={setRoute} diagnoses={diagnoses} setDiagnoses={setDiagnoses} loggedUser={loggedUser} drugs={drugs} setDrugs={setDrugs} setSessionFiles={setSessionFiles} customDepts={customDepts} insurances={insurances} setInvoices={setInvoices} staffList={staffList} />;
       case "patient-file": return <PatientFileScreen dept={dept} onNavigate={setRoute} patientId={route.patientId || mockPatients[0]?.id || ""} sessions={sessions} debts={debts} doDeposit={doDeposit} setDebts={setDebts} customDepts={customDepts} patientDeleteRequests={patientDeleteRequests} setPatientDeleteRequests={setPatientDeleteRequests} loggedUser={loggedUser} setDeletedPatientIds={setDeletedPatientIds} onAdminDeletePatient={onAdminDeletePatient} rehabQueueEntries={rehabQueueEntries} rehabPlans={rehabPlans} onDeleteSession={id => setSessions(p => p.filter(s => s.id !== id))} onEditSession={onEditSession} onSettleSessionsDebt={onSettleSessionsDebt} sessionFiles={sessionFiles} setSessionFiles={setSessionFiles} setReceiptVouchers={setReceiptVouchersGlobal} receiptVouchers={receiptVouchersGlobal} insurances={insurances} invoices={invoices} debtPaymentsLog={debtPaymentsGlobal} setDebtPayments={setDebtPaymentsGlobal} />;
       case "surgery-clinic-inv": return <SurgeryClinicInventoryScreen items={surgeryClinicItems} setItems={setSurgeryClinicItems} toast={toast} computeStatus={computeKitStatus} checkAndNotify={checkAndNotify} />;
       case "surgery-purchase-reqs": return <DeptPurchaseReqsScreen purchaseRequests={purchaseRequests} onSubmitPurchaseRequest={onSubmitPurchaseRequest} onApprovePurchaseRequest={onApprovePurchaseRequest} onRejectPurchaseRequest={onRejectPurchaseRequest} onDeletePurchaseRequest={onDeletePurchaseRequest} toast={toast} isAdmin={loggedUser?.type === "admin"} dept="surgery" suppliers={suppliersRoot} />;

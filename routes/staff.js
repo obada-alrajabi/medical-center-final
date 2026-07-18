@@ -127,17 +127,19 @@ router.get('/salary-periods', async (req, res) => {
 });
 
 router.post('/salary-periods', requireAdmin, async (req, res) => {
-  const { employee_id, staff_id, year_month, net_amount, status, closed_date, carried_in } = req.body;
+  const { employee_id, staff_id, year_month, net_amount, status, closed_date, carried_in, breakdown } = req.body;
   try {
     // القيد الفريد (employee_id, year_month) يمنع إغلاق نفس الشهر مرتين — لو
     // انضغط الزر مرتين بالخطأ (اتصال بطيء مثلاً)، لا نُرجع خطأ بل نُرجع السجل
     // المُغلَق أصلاً بهدوء، حتى لا يظهر خطأ للمستخدم على عملية نجحت فعلياً.
+    // ── breakdown: لقطة "تفاصيل الاحتساب" الكاملة المُجمَّدة وقت الإغلاق —
+    //    نفس نمط تخزين settlement_breakdown بسندات القبض/الصرف (finance.js) ──
     const { rows } = await pool.query(
-      `INSERT INTO salary_periods (employee_id, staff_id, year_month, net_amount, status, closed_date, carried_in)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `INSERT INTO salary_periods (employee_id, staff_id, year_month, net_amount, status, closed_date, carried_in, breakdown)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (employee_id, year_month) DO NOTHING
        RETURNING *`,
-      [employee_id, staff_id ?? null, year_month, net_amount, status, closed_date, carried_in ?? 0]
+      [employee_id, staff_id ?? null, year_month, net_amount, status, closed_date, carried_in ?? 0, breakdown ? JSON.stringify(breakdown) : null]
     );
     if (rows.length) return res.status(201).json(rows[0]);
     const existing = await pool.query(

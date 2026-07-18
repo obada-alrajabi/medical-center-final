@@ -12,7 +12,11 @@ export type DebtRow = { id:number; patient:string; pid:string; dept:string; amou
 export type AttendanceRecord = { id:number; empId:string; empName:string; dept:string; date:string; dayName:string; checkIn:string; checkOut:string; totalHours?:number; };
 export type AppNotification = { id:string; itemName:string; dept:string; deptLabel:string; qty:number; threshold:number; timestamp:string; };
 export type Employee = { id:number; staffId?:number|null; name:string; dept:string; role:string; salary:number; expenses:number; status:"pending"|"calculated"|"paid"; paidDate?:string; commission?:number; netSalary?:number };
-export type SalaryPeriod = { id:number; employeeId:number; staffId?:number|null; yearMonth:string; netAmount:number; status:"paid"|"debt_acknowledged"; closedDate:string; carriedIn:number };
+// ── breakdown: لقطة "تفاصيل الاحتساب" الكاملة المُجمَّدة وقت الصرف/الإغلاق —
+//    نفس الشكل الذي يُرجعه buildBreakdown()/يقبله SalaryBreakdownDetail بالضبط
+//    (fixedSalary, deptRows, commissionTotal, shift, daily, vouchers, advances,
+//    carriedIn, net)، مخزَّنة كـ blob داخلي غير مُلزَم بنوع صارم هنا ──
+export type SalaryPeriod = { id:number; employeeId:number; staffId?:number|null; yearMonth:string; netAmount:number; status:"paid"|"debt_acknowledged"; closedDate:string; carriedIn:number; breakdown?: Record<string, unknown> | null };
 export type DailyAttendanceRecord = { id:number; staffId:number; date:string };
 export type NormalRange = { param:string; unit:string; min:string; max:string; note:string };
 export type LabTestConsumable = { id:number; inventoryId:number; qty:number; name?:string; unit?:string };
