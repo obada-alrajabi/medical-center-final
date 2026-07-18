@@ -9718,15 +9718,15 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
     const net = calcNet(e);
     const sm = getStaffMember(e);
     const payDepts = (sm?.payFromDepts || []).filter(Boolean);
-    // ── الموظفين من نوع "راتب ثابت" أو "وردية" ما إلهم أقسام إيراد (payFromDepts
-    //    فاضي عمداً وقت الحفظ)، فلازم نرجع لقسمه الأساسي الحقيقي (sm.primaryDept)
-    //    مباشرة — مش لـ e.dept، لأنه عمود منفصل بجدول الرواتب ممكن يضل قديم/غير
-    //    متزامن ويسحب الراتب من صندوق قسم غلط (نفس خلل عرض "الجراحة" لكل الموظفين). ──
+    // ── لو ما في أقسام خصم محدَّدة إطلاقاً، نرجع لقسمه الأساسي الحقيقي
+    //    (sm.primaryDept) مباشرة — مش لـ e.dept، لأنه عمود منفصل بجدول الرواتب
+    //    ممكن يضل قديم/غير متزامن ويسحب الراتب من صندوق قسم غلط. ──
     if (payDepts.length <= 1) return [{ dept: payDepts[0] || sm?.primaryDept || e.dept, amount: net }];
-    // ── "الأجر اليومي" ما إله مفهوم "إيراد" أصلاً (أجره ثابت بالمبلغ اليومي، لا
-    //    علاقة له بجلسات المرضى) — فتوزيعه بين أكثر من صندوق قسم يكون بالتساوي
-    //    دائماً، بعكس التوزيع التناسبي حسب الإيراد المستخدَم لبقية الأنواع ──
-    if (sm?.salaryType === "daily") {
+    // ── "الأجر اليومي"، "الراتب الثابت"، و"الورديات" ما إلهم مفهوم "إيراد
+    //    فردي" أصلاً (أجرهم ثابت/بالوردية، لا علاقة له بجلسات المرضى) — فتوزيع
+    //    الراتب بين أكثر من صندوق قسم لهاي الأنواع يكون بالتساوي دائماً، بعكس
+    //    التوزيع التناسبي حسب الإيراد المستخدَم لموظفي النسبة/راتب-ونسبة ──
+    if (sm?.salaryType === "daily" || sm?.salaryType === "fixed" || sm?.salaryType === "shift") {
       const base = Math.floor(net / payDepts.length);
       const amounts = payDepts.map(() => base);
       const diff = net - amounts.reduce((s, a) => s + a, 0);
@@ -9809,14 +9809,15 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   const getPaySplitForRange = (e: Employee, ym: string, net: number): { dept: string; amount: number }[] => {
     const sm = getStaffMember(e);
     const payDepts = (sm?.payFromDepts || []).filter(Boolean);
-    // ── الموظفين من نوع "راتب ثابت" أو "وردية" ما إلهم أقسام إيراد (payFromDepts
-    //    فاضي عمداً وقت الحفظ)، فلازم نرجع لقسمه الأساسي الحقيقي (sm.primaryDept)
-    //    مباشرة — مش لـ e.dept، لأنه عمود منفصل بجدول الرواتب ممكن يضل قديم/غير
+    // ── لو ما في أقسام خصم محدَّدة إطلاقاً (موظف قديم قبل هذا الإصلاح، أو ما
+    //    حدد المدير شيئاً)، نرجع لقسمه الأساسي الحقيقي (sm.primaryDept) مباشرة
+    //    — مش لـ e.dept، لأنه عمود منفصل بجدول الرواتب ممكن يضل قديم/غير
     //    متزامن ويسحب الراتب من صندوق قسم غلط (نفس خلل عرض "الجراحة" لكل الموظفين). ──
     if (payDepts.length <= 1) return [{ dept: payDepts[0] || sm?.primaryDept || e.dept, amount: net }];
-    // ── "الأجر اليومي" يُوزَّع بالتساوي بين الأقسام المحدَّدة أيضاً بالفترات
-    //    الماضية — نفس مبدأ getPaySplit أعلاه، لأنه لا مفهوم "إيراد" له إطلاقاً ──
-    if (sm?.salaryType === "daily") {
+    // ── "الأجر اليومي"، "الراتب الثابت"، و"الورديات" تُوزَّع بالتساوي بين
+    //    الأقسام المحدَّدة أيضاً بالفترات الماضية — نفس مبدأ getPaySplit أعلاه،
+    //    لأنه لا مفهوم "إيراد فردي" لهاي الأنواع إطلاقاً ──
+    if (sm?.salaryType === "daily" || sm?.salaryType === "fixed" || sm?.salaryType === "shift") {
       const base = Math.floor(net / payDepts.length);
       const amounts = payDepts.map(() => base);
       const diff = net - amounts.reduce((s, a) => s + a, 0);
@@ -9870,11 +9871,10 @@ function PayrollScreen({ employees, setEmployees, drawers, doWithdraw, toast, cu
   //    بيأثر كمان على من صندوق قسم مين فعلياً بينخصم الراتب، انظر getPaySplit). ──
   const getDeptNamesForRow = (e: Employee, sm?: StaffMember): string => {
     if (!sm) return deptShortName(e.dept);
-    if (sm.salaryType === "shift" || sm.salaryType === "daily") {
+    if (sm.salaryType === "shift" || sm.salaryType === "daily" || sm.salaryType === "fixed") {
       const depts = (sm.payFromDepts || []).filter(Boolean);
       return depts.length ? depts.map(deptShortName).join("، ") : deptShortName(sm.primaryDept || e.dept);
     }
-    if (sm.salaryType === "fixed") return deptShortName(sm.primaryDept || e.dept);
     const pDepts = effectivePercentageDepts(sm);
     return pDepts.length ? pDepts.map(deptShortName).join("، ") : deptShortName(sm.primaryDept || e.dept);
   };
@@ -12963,20 +12963,17 @@ function StaffManagementScreen({
   };
   const saveStaff = () => {
     if (!form.name.trim() || !form.nationalId.trim()) { toast("يجب إدخال الاسم ورقم الهوية", "error"); return; }
-    // ── "صندوق الخصم" (الأقسام يلي بينخصم منها الراتب فعلياً) صار يتبع تلقائياً
-    //    نفس الأقسام يلي بتُحتسب منها نسبة الإيرادات (percentageDepts) — بدل ما
-    //    يكون اختيار يدوي منفصل بيلخبط (كان ممكن يختلف عن أقسام احتساب النسبة
-    //    بدون أي داعي منطقي). لو الموظف راتبه ثابت بالكامل (fixed/shift) بدون
-    //    نسبة، منسيب الصندوق فاضي ليرجع لقسمه الأساسي تلقائياً وقت الصرف. ──
-    // ── "الأجر اليومي" (daily) ما إله مفهوم "نسبة إيرادات" إطلاقاً بعد إعادة
-    //    تعريفه — صندوق الخصم بتاعه هو الأقسام المحدَّدة صراحةً بخانة "الأقسام
-    //    التي يُخصم منها الراتب" (form.payFromDepts) مباشرة، وليس effectivePercentageDepts
-    //    (مفهوم إيرادي لم يعد ينطبق على هذا النوع). ──
-    const payFromDeptsComputed = (form.salaryType === "fixed" || form.salaryType === "shift")
-      ? []
-      : form.salaryType === "daily"
-        ? (form.payFromDepts || []).filter(Boolean)
-        : effectivePercentageDepts(form as any);
+    // ── "صندوق الخصم" (الأقسام يلي بينخصم منها الراتب فعلياً):
+    //    - نسبة/راتب-ونسبة: يتبع تلقائياً نفس أقسام احتساب النسبة (percentageDepts)
+    //      — بدل اختيار يدوي منفصل بيلخبط (ممكن يختلف عن أقسام الاحتساب بلا داعي).
+    //    - أجر يومي/راتب ثابت/وردية: ما إلهم مفهوم "نسبة إيرادات" أصلاً، فصندوق
+    //      الخصم بتاعهم هو الأقسام المحدَّدة صراحةً بخانة "الأقسام التي يُخصم
+    //      منها الراتب" (form.payFromDepts)، وبتنقسم بالتساوي بينها لو أكتر من
+    //      قسم (انظر getPaySplit/getPaySplitForRange). لو ما حدَّد المدير شي،
+    //      بترجع تلقائياً لقسمه الأساسي وقت الصرف. ──
+    const payFromDeptsComputed = (form.salaryType === "percentage" || form.salaryType === "both")
+      ? effectivePercentageDepts(form as any)
+      : (form.payFromDepts || []).filter(Boolean);
     const form2 = { ...form, payFromDepts: payFromDeptsComputed };
     if (form.nationalId.length < 5) { toast("رقم الهوية يجب أن يكون 5 أرقام على الأقل", "error"); return; }
     if (tab === "add") {
@@ -13318,6 +13315,28 @@ function StaffManagementScreen({
           </div>
           {(form.salaryType === "fixed" || form.salaryType === "both") && (
             <InputField label="الراتب الثابت الشهري (₪)" type="number" value={String(form.fixedSalary)} onChange={v => setF("fixedSalary", Number(v))} />
+          )}
+          {/* ── راتب ثابت بحت أو وردية: ما إلهم مفهوم "نسبة إيرادات"، فالمدير
+              يحدد صراحة من أي قسم (أو أكثر) يُخصم الراتب — وبتنقسم بالتساوي
+              بين الأقسام المحدَّدة لو أكتر من واحد (بدل الاقتصار على قسم واحد). ──*/}
+          {(form.salaryType === "fixed" || form.salaryType === "shift") && (
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-semibold text-[#555]">الأقسام التي يُخصم منها الراتب <span className="text-[#999] font-normal">(بالتساوي إذا أكثر من قسم — اتركها فارغة للخصم من قسمه الأساسي)</span></label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {[...DEPARTMENTS, ...customDepts].map(d => {
+                  const checked = (form.payFromDepts || []).includes(d.id);
+                  return (
+                    <label key={d.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer text-xs select-none transition-colors ${checked ? "border-[#1B3A6B] bg-[#EBF3FB] text-[#1B3A6B] font-medium" : "border-[#E0E0E0] text-[#555] hover:bg-[#F5F5F5]"}`}>
+                      <input type="checkbox" checked={checked} onChange={e => { const cur = form.payFromDepts || []; setF("payFromDepts", e.target.checked ? [...cur, d.id] : cur.filter((x: string) => x !== d.id)); }} className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate">{d.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              {(form.payFromDepts || []).length > 1 && (
+                <p className="text-xs text-[#1B3A6B] p-2 rounded-lg" style={{ backgroundColor: "#EBF3FB" }}>💰 عند صرف الراتب، سيُقسَّم المبلغ بالتساوي على صناديق الأقسام المحدَّدة أعلاه.</p>
+              )}
+            </div>
           )}
           {(form.salaryType === "percentage" || form.salaryType === "both") && (<>
             <InputField label="نسبة من الإيرادات (%)" type="number" value={String(form.percentageValue)} onChange={v => setF("percentageValue", Number(v))} placeholder="مثال: 5" />
