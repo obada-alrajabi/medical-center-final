@@ -13,6 +13,7 @@ export type AttendanceRecord = { id:number; empId:string; empName:string; dept:s
 export type AppNotification = { id:string; itemName:string; dept:string; deptLabel:string; qty:number; threshold:number; timestamp:string; };
 export type Employee = { id:number; staffId?:number|null; name:string; dept:string; role:string; salary:number; expenses:number; status:"pending"|"calculated"|"paid"; paidDate?:string; commission?:number; netSalary?:number };
 export type SalaryPeriod = { id:number; employeeId:number; staffId?:number|null; yearMonth:string; netAmount:number; status:"paid"|"debt_acknowledged"; closedDate:string; carriedIn:number };
+export type DailyAttendanceRecord = { id:number; staffId:number; date:string };
 export type NormalRange = { param:string; unit:string; min:string; max:string; note:string };
 export type LabTestConsumable = { id:number; inventoryId:number; qty:number; name?:string; unit?:string };
 export type LabTest = { id:number; code:string; name:string; nameEn:string; cat:string; priceOfficial:number; price:number; consumablesCost:number; priceCost:number; isL2L:boolean; kit:string; kitInventoryId?:number|null; kitQty:number; kitUnit:string; kitThreshold:number; time:string; normalRanges?:NormalRange[]; consumables?:LabTestConsumable[] };
@@ -110,6 +111,7 @@ export type StaffMember = {
   shiftStart?: string;
   shiftEnd?: string;
   shiftAmount?: number;
+  dailyWageAmount?: number;
   status: "active"|"inactive";
   joinDate: string;
   deptPermissions: Record<string, DeptPermissions>;

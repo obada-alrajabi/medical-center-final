@@ -890,6 +890,31 @@ pool
   .then(() => console.log("[migration] salary_periods table applied"))
   .catch((e) => console.error("[migration] salary_periods:", e.message));
 
+// ── "الأجر اليومي" (daily) redefinition: this salaryType used to behave
+//    identically to "percentage" (a % of the employee's own session revenue).
+//    It now means a FIXED per-day rate paid according to actual attendance
+//    days the employee marks himself for the current calendar month. The
+//    fixed rate itself lives on staff_members (daily_wage_amount); this table
+//    stores which individual calendar dates count as "worked" per employee.
+//    UNIQUE(staff_id, date) makes marking the same day twice a safe no-op. ──
+pool
+  .query(`
+    CREATE TABLE IF NOT EXISTS daily_attendance (
+      id SERIAL PRIMARY KEY,
+      staff_id BIGINT NOT NULL REFERENCES staff_members(id) ON DELETE CASCADE,
+      date DATE NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(staff_id, date)
+    )
+  `)
+  .then(() => console.log("[migration] daily_attendance table applied"))
+  .catch((e) => console.error("[migration] daily_attendance:", e.message));
+
+pool
+  .query(`ALTER TABLE staff_members ADD COLUMN IF NOT EXISTS daily_wage_amount NUMERIC(10,2)`)
+  .then(() => console.log("[migration] staff_members.daily_wage_amount applied"))
+  .catch((e) => console.error("[migration] staff_members.daily_wage_amount:", e.message));
+
 // ── Base path (set APP_BASE_PATH env var on Hostinger, e.g. /45.159.160.11) ──
 const BASE = process.env.APP_BASE_PATH || "";
 

@@ -150,6 +150,96 @@ router.post('/salary-periods', requireAdmin, async (req, res) => {
   }
 });
 
+// ─── Daily Attendance (salaryType === "daily" self-marked worked days) —
+//     must come BEFORE /:id to avoid it being swallowed by the single-segment
+//     /:id route below. Mirrors the /salary-periods placement above. ────────
+router.get('/daily-attendance', async (req, res) => {
+  try {
+    const { staff_id } = req.query;
+    let sql = 'SELECT * FROM daily_attendance WHERE 1=1';
+    const params = [];
+    if (staff_id) { params.push(staff_id); sql += ` AND staff_id=$${params.length}`; }
+    sql += ' ORDER BY date DESC';
+    const { rows } = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// السماح فقط بجلسة إدارية، أو جلسة موظف تعمل على بياناتها الخاصة فقط — نفس
+// نمط "فرض staff_id من الجلسة، لا نثق بجسم الطلب" المطبَّق بمسار
+// POST /attendance بالأسفل (resolveOwnEmpId) لكن هون staff_id بجدول
+// daily_attendance هو نفسه staff_members.id مباشرة (role = "staff:<id>")،
+// فلا حاجة لأي دالة ربط وسيطة — بس نقارن الرقمين مباشرة.
+router.post('/daily-attendance/bulk-set', requireAdmin, async (req, res) => {
+  try {
+    let { staff_id, year_month, dates } = req.body;
+    const role = req.adminSession?.role || '';
+    if (role.startsWith('staff:')) {
+      staff_id = Number(role.slice('staff:'.length));
+    }
+    if (!staff_id || !year_month || !Array.isArray(dates)) {
+      return res.status(400).json({ error: 'بيانات ناقصة' });
+    }
+    const [y, m] = String(year_month).split('-').map(Number);
+    if (!y || !m) return res.status(400).json({ error: 'صيغة الشهر غير صحيحة' });
+    const monthStart = `${year_month}-01`;
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const monthEnd = `${year_month}-${String(lastDay).padStart(2, '0')}`;
+
+    // ── فحص القفل: الشهر مقفول لو (أ) موجود سجل إغلاق (salary_periods) لهذا
+    //    الموظف بهذا الشهر — أياً كانت حالته (مصروف أو إقرار دين)، أو (ب)
+    //    الشهر المطلوب هو الشهر الحالي وسجل employees الخاص بالموظف بحالة
+    //    "paid" مع paid_date واقع فعلياً ضمن نفس الشهر (آلية الصرف الفوري
+    //    القديمة المستخدمة بتبويب "الرواتب الحالية"). نحتاج employees.id عبر
+    //    staff_id لأن salary_periods.employee_id يشير لـ employees وليس
+    //    staff_members مباشرة. ──
+    const { rows: empRows } = await pool.query(
+      'SELECT id, status, paid_date FROM employees WHERE staff_id=$1',
+      [staff_id]
+    );
+    const emp = empRows[0];
+    let locked = false;
+    if (emp) {
+      const { rows: closedRows } = await pool.query(
+        'SELECT id FROM salary_periods WHERE employee_id=$1 AND year_month=$2',
+        [emp.id, year_month]
+      );
+      if (closedRows.length) locked = true;
+      if (!locked && emp.status === 'paid' && emp.paid_date) {
+        const paidDateStr = new Date(emp.paid_date).toISOString().slice(0, 7);
+        if (paidDateStr === year_month) locked = true;
+      }
+    }
+    if (locked) {
+      return res.status(403).json({ error: 'تم صرف راتب هذا الشهر، لا يمكن تعديل أيام الدوام' });
+    }
+
+    const validDates = dates.filter(d => typeof d === 'string' && d >= monthStart && d <= monthEnd);
+
+    await pool.query(
+      `DELETE FROM daily_attendance
+       WHERE staff_id=$1 AND date >= $2::date AND date <= $3::date
+         AND NOT (date = ANY($4::date[]))`,
+      [staff_id, monthStart, monthEnd, validDates]
+    );
+    for (const d of validDates) {
+      await pool.query(
+        `INSERT INTO daily_attendance (staff_id, date) VALUES ($1,$2) ON CONFLICT (staff_id, date) DO NOTHING`,
+        [staff_id, d]
+      );
+    }
+    const { rows } = await pool.query(
+      'SELECT * FROM daily_attendance WHERE staff_id=$1 AND date >= $2::date AND date <= $3::date ORDER BY date',
+      [staff_id, monthStart, monthEnd]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.patch('/:id/credentials', requireAdmin, async (req, res) => {
   const { username, new_password } = req.body;
   try {
@@ -187,6 +277,7 @@ router.post('/', requireAdmin, async (req, res) => {
     name, national_id, dob, username, password_hash, job_title, primary_dept,
     assigned_depts, phone, role, salary_type, fixed_salary, percentage_dept,
     percentage_depts, pay_from_depts, percentage_value, shift_start, shift_end, shift_amount,
+    daily_wage_amount,
     status, join_date, can_access_financial, can_access_settings,
     can_access_reports, can_manage_staff, is_admin_role, can_attendance, notes
   } = req.body;
@@ -198,16 +289,16 @@ router.post('/', requireAdmin, async (req, res) => {
       `INSERT INTO staff_members
        (name,national_id,dob,username,password_hash,job_title,primary_dept,assigned_depts,
         phone,role,salary_type,fixed_salary,percentage_dept,percentage_depts,pay_from_depts,percentage_value,
-        shift_start,shift_end,shift_amount,status,join_date,can_access_financial,
+        shift_start,shift_end,shift_amount,daily_wage_amount,status,join_date,can_access_financial,
         can_access_settings,can_access_reports,can_manage_staff,is_admin_role,can_attendance,notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
        RETURNING *`,
       [name, national_id ?? null, dob ?? null, username ?? null, hashedPassword,
        job_title ?? null, primary_dept ?? null, assigned_depts ?? '[]',
        phone ?? null, role ?? null,
        salary_type ?? 'fixed', fixed_salary ?? 0, percentage_dept ?? null,
        percentage_depts ?? '[]', pay_from_depts ?? '[]', percentage_value ?? 0,
-       shift_start ?? null, shift_end ?? null, shift_amount ?? 0,
+       shift_start ?? null, shift_end ?? null, shift_amount ?? 0, daily_wage_amount ?? null,
        status ?? 'active', join_date ?? null,
        can_access_financial ?? false, can_access_settings ?? false,
        can_access_reports ?? false, can_manage_staff ?? false,
@@ -241,6 +332,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       name, national_id, dob, username, password_hash, job_title, primary_dept,
       phone, role, salary_type, fixed_salary, percentage_dept,
       percentage_depts, pay_from_depts, percentage_value, shift_start, shift_end, shift_amount,
+      daily_wage_amount,
       status, join_date, can_access_financial, can_access_settings,
       can_access_reports, can_manage_staff, is_admin_role, can_attendance, notes,
       assigned_depts
@@ -264,6 +356,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     const resolvedShiftStart = shift_start !== undefined ? shift_start : c.shift_start;
     const resolvedShiftEnd = shift_end !== undefined ? shift_end : c.shift_end;
     const resolvedShiftAmount = shift_amount !== undefined ? shift_amount : (c.shift_amount || 0);
+    const resolvedDailyWageAmount = daily_wage_amount !== undefined ? daily_wage_amount : c.daily_wage_amount;
     const resolvedStatus = status !== undefined ? status : (c.status || 'active');
     const resolvedJoinDate = join_date !== undefined ? join_date : c.join_date;
     const resolvedCanAccessFinancial = can_access_financial !== undefined ? can_access_financial : (c.can_access_financial || false);
@@ -280,7 +373,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       resolvedPhone, resolvedRole,
       resolvedSalaryType, resolvedFixedSalary, resolvedPercentageDept,
       resolvedPercentageDepts, resolvedPayFromDepts, resolvedPercentageValue,
-      resolvedShiftStart, resolvedShiftEnd, resolvedShiftAmount,
+      resolvedShiftStart, resolvedShiftEnd, resolvedShiftAmount, resolvedDailyWageAmount,
       resolvedStatus, resolvedJoinDate,
       resolvedCanAccessFinancial, resolvedCanAccessSettings,
       resolvedCanAccessReports, resolvedCanManageStaff,
@@ -293,12 +386,12 @@ router.put('/:id', requireAdmin, async (req, res) => {
       phone=$8,role=$9,
       salary_type=$10,fixed_salary=$11,percentage_dept=$12,
       percentage_depts=$13,pay_from_depts=$14,percentage_value=$15,
-      shift_start=$16,shift_end=$17,shift_amount=$18,
-      status=$19,join_date=$20,
-      can_access_financial=$21,can_access_settings=$22,
-      can_access_reports=$23,can_manage_staff=$24,
-      is_admin_role=$25,can_attendance=$26,notes=$27,updated_at=NOW()
-      WHERE id=$28 RETURNING *`;
+      shift_start=$16,shift_end=$17,shift_amount=$18,daily_wage_amount=$19,
+      status=$20,join_date=$21,
+      can_access_financial=$22,can_access_settings=$23,
+      can_access_reports=$24,can_manage_staff=$25,
+      is_admin_role=$26,can_attendance=$27,notes=$28,updated_at=NOW()
+      WHERE id=$29 RETURNING *`;
 
     if (password_hash !== undefined && password_hash !== null) {
       const hashedPw = password_hash.startsWith('$2')
@@ -306,17 +399,17 @@ router.put('/:id', requireAdmin, async (req, res) => {
         : await bcrypt.hash(password_hash.trim(), 10);
       fields.push(hashedPw);
       sql = `UPDATE staff_members SET
-        name=$1,national_id=$2,dob=$3,username=$4,password_hash=$29,
+        name=$1,national_id=$2,dob=$3,username=$4,password_hash=$30,
         job_title=$5,primary_dept=$6,assigned_depts=$7,
         phone=$8,role=$9,
         salary_type=$10,fixed_salary=$11,percentage_dept=$12,
         percentage_depts=$13,pay_from_depts=$14,percentage_value=$15,
-        shift_start=$16,shift_end=$17,shift_amount=$18,
-        status=$19,join_date=$20,
-        can_access_financial=$21,can_access_settings=$22,
-        can_access_reports=$23,can_manage_staff=$24,
-        is_admin_role=$25,can_attendance=$26,notes=$27,updated_at=NOW()
-        WHERE id=$28 RETURNING *`;
+        shift_start=$16,shift_end=$17,shift_amount=$18,daily_wage_amount=$19,
+        status=$20,join_date=$21,
+        can_access_financial=$22,can_access_settings=$23,
+        can_access_reports=$24,can_manage_staff=$25,
+        is_admin_role=$26,can_attendance=$27,notes=$28,updated_at=NOW()
+        WHERE id=$29 RETURNING *`;
     }
 
     const { rows } = await pool.query(sql, fields);
@@ -649,11 +742,32 @@ function calcTotalHours(check_in, check_out) {
   return mins > 0 && mins <= 1440 ? Math.round((mins / 60) * 100) / 100 : null;
 }
 
+// ── ربط جلسة موظف (role = "staff:<id>") بقيمة emp_id الفعلية المستخدمة
+//    بسجلات الحضور — نفس المنطق المطبَّق بالفرونت‌إند (staffHourlyRate /
+//    AttendanceScreen): nationalId لو موجود، وإلا String(staffId). يُستخدم
+//    لمنع أي موظف من انتحال emp_id موظف آخر بجسم الطلب (req.body.emp_id) ──
+async function resolveOwnEmpId(staffId) {
+  const { rows } = await pool.query('SELECT national_id FROM staff_members WHERE id=$1', [staffId]);
+  const nationalId = rows[0]?.national_id;
+  return (nationalId && String(nationalId).trim()) || String(staffId);
+}
+
 // BUG-16 fix: requireAdmin added — attendance records affect payroll
+// SECURITY fix: requireAdmin only verifies "any valid session" (admin OR
+// staff — see middleware/adminAuth.js: createStaffSession stores role as
+// `staff:${staffId}`). Without the check below, an authenticated staff
+// member could submit an arbitrary req.body.emp_id and write attendance
+// (→ shift-pay) rows for a DIFFERENT employee. Real admins (role === 'admin')
+// are still allowed to write on behalf of anyone (e.g. corrections).
 router.post('/attendance', requireAdmin, async (req, res) => {
-  const { emp_id, emp_name, dept, date, day_name, check_in, check_out } = req.body;
-  const total_hours = calcTotalHours(check_in, check_out);
   try {
+    let { emp_id, emp_name, dept, date, day_name, check_in, check_out } = req.body;
+    const role = req.adminSession?.role || '';
+    if (role.startsWith('staff:')) {
+      const staffId = role.slice('staff:'.length);
+      emp_id = await resolveOwnEmpId(staffId);
+    }
+    const total_hours = calcTotalHours(check_in, check_out);
     const { rows } = await pool.query(
       `INSERT INTO attendance_records (emp_id,emp_name,dept,date,day_name,check_in,check_out,total_hours)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
@@ -670,6 +784,19 @@ router.put('/attendance/:id', requireAdmin, async (req, res) => {
     const { rows: curr } = await pool.query('SELECT * FROM attendance_records WHERE id=$1', [req.params.id]);
     if (!curr.length) return res.status(404).json({ error: 'Not found' });
     const c = curr[0];
+    // SECURITY: this route never lets the caller change emp_id (the UPDATE
+    // below always keeps c.emp_id), so the cross-employee risk here is a
+    // staff session editing a record that BELONGS to a different employee
+    // (checking someone else's hours/times). Block that when the session is
+    // a staff session and the record's emp_id isn't their own.
+    const role = req.adminSession?.role || '';
+    if (role.startsWith('staff:')) {
+      const staffId = role.slice('staff:'.length);
+      const ownEmpId = await resolveOwnEmpId(staffId);
+      if (c.emp_id !== ownEmpId) {
+        return res.status(403).json({ error: 'لا يمكنك تعديل سجل حضور موظف آخر' });
+      }
+    }
     const { emp_name, dept, date, day_name, check_in, check_out } = req.body;
     const resolvedCheckIn  = check_in  !== undefined ? check_in  : c.check_in;
     const resolvedCheckOut = check_out !== undefined ? check_out : c.check_out;

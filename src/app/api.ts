@@ -318,6 +318,11 @@ export const api = {
       getAll: (employeeId?: number) => get<unknown[]>(`/staff/salary-periods${employeeId ? `?employee_id=${employeeId}` : ""}`),
       create: (p: unknown) => post<unknown>("/staff/salary-periods", p),
     },
+    dailyAttendance: {
+      getAll: (staffId?: number) => get<unknown[]>(`/staff/daily-attendance${staffId ? `?staff_id=${staffId}` : ""}`),
+      bulkSet: (staffId: number, yearMonth: string, dates: string[]) =>
+        post<unknown>("/staff/daily-attendance/bulk-set", { staff_id: staffId, year_month: yearMonth, dates }),
+    },
   },
 
   lab: {
