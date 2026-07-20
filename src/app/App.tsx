@@ -1820,7 +1820,11 @@ function DashboardScreen({ drawers, debts, invoices, purchaseRequests, onNavigat
   const [dateTo, setDateTo] = useState(todayISO);
   const isToday = dateFrom === todayISO && dateTo === todayISO;
   const isAll = !dateFrom && !dateTo;
-  const getWeekStart = () => { const d = _jlmNow(); const t = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86400000); return t.toISOString().slice(0, 10); };
+  // ── "هذا الأسبوع" = آخر 7 أيام (اليوم + 6 أيام قبله)، مش أسبوع تقويمي
+  //    يبدأ من يوم ثابت (أحد أو اثنين) — هيك دايماً بيعرض بيانات 7 أيام
+  //    فعلية بغض النظر عن أي يوم بالأسبوع احنا فيه، وما ينحصر بيوم معيّن
+  //    يخليه يتطابق مع فلتر "اليوم" ويبدو وكأنه "مش شغال". ──
+  const getWeekStart = () => { const d = _jlmNow(); const t = new Date(d.getTime() - 6 * 86400000); return t.toISOString().slice(0, 10); };
   const getMonthStart = () => { const d = _jlmNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`; };
   const ir = (d: string) => inRangeDDMMYYYY(d, dateFrom, dateTo);
 
@@ -16391,16 +16395,21 @@ function LoginScreen({ onLogin, staffList, adminAccounts = [] }: { onLogin: (use
     // Try API auth first, then fall back to in-memory
     (async () => {
       try {
-        // Admin login via API
+        // ── طلب دخول موحّد واحد فقط (routes/settings.js: POST /auth/login) —
+        //    الخادم صار يفحص جدول المدراء ثم جدول الموظفين بنفس الطلب،
+        //    فما عاد داعي لطلبين منفصلين هون (كان طلب المدير يرجع 401 طبيعي
+        //    ومتوقع لأي حساب موظف، ويظهر بالكونسول كخطأ مخيف رغم إنه مش
+        //    خلل فعلي وتسجيل الدخول كان ينجح بعده مباشرة بالطلب الثاني). ──
         const res = await api.settings.auth.adminLogin(user.trim(), pass);
-        if (res && !("error" in res)) { if ((res as any).token) setAdminToken((res as any).token); onLogin({ type: "admin", adminName: (res as any).display_name || "مدير النظام" }); return; }
-        // Staff login via API
-        const staffRes = await api.settings.auth.staffLogin(user.trim(), pass);
-        if (staffRes && !("error" in (staffRes as any))) {
-          const s = staffRes as any;
-          if (s.token) setAdminToken(s.token);
-          const staffObj: StaffMember = { id: Number(s.id), name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, dailyWageAmount: Number(s.daily_wage_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) };
-          onLogin(staffObj.isAdminRole ? { type: "admin", adminName: staffObj.name } : { type: "staff", staff: staffObj }); return;
+        if (res && !("error" in res)) {
+          const r = res as any;
+          if (r.token) setAdminToken(r.token);
+          if (r.role === "staff") {
+            const s = r;
+            const staffObj: StaffMember = { id: Number(s.id), name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, dailyWageAmount: Number(s.daily_wage_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) };
+            onLogin(staffObj.isAdminRole ? { type: "admin", adminName: staffObj.name } : { type: "staff", staff: staffObj }); return;
+          }
+          onLogin({ type: "admin", adminName: r.display_name || "مدير النظام" }); return;
         }
       } catch { }
       // In-memory fallback
@@ -17766,6 +17775,23 @@ export default function App() {
     }, 15000);
     return () => clearInterval(_pollIv);
   }, []);
+  // ── نبضة تجديد جلسة مستقلة تماماً عن استطلاع البيانات أعلاه (_pollIv) —
+  //    كان تجديد صلاحية الجلسة (adminAuth.js: sliding-window 8 ساعات) يعتمد
+  //    حصراً على نجاح طلب موثّق يمر عبر _doLoad، وهو نفسه يتوقف تماماً طول
+  //    فترة تركيز المستخدم على أي حقل إدخال (input/textarea/select) — أي
+  //    بالضبط وقت العمل الفعلي المطوّل (تعبئة نموذج مريض، كتابة ملاحظات...).
+  //    فكانت الجلسة تنتهي بصمت تحت المستخدم وهو مستمر بالعمل فعلياً، ويكتشف
+  //    ذلك فجأة بس لما يضغط "حفظ" فيُطلَع من حسابه من دون سبب واضح له. الحل:
+  //    نبضة خفيفة مستقلة، كل 5 دقائق، تُرسَل بغض النظر عن أي حقل مركَّز عليه
+  //    المستخدم، وبس شرطها إنه يكون مسجّل دخول أصلاً — تكفي لتجديد الجلسة
+  //    باستمرار طول بقاء الصفحة مفتوحة، بغض النظر عن نمط الاستخدام. ──
+  useEffect(() => {
+    if (!loggedUser) return;
+    const _heartbeat = () => { api.settings.admins.getAll().catch(() => { }); };
+    _heartbeat();
+    const _hbIv = setInterval(_heartbeat, 5 * 60 * 1000);
+    return () => clearInterval(_hbIv);
+  }, [loggedUser]);
   // ── تصحيح جوهري: هذه الدالة كانت تكتفي بتحديث حالة الطلب لـ"موافق عليه" محلياً
   //    وبالخادم، بدون أي حذف فعلي — لا للمريض، ولا لجلساته، ولا لديونه، ولا
   //    لسنداته. المريض كان يختفي فقط من الشاشة المفتوحة حالياً (متغيّر بالذاكرة

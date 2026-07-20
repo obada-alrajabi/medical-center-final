@@ -309,31 +309,64 @@ router.delete('/suppliers/:id', requireAdmin, async (req, res) => {
 });
 
 // ─── Auth ──────────────────────────────────────────────────────────────────
+// ── هذا المسار موحَّد: يتحقق من جدول المدراء أولاً، ولو ما لقى اسم المستخدم
+//    فيه (مش خطأ — طبيعي لو الحساب حساب "موظف")، يكمل يفحص جدول الموظفين
+//    بنفس الطلب، من دون ما يرجع 401 للواجهة الأمامية بينهم. سابقاً كانت
+//    الواجهة تطلق طلبين منفصلين (auth/login ثم auth/staff-login) لأي حساب
+//    موظف، وكان أول طلب (auth/login) يرجع 401 حقيقي بشكل طبيعي ومتوقع —
+//    بس كان يظهر بالكونسول كـ"Unauthorized" أحمر يخوّف المستخدم رغم إنه
+//    مش خلل فعلي وتسجيل الدخول كان ينجح بعده مباشرة بالطلب الثاني. توحيد
+//    الفحص هون بطلب واحد فقط بيلغي هالمظهر المُربك تماماً. ──
 router.post('/auth/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'اسم المستخدم وكلمة السر مطلوبان' });
   }
+  const uname = username.trim();
   try {
     const { rows } = await pool.query(
-      'SELECT * FROM admin_accounts WHERE username=$1', [username.trim()]
+      'SELECT * FROM admin_accounts WHERE username=$1', [uname]
     );
-    if (!rows.length) {
-      console.error(`[Auth/login] no account found for username="${username}"`);
+    if (rows.length) {
+      const account = rows[0];
+      const stored = (account.password_hash || '').trim();
+      const valid = stored.startsWith('$2')
+        ? await bcrypt.compare(password, stored)
+        : stored === password;
+      if (valid) {
+        const token = crypto.randomBytes(32).toString('hex');
+        await createSession(token, account.username, 'admin');
+        return res.json({ role: 'admin', id: account.id, username: account.username, display_name: account.display_name, token });
+      }
+      console.error(`[Auth/login] password mismatch for admin username="${uname}" hash_prefix="${stored.slice(0, 7)}"`);
       return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
     }
-    const account = rows[0];
-    const stored = (account.password_hash || '').trim();
-    const valid = stored.startsWith('$2')
-      ? await bcrypt.compare(password, stored)
-      : stored === password;
-    if (!valid) {
-      console.error(`[Auth/login] password mismatch for username="${username}" hash_prefix="${stored.slice(0, 7)}"`);
+    // ── ما في حساب مدير بهالاسم — نفحص جدول الموظفين بنفس الطلب بدل ما
+    //    نرجّع 401 ونخلي الواجهة تطلق طلب ثاني منفصل. ──
+    const { rows: staffRows } = await pool.query(
+      `SELECT sm.*, json_agg(sdp.*) AS permissions
+       FROM staff_members sm
+       LEFT JOIN staff_dept_permissions sdp ON sdp.staff_id=sm.id
+       WHERE sm.username=$1 AND sm.status='active'
+       GROUP BY sm.id`,
+      [uname]
+    );
+    if (!staffRows.length) {
+      console.error(`[Auth/login] no account found for username="${uname}"`);
+      return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
+    }
+    const member = staffRows[0];
+    const storedStaff = member.password_hash || '';
+    const validStaff = storedStaff.startsWith('$2')
+      ? await bcrypt.compare(password, storedStaff)
+      : storedStaff === password;
+    if (!validStaff) {
       return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
     }
     const token = crypto.randomBytes(32).toString('hex');
-    await createSession(token, account.username, 'admin');
-    res.json({ id: account.id, username: account.username, display_name: account.display_name, token });
+    await createStaffSession(token, member.username, member.id);
+    const { password_hash, ...safe } = member;
+    res.json({ role: 'staff', ...safe, token });
   } catch (err) {
     console.error('[Auth/login] error:', err);
     res.status(500).json({ error: err.message });
