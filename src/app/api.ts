@@ -67,6 +67,16 @@ function buildHeaders(extra?: HeadersInit): HeadersInit {
 const _AUTH_ERROR_MARKERS = ["جلسة منتهية أو غير صالحة", "مطلوب تسجيل الدخول كمدير"];
 
 async function request<T>(path: string, opts?: RequestInit): Promise<T | null> {
+  // ── نلتقط التوكن يلي كان فعّال لحظة إرسال هالطلب بالذات (قبل الـ fetch) —
+  //    ضروري للتمييز بين رد 401 "حقيقي" لجلستنا الحالية، وبين رد متأخر لطلب
+  //    قديم صار إرساله قبل تسجيل الدخول (أو بتوكن سابق استُبدل بعدين بتسجيل
+  //    دخول جديد ناجح). بدون هالفحص: طلب غير موثّق (بدون توكن) بيطلع أثناء
+  //    تحميل الصفحة الأول قبل ما يسجّل المستخدم دخوله، ولو رده وصل متأخر
+  //    (بعد ما المستخدم دخل فعلاً وصار عنده توكن صحيح جديد)، كان بيُفسَّر
+  //    خطأً على إنه "جلسة انتهت" ويمسح التوكن الجديد الصحيح ويطلع المستخدم
+  //    فوراً بعد الدخول مباشرة من دون أي تفاعل منه — تحديداً بجهاز/متصفح
+  //    جديد ما عنده جلسة محفوظة مسبقاً، حيث أول تحميل للصفحة يصير بدون توكن. ──
+  const _tokenAtSend = _adminToken;
   try {
     const res = await fetch(`${BASE}${path}`, {
       headers: buildHeaders(),
@@ -84,7 +94,12 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T | null> {
         const body = await res.clone().json();
         isRealAuthError = typeof body?.error === "string" && _AUTH_ERROR_MARKERS.some(m => body.error.includes(m));
       } catch { /* رد غير JSON — مش من نظامنا، إذاً مش انتهاء جلسة حقيقي */ }
-      if (isRealAuthError) {
+      // ── حتى لو كانت رسالة الخطأ حقيقية من نظامنا، ما نطلّع المستخدم إلا لو
+      //    هاد الطلب فعلاً استُرسل بتوكن (يعني كان في جلسة أصلاً وقت الإرسال)
+      //    وهاد التوكن لسا هو نفسه الفعّال حالياً (يعني ما صار تسجيل دخول
+      //    جديد بالفترة يلي الطلب فيها بالطريق) — غير هيك، الرد قديم/يتيم
+      //    وما بيعبّر عن حالة الجلسة الحقيقية هلا. ──
+      if (isRealAuthError && _tokenAtSend !== null && _tokenAtSend === _adminToken) {
         _adminToken = null;
         _notifyAuthExpired();
       }
@@ -202,7 +217,9 @@ export const api = {
         if (res.status === 401 || res.status === 403) {
           let isRealAuthError = false;
           try { const body = await res.clone().json(); isRealAuthError = typeof body?.error === "string" && _AUTH_ERROR_MARKERS.some(m => body.error.includes(m)); } catch { }
-          if (isRealAuthError) { _adminToken = null; _notifyAuthExpired(); throw new Error("Session expired"); }
+          // نفس فحص التوكن "اليتيم" أعلاه: ما نسجّل خروج المستخدم إلا لو
+          // هالطلب استُرسل بتوكن ولسا هو نفسه الفعّال حالياً.
+          if (isRealAuthError && _tok !== null && _tok === _adminToken) { _adminToken = null; _notifyAuthExpired(); throw new Error("Session expired"); }
           throw new Error("Upload failed");
         }
         if (!res.ok) throw new Error("Upload failed");
