@@ -503,8 +503,12 @@ export const api = {
     local: {
       run: () => post<{ success: boolean; filename: string; size: number; created_at: string }>("/backup/local", {}),
       list: () => get<Array<{ filename: string; size: number; created_at: string }>>("/backup/local/list"),
-      restore: (filename: string) => post<{ success: boolean }>(`/backup/local/restore/${encodeURIComponent(filename)}`, {}),
-      delete: (filename: string) => del<{ success: boolean }>(`/backup/local/${encodeURIComponent(filename)}`),
+      // ── الاسم بجسم الطلب (body) مش بمسار الرابط (URL path) — لأنه أي رابط
+      //    ينتهي بامتداد ملف حقيقي (.sql) كان بيتصادم مع قاعدة الاستضافة
+      //    (fallback الصفحة الرئيسية لأي ملف "شكله" ملف ثابت) وترجع صفحة
+      //    الموقع نفسها (index.html) بدل ما توصل لكود الخادم الفعلي أصلاً. ──
+      restore: (filename: string) => post<{ success: boolean }>(`/backup/local/restore`, { filename }),
+      delete: (filename: string) => post<{ success: boolean }>(`/backup/local/delete`, { filename }),
     },
 
     drives: {

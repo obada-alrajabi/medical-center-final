@@ -109,33 +109,46 @@ router.get('/local/list', requireAdmin, async (_req, res) => {
   }
 });
 
+// ── اسم الملف صار يوصل بجسم الطلب (req.body.filename) مش بمسار الرابط —
+//    لأنه أي مسار ينتهي بامتداد حقيقي متل ".sql" كان بيتصادم مع قاعدة
+//    "fallback" الاستضافة (أي رابط "شكله" ملف ثابت غير موجود فعلياً على
+//    القرص يرجع صفحة الموقع index.html بدل ما يوصل لكود الخادم أصلاً) —
+//    هيك كان زر "استرجاع" و"حذف" بشاشة النسخ المحلية يرجع صفحة HTML كاملة
+//    بدل تنفيذ العملية الفعلية. إبقاء نسخة المسار القديمة (:filename) لأي
+//    استدعاء خارجي قديم، بس الواجهة الأمامية صارت تستخدم النسخة الجديدة. ──
 async function handleLocalRestore(req, res) {
   try {
-    if (!isValidBackupFilename(req.params.filename)) {
+    const filename = req.body?.filename || req.params.filename;
+    if (!isValidBackupFilename(filename)) {
       return res.status(400).json({ error: 'اسم ملف غير صالح' });
     }
-    const { safetyFilename } = await safetyBackupThenRun(() => restoreLocalBackup(req.params.filename));
+    const { safetyFilename } = await safetyBackupThenRun(() => restoreLocalBackup(filename));
     res.json({ success: true, safetyFilename });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 }
 
+router.post('/local/restore', requireAdmin, handleLocalRestore);
 router.post('/local/restore/:filename', requireAdmin, handleLocalRestore);
 // Alias matching the exact path requested for the restore feature spec.
 router.post('/restore/local/:filename', requireAdmin, handleLocalRestore);
 
-router.delete('/local/:filename', requireAdmin, async (req, res) => {
+async function handleLocalDelete(req, res) {
   try {
-    if (!isValidBackupFilename(req.params.filename)) {
+    const filename = req.body?.filename || req.params.filename;
+    if (!isValidBackupFilename(filename)) {
       return res.status(400).json({ error: 'اسم ملف غير صالح' });
     }
-    deleteLocalBackup(req.params.filename);
+    deleteLocalBackup(filename);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
+
+router.post('/local/delete', requireAdmin, handleLocalDelete);
+router.delete('/local/:filename', requireAdmin, handleLocalDelete);
 
 // ── Method 1 — Google Drive accounts (3 independent slots) ──────────────────
 function maskDriveRow(row) {

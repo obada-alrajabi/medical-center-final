@@ -2281,6 +2281,8 @@ function DeptPurchaseReqsScreen({ purchaseRequests, onSubmitPurchaseRequest, onA
 function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = [], loggedUser, patientDeleteRequests = [], setPatientDeleteRequests, deletedPatientIds = [], setDeletedPatientIds, onAdminDeletePatient, diagnoses = [], setDiagnoses, rehabPlans, setRehabPlans, rehabQueueEntries, setRehabQueueEntries, doDeposit, toast: rehabToast, perms, insurances = [] }: { dept: string; onNavigate: (r: Route) => void; sessions: PatientSession[]; debts: DebtRow[]; customDepts?: Array<{ id: string; name: string; short: string }>; loggedUser?: LoggedUser | null; patientDeleteRequests?: PatientDeleteRequest[]; setPatientDeleteRequests?: React.Dispatch<React.SetStateAction<PatientDeleteRequest[]>>; deletedPatientIds?: string[]; setDeletedPatientIds?: React.Dispatch<React.SetStateAction<string[]>>; onAdminDeletePatient?: (id: string) => Promise<void>; diagnoses?: DiagnosisEntry[]; setDiagnoses?: React.Dispatch<React.SetStateAction<DiagnosisEntry[]>>; rehabPlans?: RehabPlan[]; setRehabPlans?: React.Dispatch<React.SetStateAction<RehabPlan[]>>; rehabQueueEntries?: RehabQueueEntry[]; setRehabQueueEntries?: React.Dispatch<React.SetStateAction<RehabQueueEntry[]>>; doDeposit?: (dept: string, amount: number, note: string, cat?: string) => void; toast?: (m: string, t?: any) => void; perms?: DeptPermissions; insurances?: InsuranceCo[] }) {
   const isAdmin = loggedUser?.type === "admin";
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [selected, setSelected] = useState<typeof mockPatients[0] | null>(null);
   const [delModal, setDelModal] = useState(false);
   const [delReason, setDelReason] = useState("");
@@ -2292,8 +2294,15 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
   const [adminDateVal, setAdminDateVal] = useState("");
   const [adminDelModal, setAdminDelModal] = useState(false);
   const activePatients = mockPatients.filter(p => !deletedPatientIds.includes(p.id));
-  const filtered = search.trim() ? activePatients.filter(p => p.name.includes(search) || p.id.includes(search)) : activePatients;
   const patSessions = (pid: string) => sessions.filter(s => s.patientId === pid).sort((a, b) => b.id - a.id);
+  // ── فلترة بالفترة: حسب تاريخ آخر زيارة للمريض (أو تاريخ التسجيل لو ما إله
+  //    جلسات بعد) — بتفيد لما تدوّر على مريض راجع بفترة محددة بدل تصفّح
+  //    القائمة كلها ──
+  const searched = search.trim() ? activePatients.filter(p => p.name.includes(search) || p.id.includes(search)) : activePatients;
+  const filtered = (!dateFrom && !dateTo) ? searched : searched.filter(p => {
+    const lv = patSessions(p.id)[0]?.date || p.date;
+    return inRangeDDMMYYYY(lv, dateFrom, dateTo);
+  });
   const initials = (name: string) => name.split(" ").slice(0, 2).map(w => w[0]).join("");
   const deptShort = (dId: string) => DEPARTMENTS.find(d => d.id === dId)?.short || customDepts.find(d => d.id === dId)?.short || dId;
   // ── دين المريض المعروض بالقائمة يجب أن يطابق ما يظهر داخل ملفه بالضبط —
@@ -2314,6 +2323,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
             <Btn small variant="secondary" onClick={() => onNavigate({ screen: "new-patient", dept })}><UserPlus size={13} />مريض جديد</Btn>
           </div>
           <div className="relative"><Search size={13} className="absolute top-1/2 right-3 -translate-y-1/2 text-[#999]" /><input type="text" placeholder="ابحث بالاسم أو رقم الهوية..." value={search} onChange={e => setSearch(e.target.value)} className="w-full h-9 pr-8 pl-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #E0E0E0", backgroundColor: "#FAFAFA" }} /></div>
+          <div className="mt-2"><DateRangePicker from={dateFrom} to={dateTo} onFrom={setDateFrom} onTo={setDateTo} onClear={() => { setDateFrom(""); setDateTo(""); }} compact /></div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {filtered.length === 0
@@ -4914,9 +4924,12 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
   const [testSearch, setTestSearch] = useState(""); const [catFilter, setCatFilter] = useState("الكل");
   const [labTypeFilter, setLabTypeFilter] = useState<"internal" | "external">("internal");
   const [saving, setSaving] = useState(false);
-  const [board, setBoard] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> }[]>([]);
-  const [resultsModal, setResultsModal] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> } | null>(null);
-  useEffect(() => { api.queues.getAll("lab").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patientId: r.patient_id || null, patient: r.patient_name, tests: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", labType: typeof r.notes === "string" && r.notes.includes("lab_type:external") ? "external" as const : "internal" as const, results: r.results || undefined }))); }).catch(() => { }); }, []);
+  const [board, setBoard] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; date?: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> }[]>([]);
+  const [resultsModal, setResultsModal] = useState<{ id: number; patientId?: string | null; patient: string; tests: string[]; time: string; date?: string; status: "pending" | "done"; labType?: "internal" | "external"; results?: Record<string, { name: string; unit: string; min: string; max: string; value: string }[]> } | null>(null);
+  useEffect(() => { api.queues.getAll("lab").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patientId: r.patient_id || null, patient: r.patient_name, tests: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", date: r.created_at ? String(r.created_at).substring(0, 10) : "", status: r.status as "pending" | "done", labType: typeof r.notes === "string" && r.notes.includes("lab_type:external") ? "external" as const : "internal" as const, results: r.results || undefined }))); }).catch(() => { }); }, []);
+  const [boardDateFrom, setBoardDateFrom] = useState("");
+  const [boardDateTo, setBoardDateTo] = useState("");
+  const boardInRange = (s: { date?: string }) => (!boardDateFrom && !boardDateTo) || inRangeDDMMYYYY(s.date || "", boardDateFrom, boardDateTo);
   const today = _today();
   const LAB_FILTER_CATS = ["الكل", ...LAB_CATS];
   const filteredTests = _labTests.filter(t => {
@@ -5376,10 +5389,11 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
               <button onClick={() => setLastSaved(null)} className="text-[#555] hover:text-[#1B3A6B] flex-shrink-0"><X size={16} /></button>
             </div>
           )}
+          <div className="mb-4"><DateRangePicker from={boardDateFrom} to={boardDateTo} onFrom={setBoardDateFrom} onTo={setBoardDateTo} onClear={() => { setBoardDateFrom(""); setBoardDateTo(""); }} compact /></div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <Card title={`قيد الإنجاز (${board.filter(s => s.status === "pending").length})`}>
-              {board.filter(s => s.status === "pending").length === 0 ? <EmptyState msg="لا توجد فحوصات قيد الإنجاز حالياً" /> : (
-                <div className="space-y-3">{board.filter(s => s.status === "pending").map(s => (
+            <Card title={`قيد الإنجاز (${board.filter(s => s.status === "pending" && boardInRange(s)).length})`}>
+              {board.filter(s => s.status === "pending" && boardInRange(s)).length === 0 ? <EmptyState msg="لا توجد فحوصات قيد الإنجاز حالياً" /> : (
+                <div className="space-y-3">{board.filter(s => s.status === "pending" && boardInRange(s)).map(s => (
                   <div key={s.id} className="rounded-xl transition-all hover:shadow-md" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
                     <div className="p-4 flex flex-col justify-between h-full min-h-[140px]">
                       <div>
@@ -5392,15 +5406,15 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
                 ))}</div>
               )}
             </Card>
-            <Card title={`مكتمل (${board.filter(s => s.status === "done").length})`}>
-              {board.filter(s => s.status === "done").length === 0 ? <EmptyState msg="لا توجد فحوصات مكتملة" /> : (
-                <div className="space-y-2">{board.filter(s => s.status === "done").map(s => (
+            <Card title={`مكتمل (${board.filter(s => s.status === "done" && boardInRange(s)).length})`}>
+              {board.filter(s => s.status === "done" && boardInRange(s)).length === 0 ? <EmptyState msg="لا توجد فحوصات مكتملة" /> : (
+                <div className="space-y-2">{board.filter(s => s.status === "done" && boardInRange(s)).map(s => (
                   <div key={s.id} className="p-3 rounded-xl" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2"><p className="text-sm font-semibold">{s.patient}</p>{s.labType === "external" && <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: "#FFF8E1", color: "#E65100", border: "1px solid #FFE082" }}>خارجي 🔗</span>}</div>
                         <div className="flex gap-1 mt-1 flex-wrap">{s.tests.map(t => <Badge key={t} color="success">{t}</Badge>)}</div>
-                        <span className="text-xs text-[#999] flex items-center gap-1 mt-1"><Clock size={11} />{s.time}</span>
+                        <span className="text-xs text-[#999] flex items-center gap-1 mt-1"><Clock size={11} />{s.time}{s.date ? ` — ${s.date.split("-").reverse().join("/")}` : ""}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Btn small variant="ghost" onClick={() => openResults(s)} title="تعديل النتائج"><Pencil size={14} /></Btn>
@@ -5535,9 +5549,12 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
   const [deviceFilter, setDeviceFilter] = useState("الكل");
   const [discount, setDiscount] = useState(""); const [paid, setPaid] = useState("");
   const [saving, setSaving] = useState(false);
-  type RadBoardItem = { id: number; patient: string; patientId?: string | null; images: string[]; time: string; status: "pending" | "done"; reports?: Record<string, { text: string; doctor: string; verdict: string }> };
+  type RadBoardItem = { id: number; patient: string; patientId?: string | null; images: string[]; time: string; date?: string; status: "pending" | "done"; reports?: Record<string, { text: string; doctor: string; verdict: string }> };
   const [board, setBoard] = useState<RadBoardItem[]>([]);
-  useEffect(() => { api.queues.getAll("radiology").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patient: r.patient_name, patientId: r.patient_id || null, images: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", status: r.status as "pending" | "done", reports: r.results || undefined }))); }).catch(() => { }); }, []);
+  useEffect(() => { api.queues.getAll("radiology").then(rows => { if (!rows) return; setBoard((rows as any[]).map(r => ({ id: r.id, patient: r.patient_name, patientId: r.patient_id || null, images: Array.isArray(r.items) ? r.items : [], time: r.queue_time ?? "", date: r.created_at ? String(r.created_at).substring(0, 10) : "", status: r.status as "pending" | "done", reports: r.results || undefined }))); }).catch(() => { }); }, []);
+  const [boardDateFrom, setBoardDateFrom] = useState("");
+  const [boardDateTo, setBoardDateTo] = useState("");
+  const boardInRange = (s: { date?: string }) => (!boardDateFrom && !boardDateTo) || inRangeDDMMYYYY(s.date || "", boardDateFrom, boardDateTo);
   const [reportModal, setReportModal] = useState<RadBoardItem | null>(null);
   const [imgReports, setImgReports] = useState<Record<string, { text: string; doctor: string; verdict: string }>>({});
   const openReportModal = (s: RadBoardItem) => {
@@ -5892,10 +5909,11 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
               <Btn small variant="ghost" onClick={() => { const html = `<h2>لوحة متابعة الأشعة التشخيصية</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${board.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد التجهيز</div><div class="kpi-v out">${board.filter(s => s.status === "pending").length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${board.filter(s => s.status === "done").length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>الصور المطلوبة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${board.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patient}</td><td>${s.images.join("، ")}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد التجهيز"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "لوحة متابعة الأشعة التشخيصية", undefined, undefined, true, "radiology"); }}><FileDown size={14} />حفظ PDF</Btn>
             </div>
           </div>
+          <DateRangePicker from={boardDateFrom} to={boardDateTo} onFrom={setBoardDateFrom} onTo={setBoardDateTo} onClear={() => { setBoardDateFrom(""); setBoardDateTo(""); }} compact />
           <div className="grid grid-cols-2 gap-5">
-            <Card title={`قيد الإنجاز (${board.filter(s => s.status === "pending").length})`}>
-              {board.filter(s => s.status === "pending").length === 0 ? <EmptyState msg="لا توجد صور قيد التجهيز" /> : (
-                <div className="space-y-3">{board.filter(s => s.status === "pending").map(s => (
+            <Card title={`قيد الإنجاز (${board.filter(s => s.status === "pending" && boardInRange(s)).length})`}>
+              {board.filter(s => s.status === "pending" && boardInRange(s)).length === 0 ? <EmptyState msg="لا توجد صور قيد التجهيز" /> : (
+                <div className="space-y-3">{board.filter(s => s.status === "pending" && boardInRange(s)).map(s => (
                   <div key={s.id} className="p-4 rounded-xl" style={{ backgroundColor: "#FFF8E1", border: "1px solid #FFE082" }}>
                     <div className="flex items-center gap-2 mb-2"><Aperture size={15} className="text-[#FF8F00]" /><p className="text-sm font-bold">{s.patient}</p></div>
                     <div className="flex flex-wrap gap-1 mb-3">{s.images.map(t => <Badge key={t} color="warning">{t}</Badge>)}</div>
@@ -5919,12 +5937,12 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
                 ))}</div>
               )}
             </Card>
-            <Card title={`مكتمل (${board.filter(s => s.status === "done").length})`}>
-              {board.filter(s => s.status === "done").length === 0 ? <EmptyState msg="لا توجد صور مكتملة" /> : (
-                <div className="space-y-2">{board.filter(s => s.status === "done").map(s => (
+            <Card title={`مكتمل (${board.filter(s => s.status === "done" && boardInRange(s)).length})`}>
+              {board.filter(s => s.status === "done" && boardInRange(s)).length === 0 ? <EmptyState msg="لا توجد صور مكتملة" /> : (
+                <div className="space-y-2">{board.filter(s => s.status === "done" && boardInRange(s)).map(s => (
                   <div key={s.id} className="p-3 rounded-xl" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
                     <div className="flex items-center justify-between">
-                      <div><p className="text-sm font-semibold">{s.patient}</p><div className="flex gap-1 mt-1 flex-wrap">{s.images.map(t => <Badge key={t} color="success">{t}</Badge>)}</div></div>
+                      <div><p className="text-sm font-semibold">{s.patient}</p><div className="flex gap-1 mt-1 flex-wrap">{s.images.map(t => <Badge key={t} color="success">{t}</Badge>)}</div><span className="text-xs text-[#999] flex items-center gap-1 mt-1"><Clock size={11} />{s.time}{s.date ? ` — ${s.date.split("-").reverse().join("/")}` : ""}</span></div>
                       <Btn small variant="ghost" onClick={() => printRadReport(s)}><Printer size={14} /></Btn>
                     </div>
                   </div>
@@ -6370,8 +6388,11 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
   const [modalFineMotor, setModalFineMotor] = useState("");
   const [modalSensory, setModalSensory] = useState("");
   const [modalAdl, setModalAdl] = useState("");
-  const pending = (rehabQueueEntries || []).filter(s => s.status === "pending");
-  const done = (rehabQueueEntries || []).filter(s => s.status === "done");
+  const [boardDateFrom, setBoardDateFrom] = useState("");
+  const [boardDateTo, setBoardDateTo] = useState("");
+  const boardInRange = (s: { date?: string }) => (!boardDateFrom && !boardDateTo) || inRangeDDMMYYYY(s.date || "", boardDateFrom, boardDateTo);
+  const pending = (rehabQueueEntries || []).filter(s => s.status === "pending" && boardInRange(s));
+  const done = (rehabQueueEntries || []).filter(s => s.status === "done" && boardInRange(s));
   const getPlan = (planId: number) => (rehabPlans || []).find(pl => pl.id === planId);
   const openModal = (entry: RehabQueueEntry) => { setResultsModal(entry); setModalNotes(entry.therapistNotes || ""); setModalResult(entry.sessionResult || ""); setModalPain(entry.painScale ?? 5); setModalMovement(entry.movementAssessment || ""); setModalGrossMotor(entry.grossMotorSkills || ""); setModalFineMotor(entry.fineMotorSkills || ""); setModalSensory(entry.sensoryCondition || ""); setModalAdl(entry.adlActivities || ""); };
   const buildRehabReportHtml = (entry: RehabQueueEntry, plan?: RehabPlan) => {
@@ -6452,6 +6473,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
           <Btn small variant="ghost" onClick={() => { const all = rehabQueueEntries || []; const html = `<h2>قائمة طلبات العلاج التأهيلي</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">إجمالي الطلبات</div><div class="kpi-v">${all.length}</div></div><div class="kpi-box"><div class="kpi-l">قيد الإنجاز</div><div class="kpi-v out">${pending.length}</div></div><div class="kpi-box"><div class="kpi-l">منجز</div><div class="kpi-v in">${done.length}</div></div></div><table><thead><tr><th>#</th><th>المريض</th><th>التشخيص</th><th>الأخصائي</th><th>الجلسة</th><th>الوقت</th><th>الحالة</th></tr></thead><tbody>${all.map((s, i) => `<tr><td>${i + 1}</td><td>${s.patientName}</td><td>${s.diagnosis}</td><td>${s.specialist}</td><td>${s.sessionNumber}</td><td>${s.time}</td><td>${s.status === "done" ? "✅ منجز" : "⏳ قيد الإنجاز"}</td></tr>`).join("")}</tbody></table>`; savePdfHtml(html, "طلبات العلاج التأهيلي وتعبئة النتائج", undefined, undefined, true, "rehab"); }}><FileDown size={14} />حفظ PDF</Btn>
         </div>
       </div>
+      <DateRangePicker from={boardDateFrom} to={boardDateTo} onFrom={setBoardDateFrom} onTo={setBoardDateTo} onClear={() => { setBoardDateFrom(""); setBoardDateTo(""); }} compact />
       <div className="grid grid-cols-2 gap-5">
         <Card title={`⏳ قيد الإنجاز (${pending.length})`}>
           {pending.length === 0 ? <EmptyState msg="لا جلسات قيد الإنجاز" /> : (
@@ -6479,7 +6501,7 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
             <div className="space-y-2">{done.map(s => (
               <div key={s.id} className="p-3 rounded-xl" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0"><p className="text-sm font-semibold break-words">{s.patientName}</p><p className="text-xs text-[#555] break-words">{s.diagnosis} · {s.specialist}</p><p className="text-xs text-[#777] mt-0.5">الجلسة {s.sessionNumber} · {s.time}</p>{s.therapistNotes && <p className="text-xs text-[#555] mt-1 italic break-words">"{s.therapistNotes}"</p>}</div>
+                  <div className="flex-1 min-w-0"><p className="text-sm font-semibold break-words">{s.patientName}</p><p className="text-xs text-[#555] break-words">{s.diagnosis} · {s.specialist}</p><p className="text-xs text-[#777] mt-0.5">الجلسة {s.sessionNumber} · {s.time}{s.date ? ` — ${s.date}` : ""}</p>{s.therapistNotes && <p className="text-xs text-[#555] mt-1 italic break-words">"{s.therapistNotes}"</p>}</div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <Badge color="success"><CheckCircle size={11} />مكتمل</Badge>
                     {s.sessionResult && <Badge color="info">{s.sessionResult}</Badge>}
