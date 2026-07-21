@@ -1,18 +1,21 @@
 import express from 'express';
 import multer from 'multer';
+import fs from 'fs';
+import path from 'path';
 import { ZipArchive } from 'archiver';
 import pool, { reconnectPool } from '../db.js';
 import { requireAdmin } from '../middleware/adminAuth.js';
 import {
   encryptText, decryptText,
   runLocalBackup, listLocalBackups, deleteLocalBackup, restoreLocalBackup,
-  restoreSqlContent,
-  dumpDatabaseBuffer, listAllTableNames,
+  restoreSqlContent, restoreFromZipBuffer,
+  dumpDatabaseBuffer, buildBackupZipBuffer, listAllTableNames,
   uploadJsonToDrive, validateServiceAccountJson,
-  listDriveBackups, downloadDriveFile,
-  extractSqlFromBackupZip,
+  listDriveBackups, downloadDriveFileBuffer,
   isValidBackupFilename,
 } from '../services/backupService.js';
+
+const UPLOADS_SESSIONS_DIR = path.join(process.cwd(), 'uploads', 'sessions');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -81,6 +84,12 @@ router.get('/export', async (_req, res) => {
       } catch (err) {
         archive.append(JSON.stringify({ error: err.message }), { name: `tables/${table}.error.json` });
       }
+    }
+
+    // ── مرفقات ملفات الجلسات (uploads/sessions) — بتنضم كمان لهاي النسخة
+    //    اليدوية اللي بتنزل مباشرة على جهاز المستخدم، مش بس للنسخ المحلية/درايف. ──
+    if (fs.existsSync(UPLOADS_SESSIONS_DIR)) {
+      archive.directory(UPLOADS_SESSIONS_DIR, 'uploads/sessions');
     }
 
     await archive.finalize();
@@ -247,14 +256,15 @@ async function runDriveBackup(slot) {
   }
   const credentialsJson = decryptText(row.credentials_json);
   if (!credentialsJson) throw new Error('تعذّر فك تشفير بيانات الاعتماد');
-  const sqlBuffer = await dumpDatabaseBuffer();
+  const zipBuffer = await buildBackupZipBuffer();
   const date = new Date(Date.now()+3*60*60*1000).toISOString().slice(0, 10);
-  const filename = `backup_${date}.sql`;
+  const filename = `backup_${date}.zip`;
   await uploadJsonToDrive({
     credentialsJson,
     folderId: row.folder_id,
     filename,
-    content: sqlBuffer,
+    content: zipBuffer,
+    mimeType: 'application/zip',
   });
   await pool.query('UPDATE backup_drives SET last_backup = NOW() WHERE slot = $1', [slot]);
   return { slot, filename };
@@ -322,8 +332,17 @@ router.post('/restore/drive/:slot', requireAdmin, async (req, res) => {
     if (!credentialsJson) return res.status(500).json({ error: 'تعذّر فك تشفير بيانات الاعتماد' });
 
     const { safetyFilename } = await safetyBackupThenRun(async () => {
-      const sqlText = await downloadDriveFile({ credentialsJson, fileId });
-      await restoreSqlContent(sqlText);
+      const buffer = await downloadDriveFileBuffer({ credentialsJson, fileId });
+      // ── نسخ Drive الجديدة .zip (قاعدة بيانات + مرفقات) — نتعرّف عليها من
+      //    توقيع ZIP الثنائي (PK) بدل الاعتماد على اسم الملف، لأن هاي النقطة
+      //    ما توصلها امتداد الملف أصلاً (fileId فقط). نسخ قديمة قبل هذا
+      //    التحديث كانت نص SQL خام بدون توقيع ZIP — بترجع للمسار القديم. ──
+      const isZip = buffer.length > 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+      if (isZip) {
+        await restoreFromZipBuffer(buffer);
+      } else {
+        await restoreSqlContent(buffer.toString('utf8'));
+      }
     });
     res.json({ success: true, safetyFilename });
   } catch (err) {
@@ -335,8 +354,7 @@ router.post('/restore/drive/:slot', requireAdmin, async (req, res) => {
 router.post('/restore/zip', requireAdmin, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'لم يتم رفع أي ملف' });
-    const sqlText = await extractSqlFromBackupZip(req.file.buffer);
-    const { safetyFilename } = await safetyBackupThenRun(() => restoreSqlContent(sqlText));
+    const { safetyFilename } = await safetyBackupThenRun(() => restoreFromZipBuffer(req.file.buffer));
     res.json({ success: true, safetyFilename });
   } catch (err) {
     res.status(400).json({ error: err.message });

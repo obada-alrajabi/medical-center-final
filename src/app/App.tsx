@@ -4075,7 +4075,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
               //    فواتير مسجَّلة على شركة التأمين (patientInsInvoices) — نفس
               //    البيانات المعروضة بتبويب "الملف المالي" أعلاه. ──
               const paymentsHtml = debtPayments.length > 0 ? `<h2>سجل دفعات تسديد الديون</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>قيمة الدفعة</th><th>الباقي بعد الدفعة</th></tr></thead><tbody>${[...debtPayments].reverse().map(pay => `<tr><td>${pay.date}</td><td>${deptShort(pay.dept || "")}</td><td class="in">${fmt(pay.amount)}</td><td class="${pay.remainingAfter > 0 ? "out" : "in"}">${pay.remainingAfter > 0 ? fmt(pay.remainingAfter) : "مسدد بالكامل ✓"}</td></tr>`).join("")}</tbody></table>` : "";
-              const insuranceHtml = p.insurance ?`<h2>تفاصيل التأمين</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">شركة التأمين</div><div class="kpi-v">${p.insuranceCompany || "غير محدد"}</div></div></div>${patientInsInvoices.length > 0 ? `<table><thead><tr><th>التاريخ</th><th>القسم</th><th>رقم الكشفية</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${patientInsInvoices.map(inv => `<tr><td>${inv.date}</td><td>${deptShort(inv.dept)}</td><td>${inv.claimNo || "—"}</td><td>${fmt(inv.total)}</td><td class="in">${fmt(inv.paid)}</td><td class="${inv.remaining > 0 ? "out" : "in"}">${inv.remaining > 0 ? fmt(inv.remaining) : "✓"}</td><td>${inv.status === "paid" ? "مسدد" : inv.status === "partial" ? "جزئي" : "غير مسدد"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي على شركة التأمين</td><td style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.total, 0))}</td><td class="in" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.paid, 0))}</td><td class="out" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.remaining, 0))}</td><td></td></tr></tfoot></table>` : `<p style="font-size:12px;color:#777">لا توجد فواتير مسجَّلة على شركة التأمين لهذا المريض</p>`}` : "";
+              const insuranceHtml = p.insurance ?`<h2>تفاصيل التأمين</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">شركة التأمين</div><div class="kpi-v">${p.insuranceCompany || "غير محدد"}</div></div></div>${patientInsInvoices.length > 0 ? `<table><thead><tr><th>التاريخ</th><th>القسم</th><th>رقم الكشفية</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr></thead><tbody>${patientInsInvoices.map(inv => `<tr><td>${inv.date}</td><td>${deptShort(inv.dept)}</td><td>${inv.claimNo || "—"}</td><td>${fmt(inv.total)}</td><td class="in">${fmt(inv.paid)}</td><td class="${inv.remaining > 0 ? "out" : "in"}">${inv.remaining > 0 ? fmt(inv.remaining) : "✓"}</td><td>${inv.status === "paid" ? "مسدد" : inv.status === "partial" ? "جزئي" : "غير مسدد"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي على شركة التأمين</td><td style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.total, 0))}</td><td class="in" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.paid, 0))}</td><td class="out" style="font-weight:bold">${fmt(patientInsInvoices.reduce((s, i) => s + i.remaining, 0))}</td><td></td></tr></tfoot></table>` : `<p style="font-size:.92em;color:#777">لا توجد فواتير مسجَّلة على شركة التأمين لهذا المريض</p>`}` : "";
               const html = `<h2>كشف الحساب المالي — ${p.name}${isAdmin ? "" : ` (قسم ${deptShort(dept)} فقط)`}</h2><div class="kpi"><div class="kpi-box"><div class="kpi-l">رقم الملف</div><div class="kpi-v">${p.id}</div></div><div class="kpi-box"><div class="kpi-l">الاسم</div><div class="kpi-v">${p.name}</div></div><div class="kpi-box"><div class="kpi-l">الجوال</div><div class="kpi-v">${p.phone}</div></div><div class="kpi-box"><div class="kpi-l">تاريخ التسجيل</div><div class="kpi-v">${p.date}</div></div></div><h2>تفاصيل الفواتير</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>إجمالي الفاتورة</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${finSess.map(s => `<tr><td>${s.date}</td><td>${deptShort(s.dept)}</td><td>${s.diagnoses.slice(0, 2).join(" · ") || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "✓"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3" style="font-weight:bold">الإجمالي</td><td style="font-weight:bold">${fmt(totalAmt)}</td><td class="in" style="font-weight:bold">${fmt(totalPaid)}</td><td class="${liveDebt > 0 ? "out" : "in"}" style="font-weight:bold">${liveDebt > 0 ? fmt(liveDebt) : "مسدد بالكامل ✓"}</td></tr></tfoot></table>${paymentsHtml}${insuranceHtml}`;
               printHtml(html, `كشف الحساب المالي — ${p.name}`, undefined, undefined, true, dept);
             }}><Receipt size={13} />كشف الحساب</Btn>
@@ -5034,7 +5034,7 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     let body = `<div class="pt-info">${infoItems.join("")}</div>`;
     const tests = results ? Object.keys(results) : [];
     if (tests.length === 0) {
-      body += `<p style="font-size:12px;color:#999">لم تُدخل نتائج بعد لهذا الطلب.</p>`;
+      body += `<p style="font-size:.92em;color:#999">لم تُدخل نتائج بعد لهذا الطلب.</p>`;
     } else {
       tests.forEach(testName => {
         const params = results![testName] || [];
@@ -5646,9 +5646,9 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     s.images.forEach(img => {
       const r = reports[img] || { text: "", doctor: "", verdict: "—" };
       body += `<div class="tests-title">${img}</div>`;
-      body += `<p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p>`;
-      body += `<p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p>`;
-      body += `<p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`;
+      body += `<p style="font-size:.92em;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p>`;
+      body += `<p style="font-size:.92em;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p>`;
+      body += `<p style="font-size:.92em;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`;
     });
     if (gAllPrintSettings["radiology"]?.show_signature ?? true) body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الطبيب المُشخِّص</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div><div class="sig-box"><div class="sig-line"></div>ختم قسم الأشعة</div></div>`;
     return `<div class="pt-card">${body}</div>`;
@@ -6043,7 +6043,7 @@ function RadResultsScreen({ toast }: { toast: (m: string, t?: any) => void }) {
               <div key={s.id} className="p-3 rounded-xl" style={{ backgroundColor: "#E8F5E9", border: "1px solid #A5D6A7" }}>
                 <div className="flex items-center justify-between">
                   <div><p className="text-sm font-semibold">{s.patient}</p><div className="flex gap-1 mt-1 flex-wrap">{s.images.map(img => <Badge key={img} color="success">{img}</Badge>)}</div></div>
-                  <div className="flex items-center gap-2"><Badge color="success"><CheckCircle size={12} />مكتمل</Badge><Btn small variant="ghost" onClick={() => printHtml(s.images.map(img => { const r = s.reports?.[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${s.patient}`, undefined, undefined, true, "radiology")}><Printer size={14} /></Btn></div>
+                  <div className="flex items-center gap-2"><Badge color="success"><CheckCircle size={12} />مكتمل</Badge><Btn small variant="ghost" onClick={() => printHtml(s.images.map(img => { const r = s.reports?.[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:.92em;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:.92em;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:.92em;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${s.patient}`, undefined, undefined, true, "radiology")}><Printer size={14} /></Btn></div>
                 </div>
               </div>
             ))}</div>
@@ -6052,7 +6052,7 @@ function RadResultsScreen({ toast }: { toast: (m: string, t?: any) => void }) {
       </div>
       {modal && (
         <Modal open={true} onClose={() => setModal(null)} title={`رفع نتائج: ${modal.patient}`} wide
-          footer={<><Btn variant="primary" onClick={() => printHtml(modal.images.map(img => { const r = imgReports[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:12px;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:12px;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${modal.patient}`, undefined, undefined, true, "radiology")}><Printer size={16} />طباعة التقرير</Btn><Btn variant="success" onClick={() => deliver(modal.id)}><Check size={16} />حفظ وإتمام الطلب</Btn><Btn variant="outline" onClick={() => setModal(null)}>إغلاق</Btn></>}>
+          footer={<><Btn variant="primary" onClick={() => printHtml(modal.images.map(img => { const r = imgReports[img] || { text: "", doctor: "", verdict: "—" }; return `<div class="tests-title">${img}</div><p style="font-size:.92em;color:#444;margin:4px 0"><b>الطبيب المُشخِّص:</b> ${r.doctor || "—"}</p><p style="font-size:.92em;color:#444;margin:4px 0"><b>النتيجة:</b> ${r.verdict || "—"}</p><p style="font-size:.92em;color:#444;margin:4px 0"><b>وصف/تقرير الصورة:</b> ${r.text || "—"}</p>`; }).join(""), `تقرير أشعة تشخيصية — ${modal.patient}`, undefined, undefined, true, "radiology")}><Printer size={16} />طباعة التقرير</Btn><Btn variant="success" onClick={() => deliver(modal.id)}><Check size={16} />حفظ وإتمام الطلب</Btn><Btn variant="outline" onClick={() => setModal(null)}>إغلاق</Btn></>}>
           <div className="space-y-5">
             <p className="text-xs text-[#999] flex items-center gap-1"><AlertTriangle size={12} className="text-[#FF8F00]" />أدخل تقرير ووصف لكل صورة أشعة</p>
             {modal.images.map(img => (
@@ -6404,15 +6404,15 @@ function RehabSessionScreen({ toast, rehabPlans, setRehabPlans, rehabQueueEntrie
       `<div class="pt-field"><b>التاريخ:</b> ${entry.date || ""} ${entry.time || ""}</div>`,
     ].join("");
     let body = `<div class="pt-info">${infoItems}</div>`;
-    body += `<div class="tests-title">مقياس الألم (0-10)</div><p style="font-size:13px;color:#444;margin:4px 0"><b>${modalPain}/10</b></p>`;
-    body += `<div class="tests-title">تقييم الحركة</div><p style="font-size:13px;color:#444;margin:4px 0">${modalMovement || "—"}</p>`;
-    body += `<div class="tests-title">المهارات الحركية الكبرى (Gross Motor Skills)</div><p style="font-size:13px;color:#444;margin:4px 0">${modalGrossMotor || "—"}</p>`;
-    body += `<div class="tests-title">المهارات الحركية الدقيقة ووظائف اليد (Fine Motor Skills / Hand Function)</div><p style="font-size:13px;color:#444;margin:4px 0">${modalFineMotor || "—"}</p>`;
-    body += `<div class="tests-title">الحالة الحسية (Sensory Condition)</div><p style="font-size:13px;color:#444;margin:4px 0">${modalSensory || "—"}</p>`;
-    body += `<div class="tests-title">أنشطة الحياة اليومية (ADL's)</div><p style="font-size:13px;color:#444;margin:4px 0">${modalAdl || "—"}</p>`;
-    body += `<div class="tests-title">ملاحظات الجلسة</div><p style="font-size:13px;color:#444;margin:4px 0">${modalNotes || "—"}</p>`;
-    body += `<div class="tests-title">نتيجة الجلسة</div><p style="font-size:13px;color:#444;margin:4px 0">${modalResult || "—"}</p>`;
-    if (plan) body += `<div class="tests-title">خطة العلاج التأهيلي</div><p style="font-size:13px;color:#444;margin:4px 0">إجمالي الجلسات: ${plan.totalSessions} — المُنجَز: ${plan.completedSessions} — المتبقي: ${plan.totalSessions - plan.completedSessions}</p>`;
+    body += `<div class="tests-title">مقياس الألم (0-10)</div><p style="color:#444;margin:4px 0"><b>${modalPain}/10</b></p>`;
+    body += `<div class="tests-title">تقييم الحركة</div><p style="color:#444;margin:4px 0">${modalMovement || "—"}</p>`;
+    body += `<div class="tests-title">المهارات الحركية الكبرى (Gross Motor Skills)</div><p style="color:#444;margin:4px 0">${modalGrossMotor || "—"}</p>`;
+    body += `<div class="tests-title">المهارات الحركية الدقيقة ووظائف اليد (Fine Motor Skills / Hand Function)</div><p style="color:#444;margin:4px 0">${modalFineMotor || "—"}</p>`;
+    body += `<div class="tests-title">الحالة الحسية (Sensory Condition)</div><p style="color:#444;margin:4px 0">${modalSensory || "—"}</p>`;
+    body += `<div class="tests-title">أنشطة الحياة اليومية (ADL's)</div><p style="color:#444;margin:4px 0">${modalAdl || "—"}</p>`;
+    body += `<div class="tests-title">ملاحظات الجلسة</div><p style="color:#444;margin:4px 0">${modalNotes || "—"}</p>`;
+    body += `<div class="tests-title">نتيجة الجلسة</div><p style="color:#444;margin:4px 0">${modalResult || "—"}</p>`;
+    if (plan) body += `<div class="tests-title">خطة العلاج التأهيلي</div><p style="color:#444;margin:4px 0">إجمالي الجلسات: ${plan.totalSessions} — المُنجَز: ${plan.completedSessions} — المتبقي: ${plan.totalSessions - plan.completedSessions}</p>`;
     if (gAllPrintSettings["rehab"]?.show_signature ?? true) body += `<div class="sig-area"><div class="sig-box"><div class="sig-line"></div>توقيع الأخصائي المعالج</div><div class="sig-box"><div class="sig-line"></div>توقيع المريض</div></div>`;
     return `<div class="pt-card">${body}</div>`;
   };
@@ -7735,10 +7735,10 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
     <table><thead><tr><th>#</th><th>القسم</th><th>مقدم الطلب</th><th>التاريخ</th><th>الأصناف</th><th>الإجمالي</th><th>الحالة</th><th>ملاحظات</th></tr></thead>
     <tbody>${filtered.map(r => `<tr>
       <td>${r.id}</td><td>${DEPT_NAMES[r.dept] || r.dept}</td><td>${r.requestedBy}</td><td>${r.date}</td>
-      <td style="font-size:10px;color:#555">${r.items.map(it => `${it.name} (${it.qty} ${it.unit} × ${fmt(it.estimatedPrice)})`).join("<br/>")}</td>
+      <td style="font-size:.77em;color:#555">${r.items.map(it => `${it.name} (${it.qty} ${it.unit} × ${fmt(it.estimatedPrice)})`).join("<br/>")}</td>
       <td><strong>${fmt(r.totalAmount)}</strong></td>
       <td class="${r.status === "pending" ? "" : r.status === "approved" ? "in" : "out"}">${r.status === "pending" ? "⏳ معلق" : r.status === "approved" ? "✅ مُوافق" : "❌ مرفوض"}</td>
-      <td style="font-size:10px">${r.status === "approved" ? `وافق: ${r.approvedBy || "المدير"}<br/>${r.approvedDate || ""}` : r.status === "rejected" ? `سبب: ${r.rejectionReason || "—"}` : "—"}</td>
+      <td style="font-size:.77em">${r.status === "approved" ? `وافق: ${r.approvedBy || "المدير"}<br/>${r.approvedDate || ""}` : r.status === "rejected" ? `سبب: ${r.rejectionReason || "—"}` : "—"}</td>
     </tr>`).join("")}</tbody>
     <tfoot><tr><td colspan="5" style="text-align:right">الإجمالي الكلي</td><td colspan="3">${fmt(filteredTotal)}</td></tr></tfoot>
     </table>`;
@@ -7753,7 +7753,7 @@ function FinAllPurchaseReqsScreen({ purchaseRequests, onApprovePurchaseRequest, 
       <div class="kpi-box"><div class="kpi-l">التاريخ والوقت</div><div class="kpi-v">${req.date}</div></div>
       <div class="kpi-box"><div class="kpi-l">الحالة</div><div class="kpi-v">${req.status === "pending" ? "⏳ معلق" : req.status === "approved" ? "✅ مُوافق عليه" : "❌ مرفوض"}</div></div>
     </div>
-    ${req.note ? `<p style="font-size:12px"><strong>ملاحظات الطلب:</strong> ${req.note}</p>` : ""}
+    ${req.note ? `<p style="font-size:.92em"><strong>ملاحظات الطلب:</strong> ${req.note}</p>` : ""}
     <h2>تفاصيل الأصناف المطلوبة</h2>
     <table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>السعر التقديري</th><th>الإجمالي</th></tr></thead>
     <tbody>${req.items.map((it, i) => `<tr><td>${i + 1}</td><td>${it.name}</td><td>${it.qty}</td><td>${it.unit}</td><td>${fmt(it.estimatedPrice)}</td><td>${fmt(it.qty * it.estimatedPrice)}</td></tr>`).join("")}
@@ -8131,7 +8131,7 @@ function FinProfitScreen({ drawers, employees, purchaseRequests = [], employeeAd
           <Btn small variant="ghost" onClick={() => {
             const html = `<div class="kpi"><div class="kpi-box" style="flex:2"><div class="kpi-l">صافي الربح</div><div class="kpi-v ${rangeProfit >= 0 ? "in" : "out"}">${fmt(rangeProfit)}</div></div><div class="kpi-box"><div class="kpi-l">الإيرادات</div><div class="kpi-v in">${fmt(rangeRevenue)}</div></div><div class="kpi-box"><div class="kpi-l">المصروفات + الرواتب</div><div class="kpi-v out">${fmt(rangeOut)}</div></div></div>
             <h2>توضيح المعادلات المالية</h2>
-            <div style="font-size:14px;padding:15px;background:#F5F8FF;border-radius:8px;line-height:1.6;margin-bottom:20px;border:1px solid #1B3A6B;color:#1B3A6B;">
+            <div style="font-size:1.08em;padding:15px;background:#F5F8FF;border-radius:8px;line-height:1.6;margin-bottom:20px;border:1px solid #1B3A6B;color:#1B3A6B;">
               <p><b>صافي الربح</b> = الإيرادات - (المصروفات + الرواتب)</p>
               <p><b>الإيرادات</b> = الدخل من المرضى + سندات القبض</p>
               <p><b>الرواتب</b> = الرواتب الأصلية - قيمة السلف المقبولة (سندات الصرف الشخصية للموظفين مستبعدة من هذه المعادلة — تُخصم من راتب الموظف عبر نظام الرواتب المستقل)</p>
@@ -11121,7 +11121,7 @@ function BackupScreen({ toast }: { toast: (m: string, t?: any) => void }) {
         <div className="flex items-center justify-between p-4 rounded-xl flex-wrap gap-3" style={{ backgroundColor: "#FAFAFA", border: "1px solid #E0E0E0" }}>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-[#EBF3FB] flex items-center justify-center"><Download size={20} className="text-[#1B3A6B]" /></div>
-            <div><p className="text-sm font-medium">تنزيل نسخة كاملة (قاعدة البيانات + جميع الجداول) على الجهاز</p><p className="text-xs text-[#999]">ملف ZIP يحتوي database.sql وملفات JSON لكل جدول</p></div>
+            <div><p className="text-sm font-medium">تنزيل نسخة كاملة (قاعدة البيانات + جميع الجداول + مرفقات الجلسات) على الجهاز</p><p className="text-xs text-[#999]">ملف ZIP يحتوي database.sql وملفات JSON لكل جدول بالإضافة لكل ملفات المرفقات المرفوعة على الجلسات</p></div>
           </div>
           <div className="flex items-center gap-2">
             <Btn variant="outline" onClick={() => setZipRestoreOpen(true)}><RefreshCw size={14} />استرداد من ملف ZIP</Btn>
@@ -11135,7 +11135,7 @@ function BackupScreen({ toast }: { toast: (m: string, t?: any) => void }) {
         onClose={() => setPickedLocalFile(null)}
         onConfirm={confirmRestoreLocal}
         busy={restoringLocal}
-        label={pickedLocalFile ? `سيتم استرجاع قاعدة البيانات من الملف "${pickedLocalFile}".` : ""}
+        label={pickedLocalFile ? `سيتم استرجاع قاعدة البيانات${pickedLocalFile.endsWith(".zip") ? " ومرفقات الجلسات" : ""} من الملف "${pickedLocalFile}".` : ""}
       />
 
       <Modal open={zipRestoreOpen} onClose={() => { setZipRestoreOpen(false); setZipPickedFile(null); if (zipFileRef.current) zipFileRef.current.value = ""; }} title="استرداد نسخة احتياطية من ملف ZIP">
@@ -11801,26 +11801,51 @@ function AdminAccountsPanel({ adminAccounts, setAdminAccounts, toast }: { adminA
   const [modal, setModal] = useState<{ open: boolean; mode: "add" | "edit"; id: number; f: AdminForm } | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showPass, setShowPass] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const openAdd = () => setModal({ open: true, mode: "add", id: 0, f: { ...blank } });
-  const openEdit = (a: AdminAccount) => setModal({ open: true, mode: "edit", id: a.id, f: { username: a.username, password: a.password, displayName: a.displayName } });
-  const save = () => {
+  const openEdit = (a: AdminAccount) => setModal({ open: true, mode: "edit", id: a.id, f: { username: a.username, password: "", displayName: a.displayName } });
+  // ── هاي الدالتين (save/del) كانتا تعدّلان الحالة المحلية فقط (setAdminAccounts)
+  //    من دون أي نداء فعلي لواجهة الخادم — فكان "تمت الإضافة/التعديل/الحذف"
+  //    يظهر بنجاح دايماً بالواجهة، بس الحساب الحقيقي بقاعدة البيانات يضل
+  //    زي ما هو من غير أي تغيير فعلي، وبيرجع يظهر أول ما تحدّث الصفحة أو
+  //    يدخل حد تاني — تماماً متل الحالة يلي أبلغ عنها المستخدم (حذف حساب
+  //    مدير "بنجاح" بس الحساب يضل موجود فعلياً). صار الآن يستدعي API حقيقي
+  //    (create/update/delete) وينتظر رد الخادم قبل ما يعرض "نجاح". ──
+  const save = async () => {
     if (!modal) return;
     const { username, password, displayName } = modal.f;
-    if (!username.trim() || !password.trim() || !displayName.trim()) { toast("جميع الحقول إلزامية", "error"); return; }
-    if (modal.mode === "add") {
-      if (adminAccounts.find(a => a.username === username.trim())) { toast("اسم المستخدم مستخدم من قبل", "error"); return; }
-      setAdminAccounts && setAdminAccounts(p => [...p, { id: Date.now(), username: username.trim(), password, displayName: displayName.trim() }]);
-      toast(`تم إضافة حساب المدير "${displayName.trim()}" ✓`, "success");
-    } else {
-      setAdminAccounts && setAdminAccounts(p => p.map(a => a.id === modal.id ? { ...a, username: username.trim(), password, displayName: displayName.trim() } : a));
-      toast("تم تعديل حساب المدير ✓", "success");
-    }
-    setModal(null);
+    if (!username.trim() || !displayName.trim() || (modal.mode === "add" && !password.trim())) { toast("جميع الحقول إلزامية", "error"); return; }
+    setSaving(true);
+    try {
+      if (modal.mode === "add") {
+        const res = await api.settings.admins.create({ username: username.trim(), password_hash: password, display_name: displayName.trim() });
+        if (!res || "error" in (res as any)) { toast((res as any)?.error || "تعذّر إضافة الحساب", "error"); setSaving(false); return; }
+        const r = res as any;
+        setAdminAccounts && setAdminAccounts(p => [...p, { id: r.id, username: r.username, password: "", displayName: r.display_name || displayName.trim() }]);
+        toast(`تم إضافة حساب المدير "${displayName.trim()}" ✓`, "success");
+      } else {
+        const body: { username: string; display_name?: string; password_hash?: string } = { username: username.trim(), display_name: displayName.trim() };
+        if (password.trim()) body.password_hash = password.trim();
+        const res = await api.settings.admins.update(modal.id, body);
+        if (!res || "error" in (res as any)) { toast((res as any)?.error || "تعذّر حفظ التعديل", "error"); setSaving(false); return; }
+        setAdminAccounts && setAdminAccounts(p => p.map(a => a.id === modal.id ? { ...a, username: username.trim(), displayName: displayName.trim() } : a));
+        toast("تم تعديل حساب المدير ✓", "success");
+      }
+      setModal(null);
+    } catch { toast("تعذّر الاتصال بالخادم", "error"); }
+    setSaving(false);
   };
-  const del = (id: number) => {
+  const del = async (id: number) => {
     if (adminAccounts.length <= 1) { toast("لا يمكن حذف آخر حساب مدير", "error"); return; }
-    setAdminAccounts && setAdminAccounts(p => p.filter(a => a.id !== id));
-    setDeleteId(null); toast("تم حذف حساب المدير", "warning");
+    setDeleting(true);
+    try {
+      const res = await api.settings.admins.delete(id);
+      if (!res || "error" in (res as any)) { toast((res as any)?.error || "تعذّر حذف الحساب", "error"); setDeleting(false); return; }
+      setAdminAccounts && setAdminAccounts(p => p.filter(a => a.id !== id));
+      setDeleteId(null); toast("تم حذف حساب المدير ✓", "warning");
+    } catch { toast("تعذّر الاتصال بالخادم", "error"); }
+    setDeleting(false);
   };
   return (
     <div className="space-y-4">
@@ -11836,7 +11861,7 @@ function AdminAccountsPanel({ adminAccounts, setAdminAccounts, toast }: { adminA
               <TRow key={a.id} i={i}>
                 <TD className="font-bold text-[#1B3A6B]">{a.displayName}</TD>
                 <TD className="font-mono text-sm">{a.username}</TD>
-                <TD><span className="text-[#999]">{"●".repeat(Math.min(a.password.length, 8))}</span></TD>
+                <TD><span className="text-[#999]">••••••••</span></TD>
                 <TD><div className="flex gap-1"><Btn small variant="ghost" onClick={() => openEdit(a)}><Edit size={13} /></Btn><Btn small variant="ghost" onClick={() => setDeleteId(a.id)}><Trash2 size={13} /></Btn></div></TD>
               </TRow>
             ))}</tbody>
@@ -11844,14 +11869,14 @@ function AdminAccountsPanel({ adminAccounts, setAdminAccounts, toast }: { adminA
         )}
       </Card>
       <Modal open={!!modal?.open} onClose={() => setModal(null)} title={modal?.mode === "add" ? "إضافة حساب مدير" : "تعديل حساب مدير"}
-        footer={<><Btn variant="secondary" onClick={save}><Save size={15} />{modal?.mode === "add" ? "إضافة" : "حفظ"}</Btn><Btn variant="outline" onClick={() => setModal(null)}>إلغاء</Btn></>}>
+        footer={<><Btn variant="secondary" loading={saving} onClick={save}><Save size={15} />{modal?.mode === "add" ? "إضافة" : "حفظ"}</Btn><Btn variant="outline" onClick={() => setModal(null)}>إلغاء</Btn></>}>
         {modal && <div className="space-y-3">
           <InputField label="الاسم المعروض" required placeholder="مثال: د. محمود الأحمد" value={modal.f.displayName} onChange={v => setModal(m => m ? { ...m, f: { ...m.f, displayName: v } } : null)} />
           <InputField label="اسم المستخدم" required placeholder="مثال: admin2" value={modal.f.username} onChange={v => setModal(m => m ? { ...m, f: { ...m.f, username: v } } : null)} />
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#555]">كلمة المرور <span className="text-[#D32F2F]">*</span></label>
+            <label className="text-xs font-semibold text-[#555]">كلمة المرور {modal.mode === "add" && <span className="text-[#D32F2F]">*</span>}</label>
             <div className="relative">
-              <input type={showPass ? "text" : "password"} value={modal.f.password} onChange={e => setModal(m => m ? { ...m, f: { ...m.f, password: e.target.value } } : null)} placeholder="أدخل كلمة مرور قوية" className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
+              <input type={showPass ? "text" : "password"} value={modal.f.password} onChange={e => setModal(m => m ? { ...m, f: { ...m.f, password: e.target.value } } : null)} placeholder={modal.mode === "edit" ? "اتركها فارغة للإبقاء على كلمة المرور الحالية" : "أدخل كلمة مرور قوية"} className="w-full h-10 px-3 rounded-lg text-sm outline-none" style={{ border: "1px solid #CCC", backgroundColor: "#FAFAFA" }} />
               <button type="button" onClick={() => setShowPass(p => !p)} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#999] hover:text-[#555]"><Eye size={14} /></button>
             </div>
           </div>
@@ -17092,7 +17117,7 @@ function PrintExportScreen({ dept, deptLabel, sessions = [], toast }: { dept: st
     if (clinicalFieldsAllowed && fields.medications && s.medications.length) {
       body += `<div class="tests-title">الأدوية الموصوفة</div><table><thead><tr><th>الدواء</th><th>الجرعة</th><th>التكرار</th><th>المدة</th></tr></thead><tbody>${s.medications.map(m => `<tr><td>${m.name}</td><td>${m.dose}</td><td>${m.freq}</td><td>${m.duration}</td></tr>`).join("")}</tbody></table>`;
     }
-    if (fields.notes && s.notes) body += `<div class="tests-title">الملاحظات</div><p style="font-size:12px;color:#444;margin:4px 0">${s.notes}</p>`;
+    if (fields.notes && s.notes) body += `<div class="tests-title">الملاحظات</div><p style="font-size:.92em;color:#444;margin:4px 0">${s.notes}</p>`;
     const finItems: string[] = [];
     if (fields.amount) finItems.push(`<div class="kpi-box"><div class="kpi-l">إجمالي الفاتورة</div><div class="kpi-v">${fmt(s.amount)} ₪</div></div>`);
     if (fields.paid) finItems.push(`<div class="kpi-box"><div class="kpi-l">المدفوع</div><div class="kpi-v in">${fmt(s.paid)} ₪</div></div>`);

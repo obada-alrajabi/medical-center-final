@@ -80,7 +80,11 @@ export function getLocalBackupDir() {
   return _resolvedDir;
 }
 
-const FILENAME_RE = /^backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.sql$/;
+// ── امتداد .zip هو الصيغة الحالية (تحتوي database.sql + ملفات uploads/sessions
+//    المرفقة بالجلسات)، وامتداد .sql القديم ما زال مقبولاً هون فقط للتوافق
+//    الرجعي مع نسخ محفوظة قبل هذا التحديث — أي نسخة جديدة تُنشأ الآن دائماً
+//    بصيغة .zip. ──
+const FILENAME_RE = /^backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.(zip|sql)$/;
 export function isValidBackupFilename(name) {
   return typeof name === 'string' && FILENAME_RE.test(name);
 }
@@ -90,7 +94,87 @@ function pad(n) { return String(n).padStart(2, '0'); }
 export function timestampedSqlFilename(d = new Date()) {
   const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const time = `${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
-  return `backup_${date}_${time}.sql`;
+  return `backup_${date}_${time}.zip`;
+}
+
+// ── مجلد المرفقات (uploads/sessions) — ملفات حقيقية مرفوعة على ملفات
+//    الجلسات (صور/تقارير خارجية/إلخ)، محفوظة على قرص السيرفر بمعزل عن
+//    قاعدة البيانات. لازم تنضم لأي نسخة احتياطية كاملة، وإلا بتضيع لو انفصل
+//    القرص عن قاعدة البيانات. ──
+const UPLOADS_SESSIONS_DIR = path.join(process.cwd(), 'uploads', 'sessions');
+const ZIP_UPLOADS_PREFIX = 'uploads/sessions/';
+
+function listUploadFilesRecursive(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  const walk = (d, rel) => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const abs = path.join(d, entry.name);
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(abs, relPath);
+      else out.push({ abs, relPath });
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+
+/** Builds the full backup ZIP buffer: database.sql + every file under uploads/sessions. */
+export async function buildBackupZipBuffer() {
+  const AdmZip = (await import('adm-zip')).default;
+  const zip = new AdmZip();
+  const sqlBuffer = await dumpDatabaseBuffer();
+  zip.addFile('database.sql', sqlBuffer);
+  for (const { abs, relPath } of listUploadFilesRecursive(UPLOADS_SESSIONS_DIR)) {
+    zip.addLocalFile(abs, path.dirname(`${ZIP_UPLOADS_PREFIX}${relPath}`) === '.' ? '' : path.dirname(`${ZIP_UPLOADS_PREFIX}${relPath}`));
+  }
+  return zip.toBuffer();
+}
+
+/**
+ * Extracts a backup ZIP into { sqlText, uploadFiles } — uploadFiles is a list
+ * of { relPath, data } for every entry under uploads/sessions/ in the archive.
+ * Accepts either the full backup format (database.sql + uploads/sessions/*)
+ * or the older Method-3 export format (database.sql + tables/*.json, no files).
+ */
+export async function extractBackupZip(buffer) {
+  const AdmZip = (await import('adm-zip')).default;
+  let zip;
+  try {
+    zip = new AdmZip(buffer);
+  } catch {
+    throw new Error('الملف المرفوع ليس ملف ZIP صالح');
+  }
+  const entry = zip.getEntry('database.sql');
+  if (!entry) {
+    throw new Error('هذا الملف ليس نسخة احتياطية صادرة من هذا النظام (لا يحتوي database.sql)');
+  }
+  const sqlText = entry.getData().toString('utf8');
+  if (!/PostgreSQL database dump/i.test(sqlText) && !/^--/.test(sqlText.trim())) {
+    throw new Error('محتوى database.sql داخل الملف غير صالح');
+  }
+  const uploadFiles = zip.getEntries()
+    .filter((e) => !e.isDirectory && e.entryName.startsWith(ZIP_UPLOADS_PREFIX))
+    .map((e) => ({ relPath: e.entryName.slice(ZIP_UPLOADS_PREFIX.length), data: e.getData() }));
+  return { sqlText, uploadFiles };
+}
+
+/** Writes extracted upload files back to disk under uploads/sessions (merge, does not delete existing files). */
+function restoreUploadFiles(uploadFiles) {
+  for (const { relPath, data } of uploadFiles) {
+    if (!relPath || relPath.includes('..')) continue; // safety: no path traversal
+    const dest = path.join(UPLOADS_SESSIONS_DIR, relPath);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, data);
+  }
+}
+
+/** Restores the database and uploads/sessions attachments from a full backup ZIP buffer (Drive download or manual upload). */
+export async function restoreFromZipBuffer(buffer) {
+  const { sqlText, uploadFiles } = await extractBackupZip(buffer);
+  await restoreSqlContent(sqlText);
+  restoreUploadFiles(uploadFiles);
+  return true;
 }
 
 // ── Pure-JS logical dump/restore ─────────────────────────────────────────────
@@ -268,12 +352,12 @@ export async function dumpDatabaseBuffer() {
   return Buffer.from(lines.join('\n'), 'utf8');
 }
 
-/** Generates a full SQL dump and saves it as a timestamped .sql file inside the local backup dir. */
+/** Generates a full backup ZIP (database.sql + uploads/sessions files) and saves it as a timestamped .zip file inside the local backup dir. */
 export async function runLocalBackup() {
   const dir = getLocalBackupDir();
   const filename = timestampedSqlFilename();
   const filePath = path.join(dir, filename);
-  const buffer = await dumpDatabaseBuffer();
+  const buffer = await buildBackupZipBuffer();
   fs.writeFileSync(filePath, buffer);
   await pruneOldLocalBackups(30);
   const stat = fs.statSync(filePath);
@@ -328,12 +412,20 @@ export async function restoreSqlContent(sqlText) {
   return true;
 }
 
-/** Restores the database from a local .sql backup file. */
+/** Restores the database (and, for .zip backups, the uploads/sessions attachments) from a local backup file. */
 export async function restoreLocalBackup(filename) {
   if (!isValidBackupFilename(filename)) throw new Error('اسم ملف غير صالح');
   const dir = getLocalBackupDir();
   const filePath = path.join(dir, filename);
   if (!fs.existsSync(filePath)) throw new Error('الملف غير موجود');
+  if (filename.endsWith('.zip')) {
+    const buffer = fs.readFileSync(filePath);
+    const { sqlText, uploadFiles } = await extractBackupZip(buffer);
+    await restoreSqlContent(sqlText);
+    restoreUploadFiles(uploadFiles);
+    return true;
+  }
+  // نسخة قديمة بصيغة .sql خام (من قبل هذا التحديث) — قاعدة بيانات فقط، بدون مرفقات.
   const sqlText = fs.readFileSync(filePath, 'utf8');
   return restoreSqlContent(sqlText);
 }
@@ -347,7 +439,7 @@ export async function listAllTableNames() {
 }
 
 // ── Google Drive upload (service-account JWT auth) ──────────────────────────
-export async function uploadJsonToDrive({ credentialsJson, folderId, filename, content }) {
+export async function uploadJsonToDrive({ credentialsJson, folderId, filename, content, mimeType }) {
   const { google } = await import('googleapis');
   let creds;
   try {
@@ -364,9 +456,14 @@ export async function uploadJsonToDrive({ credentialsJson, folderId, filename, c
     scopes: ['https://www.googleapis.com/auth/drive.file'],
   });
   const drive = google.drive({ version: 'v3', auth });
+  // ── محتوى .zip ثنائي — لازم يترفع كـ stream من Buffer خام، مش نص UTF-8،
+  //    وإلا بينكسر أول ما يتفك ضغطه (google-api-nodejs-client بيتوقع stream
+  //    قابل للقراءة لمحتوى ثنائي، مش نص). ──
+  const isBinary = (mimeType || '').includes('zip');
+  const { Readable } = await import('stream');
   const res = await drive.files.create({
     requestBody: { name: filename, parents: folderId ? [folderId] : undefined },
-    media: { mimeType: 'application/json', body: Buffer.from(content).toString('utf8') },
+    media: { mimeType: mimeType || 'application/json', body: isBinary ? Readable.from(Buffer.from(content)) : Buffer.from(content).toString('utf8') },
     fields: 'id,name',
   });
   return res.data;
@@ -396,8 +493,8 @@ export async function listDriveBackups({ credentialsJson, folderId }) {
   }));
 }
 
-/** Downloads a Drive file's content as a UTF-8 string (used to restore a .sql backup). */
-export async function downloadDriveFile({ credentialsJson, fileId }) {
+/** Downloads a Drive file's raw content as a Buffer (used for .zip backups containing DB + attachments). */
+export async function downloadDriveFileBuffer({ credentialsJson, fileId }) {
   const { google } = await import('googleapis');
   const creds = JSON.parse(credentialsJson);
   const auth = new google.auth.JWT({
@@ -407,7 +504,13 @@ export async function downloadDriveFile({ credentialsJson, fileId }) {
   });
   const drive = google.drive({ version: 'v3', auth });
   const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
-  return Buffer.from(res.data).toString('utf8');
+  return Buffer.from(res.data);
+}
+
+/** Downloads a Drive file's content as a UTF-8 string (legacy path — used only for pre-update plain .sql backups). */
+export async function downloadDriveFile({ credentialsJson, fileId }) {
+  const buffer = await downloadDriveFileBuffer({ credentialsJson, fileId });
+  return buffer.toString('utf8');
 }
 
 /**
