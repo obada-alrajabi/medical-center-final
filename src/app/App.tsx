@@ -47,7 +47,7 @@ import {
 } from "./constants";
 import {
   fmt, _JLM_OFFSET, _jlmNow, _nowDT, _today, _isoDate, _localISO, _nowHHMM,
-  makeDefaultDeptPerms, inRangeDDMMYYYY, hoursBetweenTimes, staffHourlyRate,
+  makeDefaultDeptPerms, inRangeDDMMYYYY, hoursBetweenTimes, staffHourlyRate, formatAge,
 } from "./utils";
 import { fireToast } from "./toastStore";
 import { openPrintPdf } from "./printPdfEngine";
@@ -1116,7 +1116,7 @@ function PurchaseRequestModal({ open, onClose, dept, onSubmit, requestedBy }: { 
 
 // ─── TOPBAR & ALERT ────────────────────────────────────────────────────────────
 
-function TopBar({ pageTitle, sidebarCollapsed, isMobile, onToggle, notifications = [], onDismissNotif, onClearAllNotif }: { pageTitle: string; sidebarCollapsed: boolean; isMobile: boolean; onToggle: () => void; notifications?: AppNotification[]; onDismissNotif?: (id: string) => void; onClearAllNotif?: () => void }) {
+function TopBar({ pageTitle, sidebarCollapsed, isMobile, onToggle, notifications = [], onDismissNotif, onClearAllNotif, userName = "المدير" }: { pageTitle: string; sidebarCollapsed: boolean; isMobile: boolean; onToggle: () => void; notifications?: AppNotification[]; onDismissNotif?: (id: string) => void; onClearAllNotif?: () => void; userName?: string }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [nowT, setNowT] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setNowT(new Date()), 60000); return () => clearInterval(t); }, []);
@@ -1195,8 +1195,8 @@ function TopBar({ pageTitle, sidebarCollapsed, isMobile, onToggle, notifications
           )}
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-[#1B3A6B] text-white flex items-center justify-center text-xs font-bold">م</div>
-          <span className="text-sm font-medium text-[#1A1A1A] hidden sm:block">المدير</span>
+          <div className="w-8 h-8 rounded-full bg-[#1B3A6B] text-white flex items-center justify-center text-xs font-bold">{userName.trim().charAt(0) || "م"}</div>
+          <span className="text-sm font-medium text-[#1A1A1A] hidden sm:block">{userName}</span>
         </div>
       </div>
     </div>
@@ -2372,7 +2372,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
             }}><Save size={14} />حفظ التعديلات</Btn><Btn variant="outline" onClick={() => setEditModal(false)}>إلغاء</Btn></>}>
             <div className="grid grid-cols-2 gap-4">
               <div><InputField label="الاسم الكامل" required value={editForm.name} onChange={v => setEF(p => ({ ...p, name: v }))} /></div>
-              <div><InputField label="العمر" required type="number" value={String(editForm.age)} onChange={v => setEF(p => ({ ...p, age: parseInt(v) || 0 }))} /></div>
+              <div><InputField label="العمر" required placeholder="مثال: 35 أو 9 أشهر" value={String(editForm.age ?? "")} onChange={v => setEF(p => ({ ...p, age: v }))} /></div>
               <div><InputField label="رقم الجوال" value={editForm.phone} onChange={v => setEF(p => ({ ...p, phone: v }))} /></div>
               <div><InputField label="رقم الهوية الوطنية" placeholder="اختياري" value={editForm.nationalId || ""} onChange={v => setEF(p => ({ ...p, nationalId: v }))} /></div>
               <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">فصيلة الدم</label>
@@ -2415,7 +2415,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
               if (setPatientDeleteRequests) setPatientDeleteRequests(p => [...p, req]);
               // ── يجب حفظ الطلب فعلياً بقاعدة البيانات، وإلا يختفي عند تحديث
               //    الصفحة ولا يصل لحساب المدير إطلاقاً (كان الخلل السابق) ──
-              api.patients.deleteRequests.create({ patient_id: selected.id, patient_name: selected.name, requested_by: requestedByName, request_dept: dept, request_date: today, reason: delReason.trim() })
+              api.patients.deleteRequests.create({ patient_id: selected.id, patient_name: selected.name, requested_by: requestedByName, request_dept: dept, request_date: api.parseDateISO(today), reason: delReason.trim() })
                 .then((r: any) => { if (r?.id && setPatientDeleteRequests) setPatientDeleteRequests(p => p.map(x => x.id === tempId ? { ...x, id: r.id } : x)); })
                 .catch(() => { });
               setDelModal(false); setDelReason("");
@@ -2494,7 +2494,7 @@ function OpenPatientScreen({ dept, onNavigate, sessions, debts, customDepts = []
                     <div className="min-w-0">
                       <h2 className="text-base font-bold text-[#1B3A6B] truncate">{p.name}</h2>
                       <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-sm text-[#555]">
-                        <span>{p.age} سنة</span><span className="text-[#CCC]">·</span><span>{p.blood}</span><span className="text-[#CCC]">·</span><span>{p.phone}</span>
+                        <span>{formatAge(p.age)}</span><span className="text-[#CCC]">·</span><span>{p.blood}</span><span className="text-[#CCC]">·</span><span>{p.phone}</span>
                         {p.insurance && <Badge color="success">مؤمَّن</Badge>}
                         {liveDebt(p.id) > 0 && <Badge color="danger">دين: {fmt(liveDebt(p.id))}</Badge>}
                       </div>
@@ -2729,7 +2729,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
     const e: Record<string, string> = {};
     if (!form.name.trim()) e.name = "الاسم إلزامي";
     else if (/[0-9٠-٩]/.test(form.name)) e.name = "الاسم يجب ألا يحتوي على أرقام";
-    if (!form.age || isNaN(Number(form.age)) || Number(form.age) <= 0) e.age = "العمر إلزامي";
+    if (!form.age || !form.age.trim()) e.age = "العمر إلزامي";
     if (!form.phone.trim()) e.phone = "أدخل رقم صحيح";
     else if (!/^[0-9]{10}$/.test(form.phone.trim())) e.phone = "رقم الجوال يجب أن يتكوّن من 10 أرقام، بدون رمز دولة (+970) أو مسافات";
     if (!false && form.phone.trim()) { const dup = mockPatients.find(p => p.phone === form.phone); setDupWarning(dup || null); }
@@ -2754,7 +2754,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
       let effectiveId = prefillPatient ? prefillPatient.id : fileId;
       setSavedEffectiveId(effectiveId);
       if (!prefillPatient && !mockPatients.find(p => p.id === fileId)) {
-        const created = await api.patients.create({ id: fileId, name: form.name, age: Number(form.age), phone: form.phone, gender: form.gender, address: form.address, email: form.email, national_id: form.id, blood_type: form.blood || "غير معروف", has_insurance: !!form.insuranceCompany, insurance_company: form.insuranceCompany, dept, date: form.joinDate || _localISO(), has_allergy: form.allergy, allergy_detail: form.allergyDetail, has_chronic: form.chronic, chronic_detail: form.chronicDetail, debt: 0, notes: form.notes });
+        const created = await api.patients.create({ id: fileId, name: form.name, age: form.age.trim(), phone: form.phone, gender: form.gender, address: form.address, email: form.email, national_id: form.id, blood_type: form.blood || "غير معروف", has_insurance: !!form.insuranceCompany, insurance_company: form.insuranceCompany, dept, date: form.joinDate || _localISO(), has_allergy: form.allergy, allergy_detail: form.allergyDetail, has_chronic: form.chronic, chronic_detail: form.chronicDetail, debt: 0, notes: form.notes });
         if (!created || !(created as any).id) {
           setSaving(false);
           toast("تعذّر حفظ بيانات المريض على الخادم — تحقق من الاتصال وحاول التسجيل مرة أخرى", "error");
@@ -2762,7 +2762,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
         }
         effectiveId = String((created as any).id);
         setSavedEffectiveId(effectiveId);
-        mockPatients.push({ id: effectiveId, name: form.name, age: Number(form.age), phone: form.phone, blood: form.blood || "غير معروف", insurance: !!form.insuranceCompany, dept, date: joinDateDisplay, debt: 0, gender: form.gender, address: form.address, chronic: form.chronic ? form.chronicDetail : "", allergy: form.allergy ? form.allergyDetail : "" });
+        mockPatients.push({ id: effectiveId, name: form.name, age: form.age.trim(), phone: form.phone, blood: form.blood || "غير معروف", insurance: !!form.insuranceCompany, dept, date: joinDateDisplay, debt: 0, gender: form.gender, address: form.address, chronic: form.chronic ? form.chronicDetail : "", allergy: form.allergy ? form.allergyDetail : "" });
         _syncPatients();
       }
       // ── Create session record (so diagnoses/medications/labs/rads are not lost) ──
@@ -2850,7 +2850,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
           const pricePerSession = rehabSessionCount > 0 ? Math.round((sessionTotal - discAmt) / rehabSessionCount) : 0;
           const newPlan: RehabPlan = { id: Date.now() + 2, patientId: effectiveId, patientName: form.name, diagnosis: rehabDiagnosis, totalSessions: rehabSessionCount, completedSessions: 0, pricePerSession, planPrice: sessionNet, pricingMode: "plan", specialist: doctorName, status: "active", startDate: today };
           setRehabPlans(prev => [...prev, newPlan]);
-          api.rehab.plans.create({ patient_id: effectiveId, patient_name: form.name, diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: pricePerSession, plan_price: sessionNet, pricing_mode: "plan", specialist: doctorName, status: "active", start_date: today, clinical_notes: sessionNotesComputed }).then(r => {
+          api.rehab.plans.create({ patient_id: effectiveId, patient_name: form.name, diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: pricePerSession, plan_price: sessionNet, pricing_mode: "plan", specialist: doctorName, status: "active", start_date: api.parseDateISO(today), clinical_notes: sessionNotesComputed }).then(r => {
             if (r) {
               const newId = (r as any).id;
               setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: newId } : p));
@@ -3046,7 +3046,7 @@ function NewPatientScreen({ dept, doDeposit, setSessions, setDebts, toast, onNav
             )}
             <div className="grid grid-cols-2 gap-4">
               <div><InputField label="الاسم الكامل" required placeholder="أدخل الاسم الرباعي" value={form.name} onChange={v => set("name", v)} />{errF("name")}</div>
-              <div><InputField label="العمر بالسنوات" required type="number" placeholder="مثال: 35" value={form.age} onChange={v => set("age", v)} />{errF("age")}</div>
+              <div><InputField label="العمر" required placeholder="مثال: 35 أو 9 أشهر" value={form.age} onChange={v => set("age", v)} />{errF("age")}</div>
               <InputField label="رقم الهوية الوطنية" placeholder="اختياري" value={form.id} onChange={v => set("id", v)} />
               <div><InputField label="رقم الجوال" required placeholder="0599123456" value={form.phone} onChange={v => set("phone", v)} />{errF("phone")}</div>
               <InputField label="البريد الإلكتروني" placeholder="اختياري" value={form.email} onChange={v => set("email", v)} />
@@ -3820,7 +3820,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
           if (setPatientDeleteRequests) setPatientDeleteRequests(prev => [...prev, req]);
           // ── يجب حفظ الطلب فعلياً بقاعدة البيانات، وإلا يختفي عند تحديث
           //    الصفحة ولا يصل لحساب المدير إطلاقاً (كان الخلل السابق) ──
-          api.patients.deleteRequests.create({ patient_id: p.id, patient_name: p.name, requested_by: requestedByName, request_dept: dept, request_date: today, reason: patDelReason.trim() })
+          api.patients.deleteRequests.create({ patient_id: p.id, patient_name: p.name, requested_by: requestedByName, request_dept: dept, request_date: api.parseDateISO(today), reason: patDelReason.trim() })
             .then((r: any) => { if (r?.id && setPatientDeleteRequests) setPatientDeleteRequests(prev => prev.map(x => x.id === tempId ? { ...x, id: r.id } : x)); })
             .catch(() => { });
           setPatDelModal(false); setPatDelReason("");
@@ -3839,7 +3839,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
           footer={<><Btn variant="success" onClick={handleEditSave}><Save size={14} />حفظ التعديلات</Btn><Btn variant="outline" onClick={() => setEditModal(false)}>إلغاء</Btn></>}>
           <div className="grid grid-cols-2 gap-4">
             <div><InputField label="الاسم الكامل" required value={editForm.name} onChange={v => setEF2(p => ({ ...p, name: v }))} /></div>
-            <div><InputField label="العمر" required type="number" value={String(editForm.age)} onChange={v => setEF2(p => ({ ...p, age: parseInt(v) || 0 }))} /></div>
+            <div><InputField label="العمر" required placeholder="مثال: 35 أو 9 أشهر" value={String(editForm.age ?? "")} onChange={v => setEF2(p => ({ ...p, age: v }))} /></div>
             <div><InputField label="رقم الجوال" value={editForm.phone} onChange={v => setEF2(p => ({ ...p, phone: v }))} /></div>
             <div><InputField label="رقم الهوية الوطنية" placeholder="اختياري" value={editForm.nationalId || ""} onChange={v => setEF2(p => ({ ...p, nationalId: v }))} /></div>
             <div className="flex flex-col gap-1.5"><label className="text-xs font-semibold text-[#555]">فصيلة الدم</label>
@@ -3898,7 +3898,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
               const infoFields: string[] = [];
               if (pf.showName) infoFields.push(`<div class="pt-field"><b>الاسم الكامل:</b> ${p.name}</div>`);
               infoFields.push(`<div class="pt-field"><b>رقم الملف:</b> ${p.id}</div>`);
-              if (pf.showAge) infoFields.push(`<div class="pt-field"><b>العمر:</b> ${p.age} سنة</div>`);
+              if (pf.showAge) infoFields.push(`<div class="pt-field"><b>العمر:</b> ${formatAge(p.age)}</div>`);
               if (pf.showBlood) infoFields.push(`<div class="pt-field"><b>فصيلة الدم:</b> ${p.blood}</div>`);
               if (pf.showPhone) infoFields.push(`<div class="pt-field"><b>الجوال:</b> ${p.phone}</div>`);
               if (pf.showNationalId && p.nationalId) infoFields.push(`<div class="pt-field"><b>رقم الهوية:</b> ${p.nationalId}</div>`);
@@ -4047,7 +4047,7 @@ function PatientFileScreen({ dept, onNavigate, patientId, sessions, debts, doDep
             <div className="w-14 h-14 rounded-2xl bg-white/20 border border-white/30 flex items-center justify-center text-white text-xl font-bold flex-shrink-0">{initials(p.name)}</div>
             <div className="flex-1 min-w-0">
               <h1 className="text-lg font-bold text-white leading-tight">{p.name}</h1>
-              <p className="text-white/70 text-xs mt-0.5">{p.age} سنة</p>
+              <p className="text-white/70 text-xs mt-0.5">{formatAge(p.age)}</p>
               <p className="text-white/70 text-xs">{p.blood}</p>
               <p className="text-white/70 text-xs">{p.phone}</p>
               {liveDebt > 0 && (
@@ -4710,7 +4710,7 @@ function NewSessionScreen({ dept, patientId, sessions, setSessions, doDeposit, s
       <div className="bg-white rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3" style={{ border: "1px solid #E0E0E0" }}>
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-11 h-11 rounded-xl bg-[#1B3A6B] flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{initials(p.name)}</div>
-          <div className="min-w-0"><p className="font-bold text-[#1B3A6B] truncate">{p.name}</p><p className="text-xs text-[#999] truncate">{p.id} · {p.age} سنة · {p.blood} · {p.phone}</p></div>
+          <div className="min-w-0"><p className="font-bold text-[#1B3A6B] truncate">{p.name}</p><p className="text-xs text-[#999] truncate">{p.id} · {formatAge(p.age)} · {p.blood} · {p.phone}</p></div>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 text-sm text-[#555]"><Calendar size={14} /><span>{today}</span><span className="text-[#CCC]">·</span><span className="font-medium text-[#1B3A6B]">{deptInfo.short}</span></div>
@@ -4968,14 +4968,14 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     //    مرتبط بمريض غير موجود فعلياً في قاعدة البيانات. ──
     let effectivePatId = patId;
     if (mode === "new" && !mockPatients.find(p => p.id === patId)) {
-      const created = await api.patients.create({ id: patId, name: patName, age: 30, phone: newPat.phone || "", blood_type: newPat.blood || "A+", has_insurance: newPat.insurance, dept: "lab", date: api.parseDateISO(today), debt: 0 });
+      const created = await api.patients.create({ id: patId, name: patName, age: "30", phone: newPat.phone || "", blood_type: newPat.blood || "A+", has_insurance: newPat.insurance, dept: "lab", date: api.parseDateISO(today), debt: 0 });
       if (!created || !(created as any).id) {
         setSaving(false);
         toast("تعذّر حفظ بيانات المريض على الخادم — تحقق من الاتصال وحاول التسجيل مرة أخرى", "error");
         return;
       }
       effectivePatId = String((created as any).id);
-      mockPatients.push({ id: effectivePatId, name: patName, age: 30, phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "lab", date: today, debt: 0 });
+      mockPatients.push({ id: effectivePatId, name: patName, age: "30", phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "lab", date: today, debt: 0 });
       _syncPatients();
     }
     if (paidAmt > 0) doDeposit("lab", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
@@ -5028,7 +5028,7 @@ function LabSessionScreen({ toast, doDeposit, doWithdraw, setDebts, debts, patie
     const infoItems: string[] = [];
     if (gPatientPrintSettings.showName) infoItems.push(`<div class="pt-field"><b>المريض:</b> ${patientName}</div>`);
     if (pt) infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
-    if (pt && gPatientPrintSettings.showAge) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
+    if (pt && gPatientPrintSettings.showAge) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${formatAge(pt.age)}</div>`);
     if (pt && gPatientPrintSettings.showBlood) infoItems.push(`<div class="pt-field"><b>فصيلة الدم:</b> ${pt.blood}</div>`);
     infoItems.push(`<div class="pt-field"><b>تاريخ التقرير:</b> ${today}</div>`);
     let body = `<div class="pt-info">${infoItems.join("")}</div>`;
@@ -5597,14 +5597,14 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     //    إنشاء أي طلب أو دين مرتبط به. ──
     let effectivePatId = patId;
     if (mode === "new" && !mockPatients.find(p => p.id === patId)) {
-      const created = await api.patients.create({ id: patId, name: patName, age: 30, phone: newPat.phone || "", blood_type: newPat.blood || "A+", has_insurance: newPat.insurance, dept: "radiology", date: api.parseDateISO(today), debt: 0 });
+      const created = await api.patients.create({ id: patId, name: patName, age: "30", phone: newPat.phone || "", blood_type: newPat.blood || "A+", has_insurance: newPat.insurance, dept: "radiology", date: api.parseDateISO(today), debt: 0 });
       if (!created || !(created as any).id) {
         setSaving(false);
         toast("تعذّر حفظ بيانات المريض على الخادم — تحقق من الاتصال وحاول التسجيل مرة أخرى", "error");
         return;
       }
       effectivePatId = String((created as any).id);
-      mockPatients.push({ id: effectivePatId, name: patName, age: 30, phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "radiology", date: today, debt: 0 });
+      mockPatients.push({ id: effectivePatId, name: patName, age: "30", phone: newPat.phone || "—", blood: newPat.blood || "A+", insurance: newPat.insurance, dept: "radiology", date: today, debt: 0 });
       _syncPatients();
     }
     if (paidAmt > 0) doDeposit("radiology", paidAmt, `دفعة مريض — ${patName}`, "إيراد مريض");
@@ -5640,7 +5640,7 @@ function RadSessionScreen({ toast, doDeposit, setDebts, debts, patientId, radIma
     const infoItems: string[] = [];
     if (gPatientPrintSettings.showName) infoItems.push(`<div class="pt-field"><b>المريض:</b> ${s.patient}</div>`);
     if (pt) infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${pt.id}</div>`);
-    if (pt && gPatientPrintSettings.showAge) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
+    if (pt && gPatientPrintSettings.showAge) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${formatAge(pt.age)}</div>`);
     infoItems.push(`<div class="pt-field"><b>تاريخ الفحص:</b> ${today}</div>`);
     let body = `<div class="pt-info">${infoItems.join("")}</div>`;
     s.images.forEach(img => {
@@ -6795,7 +6795,7 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
       const planPriceNet = Math.max(0, basePrice - discAmt - insDiscAmt);
       const newPlan: RehabPlan = { id: Date.now(), patientId: patientId || "", patientName: patient?.name || "", diagnosis: rehabDiagnosis, totalSessions: rehabSessionCount, completedSessions: 0, pricePerSession: sessionVal, planPrice: planPriceNet, pricingMode: "plan", specialist, status: "active", startDate: today };
       setRehabPlans(prev => [...(prev || []), newPlan]);
-      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: sessionVal, plan_price: planPriceNet, pricing_mode: "plan", specialist, status: "active", start_date: today, clinical_notes: clinicalNotes }).then(r => {
+      api.rehab.plans.create({ patient_id: patientId || "", patient_name: patient?.name || "", diagnosis: rehabDiagnosis, total_sessions: rehabSessionCount, completed_sessions: 0, price_per_session: sessionVal, plan_price: planPriceNet, pricing_mode: "plan", specialist, status: "active", start_date: api.parseDateISO(today), clinical_notes: clinicalNotes }).then(r => {
         if (!r) return;
         const newId = (r as any).id;
         setRehabPlans(prev => prev.map(p => p.id === newPlan.id ? { ...p, id: newId } : p));
@@ -6852,7 +6852,7 @@ function RehabNewPlanScreen({ patientId, dept, rehabPlans, setRehabPlans, onNavi
       <div className="flex items-center gap-3">
         <button onClick={() => onNavigate({ screen: "open-patient", dept })} className="p-2 rounded-lg hover:bg-[#F0F0F0] transition-colors"><ArrowRight size={18} className="text-[#555]" /></button>
         <div><h2 className="text-base font-bold text-[#1B3A6B] flex items-center gap-2"><Dumbbell size={16} />إنشاء خطة علاجية تأهيلية جديدة</h2>
-          {patient && <p className="text-sm text-[#555]">المريض: <strong>{patient.name}</strong> · {patient.age} سنة · {patient.phone}</p>}</div>
+          {patient && <p className="text-sm text-[#555]">المريض: <strong>{patient.name}</strong> · {formatAge(patient.age)} · {patient.phone}</p>}</div>
       </div>
 
       {/* ── Step indicator — نفس تصميم NewPatientScreen، خطوة 1 "بيانات المريض" مكتملة مسبقاً ── */}
@@ -11504,7 +11504,7 @@ function ReportsScreen({ toast, debts, sessions, drawers, invoices, customDepts 
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center text-xl font-bold">{selPat.name.split(" ").slice(0, 2).map((w: string) => w[0]).join("")}</div>
-                    <div><h2 className="text-lg font-bold">{selPat.name}</h2><div className="flex items-center gap-3 mt-1 text-white/70 text-sm"><span>{selPat.age} سنة</span><span>·</span><span>{selPat.blood}</span><span>·</span><span>{selPat.phone}</span>{selPat.insurance && <span className="px-2 py-0.5 bg-white/20 rounded-full text-xs">مؤمَّن</span>}</div></div>
+                    <div><h2 className="text-lg font-bold">{selPat.name}</h2><div className="flex items-center gap-3 mt-1 text-white/70 text-sm"><span>{formatAge(selPat.age)}</span><span>·</span><span>{selPat.blood}</span><span>·</span><span>{selPat.phone}</span>{selPat.insurance && <span className="px-2 py-0.5 bg-white/20 rounded-full text-xs">مؤمَّن</span>}</div></div>
                   </div>
                   <div className="flex gap-2"><Btn small variant="outline" onClick={() => { const html = `<div class="kpi"><div class="kpi-box"><div class="kpi-l">الجلسات</div><div class="kpi-v">${patSessions.length}</div></div><div class="kpi-box"><div class="kpi-l">إجمالي الفواتير</div><div class="kpi-v">${fmt(patTotalAmt)}</div></div><div class="kpi-box"><div class="kpi-l">المحصَّل</div><div class="kpi-v in">${fmt(patTotalPaid)}</div></div><div class="kpi-box"><div class="kpi-l">الديون</div><div class="kpi-v out">${fmt(patDebts)}</div></div></div><h2>جلسات المريض</h2><table><thead><tr><th>التاريخ</th><th>القسم</th><th>التشخيص</th><th>السعر</th><th>المدفوع</th><th>الدين</th></tr></thead><tbody>${patSessions.map(s => `<tr><td>${s.date}</td><td>${s.dept}</td><td>${s.diagnoses.slice(0, 2).join("، ") || "—"}</td><td>${fmt(s.amount)}</td><td class="in">${fmt(s.paid)}</td><td class="${s.debt > 0 ? "out" : "in"}">${s.debt > 0 ? fmt(s.debt) : "مسدد ✓"}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3">الإجمالي</td><td>${fmt(patTotalAmt)}</td><td class="in">${fmt(patTotalPaid)}</td><td class="${patDebts > 0 ? "out" : "in"}">${patDebts > 0 ? fmt(patDebts) : "مسدد ✓"}</td></tr></tfoot></table>`; printHtml(html, `كشف حساب المريض — ${selPat?.name}`, fromDate, toDate); }}><Printer size={13} />كشف PDF</Btn><Btn small variant="ghost" onClick={() => { const rows = patSessions.map(s => [s.date, s.dept, s.diagnoses.slice(0, 2).join("، ") || "—", s.amount, s.paid, s.debt]); const ws = XLSX.utils.aoa_to_sheet([["التاريخ", "القسم", "التشخيص", "السعر", "المدفوع", "الدين"], ...rows, [], ["", "", "الإجمالي", patTotalAmt, patTotalPaid, patDebts]]); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "كشف المريض"); XLSX.writeFile(wb, `كشف_${selPat?.name}.xlsx`); }}><Download size={13} />Excel</Btn></div>
                 </div>
@@ -11996,7 +11996,12 @@ function SidebarDisplayPanel({ sidebarSettings, setSidebarSettings, toast }: { s
 // ─── GENERAL SETTINGS ──────────────────────────────────────────────────────────
 
 function AdminProfileCard({ adminAccounts, setAdminAccounts, loggedUser, setLoggedUser, toast }: { adminAccounts: AdminAccount[]; setAdminAccounts?: React.Dispatch<React.SetStateAction<AdminAccount[]>>; loggedUser?: LoggedUser | null; setLoggedUser?: React.Dispatch<React.SetStateAction<LoggedUser | null>>; toast: (m: string, t?: any) => void }) {
-  const currentAdmin = adminAccounts.find(a => a.displayName === (loggedUser?.type === "admin" ? loggedUser.adminName : "")) || adminAccounts[0] || null;
+  // ── ما في fallback لأول حساب بجدول admin_accounts بعد الآن — كان هذا يخلّي
+  //    أي موظف عنده صلاحيات "مدير كامل" (isAdminRole) بس اسمه مش موجود فعلياً
+  //    بجدول admin_accounts (لأنه أصلاً موظف، مش حساب مدير مستقل) يظهرله
+  //    ويقدر (نظرياً) يعدّل بيانات دخول حساب مدير حقيقي تاني بالغلط. الحساب
+  //    الحقيقي المطابق للاسم المسجَّل دخوله فقط، وإلا null. ──
+  const currentAdmin = adminAccounts.find(a => a.displayName === (loggedUser?.type === "admin" ? loggedUser.adminName : "")) || null;
   const [form, setForm] = useState({ username: currentAdmin?.username || "", displayName: currentAdmin?.displayName || "", newPass: "", confirmPass: "" });
   const [showNewPass, setShowNewPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
@@ -12035,7 +12040,7 @@ function AdminProfileCard({ adminAccounts, setAdminAccounts, loggedUser, setLogg
         </div>
       </div>
       <div className="p-5 bg-white space-y-4">
-        {!currentAdmin && <div className="p-3 rounded-xl text-xs text-[#D32F2F] bg-[#FFEBEE] border border-[#FFCDD2]">لم يتم تحميل بيانات الحساب — تأكد من الدخول عبر المدير وتحميل البيانات</div>}
+        {!currentAdmin && <div className="p-3 rounded-xl text-xs text-[#D32F2F] bg-[#FFEBEE] border border-[#FFCDD2]">هذا الحساب موظف بصلاحيات "مدير كامل" وليس حساب مدير مستقل — لا يوجد بيانات دخول منفصلة هنا لتعديلها. عدّل بيانات الدخول من شاشة "الموظفون والصلاحيات" بدلاً من هنا.</div>}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-semibold text-[#555] block mb-1.5">اسم المستخدم الحالي</label>
@@ -15904,7 +15909,7 @@ function AttendanceScreen({ dept, attendance, setAttendance, loggedUser, staffLi
   const isAdmin = loggedUser.type === "admin";
   const canMark = isAdmin || !perms || perms.canAttendanceMark !== false;
   const currentEmp = isAdmin ? null : (loggedUser as { type: "staff"; staff: StaffMember }).staff;
-  const currentEmpName = isAdmin ? "المدير" : (currentEmp?.name || "—");
+  const currentEmpName = isAdmin ? ((loggedUser as { type: "admin"; adminName: string }).adminName || "المدير") : (currentEmp?.name || "—");
   const currentEmpId = isAdmin ? "admin" : (currentEmp?.nationalId || String(currentEmp?.id || ""));
 
   const DAYS_AR = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
@@ -16661,12 +16666,13 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
       //    غلط زي رقم هاتف/هوية بالغلط بخانة الاسم ──
       if (/[0-9٠-٩]/.test(name)) problems.push(`صف ${rowNum}: الاسم "${name}" يحتوي على أرقام — يجب أن يكون نصاً فقط`);
       // ── العمر ورقم الهاتف إلزاميان بنفس شاشة التسجيل اليدوي (NewPatientScreen،
-      //    v1()) — العمر رقم موجب، والهاتف بالضبط 10 أرقام. كانا مسموحَين فاضيين
-      //    هون سابقاً رغم إنهما إلزاميان بالتسجيل اليدوي، وهاي عكس المشكلة اللي
-      //    أبلغ عنها المستخدم (يبغى نفس قواعد الإلزامي/الاختياري بالضبط) ──
+      //    v1()) — الهاتف بالضبط 10 أرقام. كانا مسموحَين فاضيين هون سابقاً رغم
+      //    إنهما إلزاميان بالتسجيل اليدوي، وهاي عكس المشكلة اللي أبلغ عنها
+      //    المستخدم (يبغى نفس قواعد الإلزامي/الاختياري بالضبط). العمر صار حقل
+      //    نص حر (يقبل "9 أشهر" لعمر الرضّع) — يكفي إنه مش فاضي، بدون فرض
+      //    رقمي إطلاقاً. ──
       const ageRaw = col(row, hIdx, "age");
-      if (!ageRaw) problems.push(`صف ${rowNum} (${name}): العمر فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
-      else if (isNaN(Number(ageRaw)) || Number(ageRaw) <= 0) problems.push(`صف ${rowNum} (${name}): العمر "${ageRaw}" يجب أن يكون رقماً موجباً`);
+      if (!ageRaw || !String(ageRaw).trim()) problems.push(`صف ${rowNum} (${name}): العمر فارغ — إلزامي (نفس شاشة التسجيل اليدوي)`);
       // ── رقم الهاتف: 9 أو 10 أرقام، بدون رمز دولة (+970...) أو مسافات أو أي
       //    رمز آخر. نمرره أولاً عبر normalizePhone (يعيد الصفر الأول لو إكسل
       //    حذفه من رقم كان أصلاً 10 خانات)، وبعدين نقبل 9 أو 10 خانات — لأنه
@@ -16732,7 +16738,7 @@ function DataImportScreen({ setSessions, setDebts, doDeposit, insurances = [], t
       const bump = () => setProgress(p => p ? { ...p, done: p.done + 1 } : p);
       const rawId = col(row, hIdx, "id");
       const name = col(row, hIdx, "name");
-      const age = parseInt(col(row, hIdx, "age") || "0") || 0;
+      const age = String(col(row, hIdx, "age") || "").trim();
       const phone = normalizePhone(col(row, hIdx, "phone")) || "—";
       const gender = col(row, hIdx, "gender") || "ذكر";
       const blood = col(row, hIdx, "blood") || "غير معروف";
@@ -17101,7 +17107,7 @@ function PrintExportScreen({ dept, deptLabel, sessions = [], toast }: { dept: st
     const infoItems: string[] = [];
     if (fields.name) infoItems.push(`<div class="pt-field"><b>المريض:</b> ${name}</div>`);
     if (fields.nid && s.patientId) infoItems.push(`<div class="pt-field"><b>رقم الملف:</b> ${s.patientId}</div>`);
-    if (fields.age && pt?.age) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${pt.age} سنة</div>`);
+    if (fields.age && pt?.age) infoItems.push(`<div class="pt-field"><b>العمر:</b> ${formatAge(pt.age)}</div>`);
     if (fields.phone && pt?.phone) infoItems.push(`<div class="pt-field"><b>الجوال:</b> ${pt.phone}</div>`);
     if (fields.blood && pt?.blood) infoItems.push(`<div class="pt-field"><b>فصيلة الدم:</b> ${pt.blood}</div>`);
     if (fields.doctor && s.doctor) infoItems.push(`<div class="pt-field"><b>الطبيب:</b> ${s.doctor}</div>`);
@@ -17454,7 +17460,10 @@ export default function App() {
   });
   const [dbLoaded, setDbLoaded] = useState(false);
   // مزامنة بيانات المستخدم المسجّل مع سياق الطباعة العالمي
-  if (loggedUser?.type === "admin") { gReportContext.userName = "مدير النظام"; gReportContext.userRole = "مدير"; }
+  // ── الاسم الحقيقي للمسجّل دخوله، مش "مدير النظام" الثابتة دائماً — وإلا أي
+  //    موظف عنده صلاحيات "مدير كامل" (isAdminRole) بيطلع بالتقارير المطبوعة
+  //    وكأنها "مدير النظام" الحقيقي، بدل اسمه هو فعلياً. ──
+  if (loggedUser?.type === "admin") { gReportContext.userName = loggedUser.adminName || "مدير النظام"; gReportContext.userRole = "مدير"; }
   else if (loggedUser?.type === "staff") { gReportContext.userName = loggedUser.staff.name; gReportContext.userRole = loggedUser.staff.jobTitle || loggedUser.staff.role || "موظف"; }
   else { gReportContext.userName = ""; gReportContext.userRole = ""; }
   const [staffList, setStaffList] = useState<StaffMember[]>(initialStaff);
@@ -17648,7 +17657,7 @@ export default function App() {
         const byId = new Map(mockPatients.map(p => [p.id, p]));
         let changed = false;
         (dbPatients as any[]).forEach((p: any) => {
-          const mapped: PatientRecord = { id: p.id, name: p.name, age: Number(p.age) || 0, phone: p.phone || "", blood: p.blood_type || "غير معروف", insurance: !!p.has_insurance, dept: p.dept || "surgery", date: p.date || "", debt: Number(p.debt) || 0, gender: p.gender || "", address: p.address || "", chronic: p.chronic_detail || "", allergy: p.allergy_detail || "", nationalId: p.national_id || "", email: p.email || "", notes: p.notes || "", insuranceCompany: p.insurance_company || "" };
+          const mapped: PatientRecord = { id: p.id, name: p.name, age: p.age != null ? String(p.age) : "", phone: p.phone || "", blood: p.blood_type || "غير معروف", insurance: !!p.has_insurance, dept: p.dept || "surgery", date: p.date || "", debt: Number(p.debt) || 0, gender: p.gender || "", address: p.address || "", chronic: p.chronic_detail || "", allergy: p.allergy_detail || "", nationalId: p.national_id || "", email: p.email || "", notes: p.notes || "", insuranceCompany: p.insurance_company || "" };
           const existing = byId.get(p.id);
           if (!existing) {
             mockPatients.push(mapped);
@@ -17875,7 +17884,7 @@ export default function App() {
     const today = _today();
     const reviewedBy = (loggedUser?.type === "admin" ? loggedUser.adminName : loggedUser?.staff?.name) || "المدير";
     setPatientDeleteRequests(p => p.map(r => r.id === id ? { ...r, status: "rejected" as const, rejectionReason: reason, reviewedBy, reviewDate: today } : r));
-    api.patients.deleteRequests.update(id, { status: "rejected", rejection_reason: reason, reviewed_by: reviewedBy, review_date: today }).catch(() => { });
+    api.patients.deleteRequests.update(id, { status: "rejected", rejection_reason: reason, reviewed_by: reviewedBy, review_date: api.parseDateISO(today) }).catch(() => { });
     toast("تم رفض طلب الحذف", "info");
   };
   const initialAttendance: AttendanceRecord[] = [];
@@ -18532,7 +18541,7 @@ export default function App() {
       {isMobile && !collapsed && <div className="fixed inset-0 z-30 bg-black/50 no-print" onClick={() => setCollapsed(true)} />}
       <div className="no-print"><Sidebar collapsed={collapsed} isMobile={isMobile} activeRoute={route} onNavigate={setRoute} onClose={() => setCollapsed(true)} onLogout={handleLogout} customDepts={customDepts} hiddenSections={sidebarSettings.hiddenSections} isAdmin={true} /></div>
       <div style={{ marginRight: sidebarW, transition: "margin-right 0.25s ease" }}>
-        <div className="no-print"><TopBar pageTitle={pageTitle} sidebarCollapsed={collapsed} isMobile={isMobile} onToggle={() => setCollapsed(!collapsed)} notifications={notifications} onDismissNotif={id => setNotifications(p => p.filter(n => n.id !== id))} onClearAllNotif={() => setNotifications([])} /></div>
+        <div className="no-print"><TopBar pageTitle={pageTitle} sidebarCollapsed={collapsed} isMobile={isMobile} onToggle={() => setCollapsed(!collapsed)} notifications={notifications} onDismissNotif={id => setNotifications(p => p.filter(n => n.id !== id))} onClearAllNotif={() => setNotifications([])} userName={(loggedUser?.type === "admin" ? loggedUser.adminName : "") || "المدير"} /></div>
         <div style={{ paddingTop: 60 }}>
           <div className="no-print">
             <BroadcastBanner message={broadcastNotice} />

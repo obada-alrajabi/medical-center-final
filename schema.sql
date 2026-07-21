@@ -769,7 +769,7 @@ ALTER SEQUENCE public.patient_sessions_id_seq OWNED BY public.patient_sessions.i
 CREATE TABLE public.patients (
     id character varying(30) NOT NULL,
     name character varying(200) NOT NULL,
-    age smallint,
+    age character varying(50),
     gender character varying(10),
     phone character varying(30),
     national_id character varying(50),

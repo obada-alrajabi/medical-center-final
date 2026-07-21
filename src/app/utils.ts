@@ -5,6 +5,18 @@ import type { DeptPermissions, DeptPrintAdv } from "./types";
 export const fmt = (n: number | undefined | null): string =>
   `₪ ${(n ?? 0).toLocaleString("en-US")}`;
 
+// ── العمر أصبح حقل نص حر (مش رقم سنوات فقط) — لدعم كتابة عمر الرضّع بالأشهر
+//    مباشرة (مثلاً "9 أشهر") بدل إجبار المستخدم على تحويلها لسنوات. لو القيمة
+//    المخزّنة رقم صرف (بيانات قديمة من قبل هذا التحديث، أو أدخلها المستخدم
+//    كرقم سنوات عادي)، نلحقها بكلمة "سنة" تلقائياً زي ما كان يصير سابقاً؛
+//    أما لو المستخدم كتب نص كامل (مثل "9 أشهر" أو "35 سنة")، نعرضه كما هو
+//    بدون أي إضافة. ──
+export const formatAge = (age: string | number | undefined | null): string => {
+  const s = String(age ?? "").trim();
+  if (!s) return "";
+  return /^\d+(\.\d+)?$/.test(s) ? `${s} سنة` : s;
+};
+
 // ─── PALESTINE / JERUSALEM TIMEZONE (UTC+3) ──────────────────────────────────
 
 export const _JLM_OFFSET = 3 * 60 * 60 * 1000;
