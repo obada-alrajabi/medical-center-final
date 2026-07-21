@@ -336,7 +336,7 @@ router.post('/auth/login', async (req, res) => {
       if (valid) {
         const token = crypto.randomBytes(32).toString('hex');
         await createSession(token, account.username, 'admin');
-        return res.json({ role: 'admin', id: account.id, username: account.username, display_name: account.display_name, token });
+        return res.json({ authRole: 'admin', id: account.id, username: account.username, display_name: account.display_name, token });
       }
       console.error(`[Auth/login] password mismatch for admin username="${uname}" hash_prefix="${stored.slice(0, 7)}"`);
       return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
@@ -365,8 +365,16 @@ router.post('/auth/login', async (req, res) => {
     }
     const token = crypto.randomBytes(32).toString('hex');
     await createStaffSession(token, member.username, member.id);
+    // ── خلل أمني خطير كان هون: `{ role: 'staff', ...safe, token }` — بما إنه
+    //    جدول staff_members عنده عمود اسمه "role" أصلاً (المسمى الوظيفي،
+    //    مثلاً "طبيب"/"محاسب")، فكان spread الكائن `safe` بعد `role: 'staff'`
+    //    يدهس (overwrite) القيمة ويخليها المسمى الوظيفي بدل الكلمة "staff" —
+    //    فالواجهة الأمامية (يلي بتفحص `role === "staff"` لتحديد نوع الحساب)
+    //    كانت ما تلاقيها "staff" أبداً، فتسقط تلقائياً على فرع "مدير" وتسجّل
+    //    دخول أي موظف كأنه مدير النظام الكامل! الحل: اسم حقل مختلف تماماً
+    //    (authRole) ما إله تصادم مع أي عمود موجود بجدول الموظفين. ──
     const { password_hash, ...safe } = member;
-    res.json({ role: 'staff', ...safe, token });
+    res.json({ authRole: 'staff', ...safe, token });
   } catch (err) {
     console.error('[Auth/login] error:', err);
     res.status(500).json({ error: err.message });

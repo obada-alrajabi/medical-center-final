@@ -16426,7 +16426,7 @@ function LoginScreen({ onLogin, staffList, adminAccounts = [] }: { onLogin: (use
         if (res && !("error" in res)) {
           const r = res as any;
           if (r.token) setAdminToken(r.token);
-          if (r.role === "staff") {
+          if (r.authRole === "staff") {
             const s = r;
             const staffObj: StaffMember = { id: Number(s.id), name: s.name, nationalId: s.national_id || "", dob: s.dob || "", username: s.username || "", password: "", jobTitle: s.job_title || "", primaryDept: s.primary_dept || "", assignedDepts: _parseJsonArr(s.assigned_depts), phone: s.phone || "", role: s.role || "", salaryType: s.salary_type || "fixed", fixedSalary: Number(s.fixed_salary) || 0, percentageDept: s.percentage_dept || "", percentageDepts: _parseJsonArr(s.percentage_depts), payFromDepts: _parseJsonArr(s.pay_from_depts).length ? _parseJsonArr(s.pay_from_depts) : (s.percentage_dept ? [s.percentage_dept] : []), percentageValue: Number(s.percentage_value) || 0, shiftStart: s.shift_start || "", shiftEnd: s.shift_end || "", shiftAmount: Number(s.shift_amount) || 0, dailyWageAmount: Number(s.daily_wage_amount) || 0, status: s.status || "active", joinDate: s.join_date || "", canAccessFinancial: !!s.can_access_financial, canAccessSettings: !!s.can_access_settings, canAccessReports: !!s.can_access_reports, canManageStaff: !!s.can_manage_staff, isAdminRole: !!s.is_admin_role, canAttendance: !!s.can_attendance, notes: s.notes || "", deptPermissions: parseDeptPermissionsFromApi(s.permissions || []) };
             onLogin(staffObj.isAdminRole ? { type: "admin", adminName: staffObj.name } : { type: "staff", staff: staffObj }); return;
